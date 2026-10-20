@@ -76,6 +76,9 @@ pub struct Pipe {
     /// lowered at its upstream structure (drop manhole) instead of following the ground.
     #[serde(default)]
     pub max_slope: Option<f64>,
+    /// Optional per-pipe minimum slope (overrides the network minimum), e.g. head reaches.
+    #[serde(default)]
+    pub min_slope: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -326,7 +329,8 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
         base[j] += base[i];
         avg[j] += avg[i];
         let inv_up = (rim[i] - cr.min_cover_m - p.diameter_m).min(lowest_in[i] - cr.structure_drop_m);
-        let inv_dn = (inv_up - cr.min_slope * len).min(rim[j] - cr.min_cover_m - p.diameter_m);
+        let smin = p.min_slope.unwrap_or(cr.min_slope);
+        let inv_dn = (inv_up - smin * len).min(rim[j] - cr.min_cover_m - p.diameter_m);
         let mut inv_up = inv_up;
         if let Some(ms) = p.max_slope {
             if (inv_up - inv_dn) / len > ms {
@@ -465,5 +469,27 @@ mod tests {
         assert!((manning_partial(0.3, 0.013, 0.01, 1.0).0 - q).abs() < 1e-9);
         let y = depth_for(0.3, 0.013, 0.01, q / 2.0).unwrap();
         assert!((y - 0.5).abs() < 1e-6);
+    }
+    #[test]
+    fn kz_table_and_hgl_full_flow() {
+        assert_eq!(gb_kz(5.0), 2.7);
+        assert!((gb_kz(10.0) - 2.55).abs() < 1e-12);
+        assert_eq!(gb_kz(2000.0), 1.5);
+        assert_eq!(hec22_k(0.0), 0.15);
+        assert!((hec22_k(30.0) - (0.45 + 0.30 * 7.5 / 22.5)).abs() < 1e-12);
+        // one pipe, tailwater 1 m above the outlet crown → full flow; HGL_up = TW + Sf·L
+        let tin = Tin::build(&[[0.0, 0.0, 10.0], [200.0, 0.0, 10.0], [0.0, 200.0, 10.0], [200.0, 200.0, 10.0]], None).unwrap().0;
+        let inp: NetworkInput = serde_json::from_value(serde_json::json!({"name":"t","criteria":{"standard":"FHWA_HEC22","system":"storm","min_cover_m":1.0,"min_slope":0.005,"intensity_mm_h":100.0,"tailwater_m":9.0},
+            "structures":[{"id":"A","x":10.0,"y":100.0,"area_ha":1.0,"c":0.9},{"id":"B","x":110.0,"y":100.0}],
+            "pipes":[{"id":"P","from":"A","to":"B","diameter_m":0.6,"n":0.013}]})).unwrap();
+        let n = design(&inp, &tin, None).unwrap();
+        let p = &n.pipes[0];
+        let q = 0.9 * 100.0 / 360.0;
+        let sf = friction_slope_full(0.6, 0.013, q);
+        assert_eq!(p.regime, "full");
+        assert!((p.hgl_dn - 9.0).abs() < 1e-12 && (p.hgl_up - (9.0 + sf * 100.0)).abs() < 1e-9);
+        let v = q / (std::f64::consts::PI * 0.09);
+        let a = n.hydraulics.iter().find(|h| h.id == "A").unwrap();
+        assert!((a.hgl - (p.hgl_up + v * v / (2.0 * G) * 1.5)).abs() < 1e-9, "{a:?}");
     }
 }

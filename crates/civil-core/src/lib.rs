@@ -8,6 +8,7 @@ pub mod drawing;
 pub mod font;
 pub mod corridor;
 pub mod grading;
+pub mod intersect;
 pub mod pipes;
 pub mod quantities;
 pub mod points;

@@ -16,13 +16,17 @@ fn full_pipeline_and_approval_rules() {
     let pipes: Vec<&Value> = log.iter().filter(|e| e["tool"] == "design_pipe_network").collect();
     assert!(pipes[0]["result"]["mandatory_failures"].as_u64().unwrap() > 0);
     assert_eq!(pipes[1]["result"]["mandatory_failures"], 0);
+    assert_eq!(pipes.last().unwrap()["result"]["mandatory_failures"], 0);
+    let xs: Vec<&Value> = log.iter().filter(|e| e["tool"] == "design_intersection").collect();
+    assert!(xs[0]["result"]["mandatory_failures"].as_u64().unwrap() > 0);
+    assert_eq!(xs[1]["result"]["mandatory_failures"], 0);
     let last = log.iter().rev().find(|e| e["tool"] == "check_standards").unwrap();
     assert_eq!(last["result"]["mandatory_failures"], 0);
     // regression values (USGS 3DEP data, measured 2026-10-20); 0.1 % tolerance
     let corr = log.iter().rev().find(|e| e["tool"] == "build_corridor").unwrap();
     let near = |a: f64, b: f64| (a - b).abs() / b < 1e-3;
-    assert!(near(corr["result"]["cut_m3"].as_f64().unwrap(), 66180.0), "{}", corr["result"]["cut_m3"]);
-    assert!(near(corr["result"]["fill_m3"].as_f64().unwrap(), 92474.0), "{}", corr["result"]["fill_m3"]);
+    assert!(near(corr["result"]["cut_m3"].as_f64().unwrap(), 57602.0), "{}", corr["result"]["cut_m3"]);
+    assert!(near(corr["result"]["fill_m3"].as_f64().unwrap(), 69289.0), "{}", corr["result"]["fill_m3"]);
     assert!(corr["result"]["composite_check"]["cut_diff_pct"].as_f64().unwrap().abs() < 1.0);
     // approval: agent cannot approve; engineer can once all mandatory checks pass
     assert!(s.call("record_review", &json!({"actor":"agent","decision":"approve","note":"x"})).is_err());

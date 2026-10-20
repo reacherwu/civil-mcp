@@ -4,7 +4,91 @@ use crate::align::Alignment;
 use crate::profile::Profile;
 use crate::superelev::Superelevation;
 use crate::tin::Tin;
+use crate::walls::{WallDesign, WallRule};
+use crate::widening::{Vehicle, WideningResult};
 use serde::{Deserialize, Serialize};
+
+/// Barrier curb with gutter pan and optional sidewalk (urban section).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Curb {
+    pub gutter_m: f64,
+    /// gutter pan cross slope (rise per m outward, e.g. -0.06 toward the curb face)
+    pub gutter_slope: f64,
+    pub height_m: f64,
+    pub top_m: f64,
+    #[serde(default)]
+    pub sidewalk_m: f64,
+    /// sidewalk cross slope (rise per m outward, e.g. +0.02 draining to the gutter)
+    #[serde(default)]
+    pub sidewalk_slope: f64,
+}
+
+/// Right-side overrides for asymmetric sections (fields left unset copy the left side).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SideOverride {
+    #[serde(default)]
+    pub lanes_m: Option<Vec<f64>>,
+    #[serde(default)]
+    pub shoulder_m: Option<f64>,
+    #[serde(default)]
+    pub shoulder_slope: Option<f64>,
+    #[serde(default)]
+    pub shoulder_paved: Option<bool>,
+    #[serde(default)]
+    pub curb: Option<Curb>,
+    #[serde(default)]
+    pub ditch: Option<Ditch>,
+    #[serde(default)]
+    pub cut_slope_h: Option<f64>,
+    #[serde(default)]
+    pub fill_slope_h: Option<f64>,
+    #[serde(default)]
+    pub wall: Option<WallRule>,
+    /// components to drop on this side: "curb", "ditch", "wall"
+    #[serde(default)]
+    pub remove: Vec<String>,
+}
+
+/// Resolved components of one side.
+#[derive(Debug, Clone)]
+pub struct SideCfg {
+    pub lanes_m: Vec<f64>,
+    pub shoulder_m: f64,
+    pub shoulder_slope: f64,
+    pub shoulder_paved: bool,
+    pub curb: Option<Curb>,
+    pub ditch: Option<Ditch>,
+    pub cut_slope_h: f64,
+    pub fill_slope_h: f64,
+    pub cut_bench: Option<Bench>,
+    pub fill_bench: Option<Bench>,
+    pub wall: Option<WallRule>,
+    pub pavement_t: f64,
+    pub subgrade_slope_h: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WideningSpec {
+    /// "JTG" or "AASHTO"
+    pub method: String,
+    #[serde(default = "d_cls")]
+    pub jtg_class: u8,
+    #[serde(default)]
+    pub vehicle: Option<Vehicle>,
+}
+fn d_cls() -> u8 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WallPlaced {
+    pub offset: f64,
+    pub top_z: f64,
+    pub bottom_z: f64,
+    pub cut: bool,
+    pub trigger: String,
+    pub design: WallDesign,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Layer {
@@ -52,6 +136,12 @@ pub struct Assembly {
     /// Subgrade daylight slope from paved edge back up to finished grade (H per 1V).
     #[serde(default = "d_sg")]
     pub subgrade_slope_h: f64,
+    #[serde(default)]
+    pub curb: Option<Curb>,
+    #[serde(default)]
+    pub wall: Option<WallRule>,
+    #[serde(default)]
+    pub right: Option<SideOverride>,
 }
 fn d_sg() -> f64 {
     4.0
@@ -87,6 +177,41 @@ impl Assembly {
     pub fn pavement_thickness(&self) -> f64 {
         self.pavement.iter().map(|l| l.thickness_m).sum()
     }
+    pub fn side_cfg(&self, left: bool) -> SideCfg {
+        let mut c = SideCfg { lanes_m: self.lanes_m.clone(), shoulder_m: self.shoulder_m, shoulder_slope: self.shoulder_slope, shoulder_paved: self.shoulder_paved, curb: self.curb.clone(), ditch: self.ditch.clone(), cut_slope_h: self.cut_slope_h, fill_slope_h: self.fill_slope_h, cut_bench: self.cut_bench.clone(), fill_bench: self.fill_bench.clone(), wall: self.wall.clone(), pavement_t: self.pavement_thickness(), subgrade_slope_h: self.subgrade_slope_h };
+        if !left {
+            if let Some(o) = &self.right {
+                if let Some(v) = &o.lanes_m { c.lanes_m = v.clone() }
+                if let Some(v) = o.shoulder_m { c.shoulder_m = v }
+                if let Some(v) = o.shoulder_slope { c.shoulder_slope = v }
+                if let Some(v) = o.shoulder_paved { c.shoulder_paved = v }
+                if o.curb.is_some() { c.curb = o.curb.clone() }
+                if o.ditch.is_some() { c.ditch = o.ditch.clone() }
+                if let Some(v) = o.cut_slope_h { c.cut_slope_h = v }
+                if let Some(v) = o.fill_slope_h { c.fill_slope_h = v }
+                if o.wall.is_some() { c.wall = o.wall.clone() }
+                for r in &o.remove {
+                    match r.as_str() {
+                        "curb" => c.curb = None,
+                        "ditch" => c.ditch = None,
+                        "wall" => c.wall = None,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        c
+    }
+}
+
+impl SideCfg {
+    pub fn paved_width(&self, extra: f64) -> f64 {
+        let lanes: f64 = self.lanes_m.iter().sum::<f64>() + extra;
+        match &self.curb {
+            Some(c) => lanes + c.gutter_m,
+            None => lanes + if self.shoulder_paved { self.shoulder_m } else { 0.0 },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +225,9 @@ pub struct SideSection {
     pub warning: Option<String>,
     /// Point codes for fg vertices
     pub codes: Vec<String>,
+    pub wall: Option<WallPlaced>,
+    pub paved_width: f64,
+    pub widening: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -133,6 +261,11 @@ pub struct Corridor {
     pub layer_m3: Vec<(String, f64)>,
     pub method: String,
     pub sections_with_warnings: usize,
+    pub widening: Vec<WideningResult>,
+    /// concrete volume of retaining walls (m³, average end area) and wall length per side (m)
+    pub wall_concrete_m3: f64,
+    pub wall_length_left_m: f64,
+    pub wall_length_right_m: f64,
 }
 
 const MAX_OFFSET: f64 = 150.0;
@@ -222,22 +355,44 @@ fn intersect(g: &dyn Fn(f64) -> Option<f64>, a: [f64; 2], b: [f64; 2]) -> Option
     None
 }
 
-fn side(asm: &Assembly, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>) -> SideSection {
+fn side(cfg: &SideCfg, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>, extra_w: f64, std_jtg: bool) -> SideSection {
     let mut fg = vec![[0.0, cl]];
     let mut codes = vec!["CL".to_string()];
     let mut o = 0.0;
     let mut z = cl;
-    for (i, w) in asm.lanes_m.iter().enumerate() {
+    let nl = cfg.lanes_m.len();
+    for (i, w) in cfg.lanes_m.iter().enumerate() {
+        let w = if i + 1 == nl { w + extra_w } else { *w };
         o += w;
         z += slope * w;
         fg.push([o, z]);
         codes.push(format!("ETW{}", i + 1));
     }
-    if asm.shoulder_m > 0.0 {
+    let mut has_ditch = cfg.ditch.is_some();
+    if let Some(c) = &cfg.curb {
+        o += c.gutter_m;
+        z += c.gutter_slope * c.gutter_m;
+        fg.push([o, z]);
+        codes.push("GUTTER".into());
+        o += 0.01;
+        z += c.height_m;
+        fg.push([o, z]);
+        codes.push("TOP-CURB".into());
+        o += c.top_m;
+        fg.push([o, z]);
+        codes.push("BACK-CURB".into());
+        if c.sidewalk_m > 0.0 {
+            o += c.sidewalk_m;
+            z += c.sidewalk_slope * c.sidewalk_m;
+            fg.push([o, z]);
+            codes.push("BACK-WALK".into());
+        }
+        has_ditch = false;
+    } else if cfg.shoulder_m > 0.0 {
         // shoulder never flatter than a lane falling more steeply (high side keeps shoulder slope)
-        let s = asm.shoulder_slope.min(slope);
-        o += asm.shoulder_m;
-        z += s * asm.shoulder_m;
+        let s = cfg.shoulder_slope.min(slope);
+        o += cfg.shoulder_m;
+        z += s * cfg.shoulder_m;
         fg.push([o, z]);
         codes.push("SHLD".into());
     }
@@ -245,9 +400,10 @@ fn side(asm: &Assembly, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>) -> 
     let gh = g(o);
     let cut = gh.map_or(false, |gz| gz >= z);
     let mut warning = None;
+    let mut start = hinge;
     let (tail, ok, w) = if cut {
-        let mut start = hinge;
-        if let Some(d) = &asm.ditch {
+        if has_ditch {
+            let d = cfg.ditch.as_ref().unwrap();
             let p1 = [o + d.depth_m * d.foreslope_h, z - d.depth_m];
             fg.push(p1);
             codes.push("DITCH-IN".into());
@@ -258,23 +414,49 @@ fn side(asm: &Assembly, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>) -> 
             }
             start = p2;
         }
-        daylight(g, start, asm.cut_slope_h, 1.0, asm.cut_bench.as_ref())
+        daylight(g, start, cfg.cut_slope_h, 1.0, cfg.cut_bench.as_ref())
     } else if gh.is_some() {
-        daylight(g, hinge, asm.fill_slope_h, -1.0, asm.fill_bench.as_ref())
+        daylight(g, hinge, cfg.fill_slope_h, -1.0, cfg.fill_bench.as_ref())
     } else {
         (vec![], false, Some("ground missing at hinge".to_string()))
     };
     if !ok {
         warning = w;
     }
+    // retaining wall rule
+    let mut wall = None;
+    let mut tail = tail;
+    if let (Some(rule), Some(last)) = (&cfg.wall, tail.last().copied()) {
+        let height = (last[1] - start[1]).abs();
+        let trig_off = rule.max_daylight_offset_m.map_or(false, |m| last[0] > m);
+        let trig_h = rule.max_slope_height_m.map_or(false, |m| height > m);
+        if trig_off || trig_h {
+            let ow = start[0] + rule.offset_from_hinge_m;
+            if let Some(gz) = g(ow + 0.01) {
+                let exposed = if cut { gz - start[1] } else { start[1] - gz };
+                if exposed > 0.0 {
+                    let h = exposed + rule.embedment_m;
+                    let cr = crate::walls::criteria(std_jtg);
+                    let mut d = crate::walls::proportion(&rule.kind, h, &rule.soil, &cr);
+                    d.exposed_h = exposed;
+                    let trigger = if trig_off { format!("daylight {:.1} m > ROW {:.1} m", last[0], rule.max_daylight_offset_m.unwrap()) } else { format!("slope height {:.1} m > {:.1} m", height, rule.max_slope_height_m.unwrap()) };
+                    tail = vec![[ow, start[1]], [ow + 0.01, gz]];
+                    warning = None;
+                    wall = Some(WallPlaced { offset: ow, top_z: if cut { gz } else { start[1] }, bottom_z: if cut { start[1] } else { gz }, cut, trigger, design: d });
+                }
+            }
+        }
+    }
+    let n_tail = tail.len();
     for (i, p) in tail.iter().enumerate() {
         fg.push(*p);
-        codes.push(if i + 1 == tail.len() { "DAYLIGHT".into() } else { "SLOPE".into() });
+        let code = if wall.is_some() { if i == 0 { if cut { "WALL-BOTTOM" } else { "WALL-TOP" } } else { "DAYLIGHT" } } else if i + 1 == n_tail { "DAYLIGHT" } else { "SLOPE" };
+        codes.push(code.into());
     }
     let daylight = fg.last().unwrap()[0];
     // datum: lowered by pavement thickness across the paved width, then back up at subgrade slope
-    let t = asm.pavement_thickness();
-    let pw = asm.paved_width();
+    let t = cfg.pavement_t;
+    let pw = cfg.paved_width(extra_w);
     let datum = if t > 0.0 {
         let fgz = |x: f64| interp(&fg, x);
         let mut d = vec![[0.0, cl - t]];
@@ -287,17 +469,25 @@ fn side(asm: &Assembly, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>) -> 
         // walk outward at subgrade slope until it meets fg
         let mut x = pw;
         let mut zz = fgz(pw) - t;
+        let mut met = false;
         while x < daylight {
             let nx = (x + 0.05).min(daylight);
-            let nz = zz + (nx - x) / asm.subgrade_slope_h;
+            let nz = zz + (nx - x) / cfg.subgrade_slope_h;
             if nz >= fgz(nx) {
                 // meet
                 d.push([nx, fgz(nx)]);
                 x = nx;
+                met = true;
                 break;
             }
             x = nx;
             zz = nz;
+        }
+        if !met {
+            // finished grade rises faster than the subgrade slope (curb, cut slope): step up at the paved edge
+            x = pw;
+            d.push([pw + 1e-3, fgz(pw + 1e-3)]);
+            x += 1e-3;
         }
         for p in fg.iter() {
             if p[0] > x + 1e-9 {
@@ -308,7 +498,7 @@ fn side(asm: &Assembly, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>) -> 
     } else {
         fg.clone()
     };
-    SideSection { fg, datum, cut, daylight, warning, codes }
+    SideSection { fg, datum, cut, daylight, warning, codes, wall, paved_width: pw, widening: extra_w }
 }
 
 /// Linear interpolation on a polyline sorted by offset (clamped).
@@ -390,6 +580,11 @@ pub fn sample_stations(al: &Alignment, pr: &Profile, se: Option<&Superelevation>
 }
 
 pub fn section_at(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, s: f64) -> crate::Result<Section> {
+    section_at_opts(tin, al, pr, se, asm, s, (0.0, 0.0), true)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn section_at_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, s: f64, widen: (f64, f64), std_jtg: bool) -> crate::Result<Section> {
     let (x, y, h) = al.point_at(s).ok_or("station off alignment")?;
     let cl = pr.elevation_at(s).ok_or("station off profile")?;
     let (nx, ny) = (-h.sin(), h.cos());
@@ -397,12 +592,12 @@ pub fn section_at(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelev
     let (sl, sr) = se.map_or((-0.02, -0.02), |e| e.slopes_at(s));
     let gl = |o: f64| ground_at(tin, x, y, nx, ny, o);
     let gr = |o: f64| ground_at(tin, x, y, nx, ny, -o);
-    let left = side(asm, sl, cl, &gl);
-    let right = side(asm, sr, cl, &gr);
+    let left = side(&asm.side_cfg(true), sl, cl, &gl, widen.0, std_jtg);
+    let right = side(&asm.side_cfg(false), sr, cl, &gr, widen.1, std_jtg);
     let (cl_, fl) = side_areas(&left.datum, &gl, left.daylight);
     let (cr, fr) = side_areas(&right.datum, &gr, right.daylight);
-    let pw = asm.paved_width();
-    let layer_areas = asm.pavement.iter().map(|l| 2.0 * pw * l.thickness_m).collect();
+    let pw = left.paved_width + right.paved_width;
+    let layer_areas = asm.pavement.iter().map(|l| pw * l.thickness_m).collect();
     let mut ground = Vec::new();
     let mut o = -right.daylight - 5.0;
     while o <= left.daylight + 5.0 {
@@ -416,19 +611,79 @@ pub fn section_at(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelev
 }
 
 pub fn build(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, interval: f64) -> crate::Result<Corridor> {
+    build_opts(tin, al, pr, se, asm, interval, None, 0.0, true)
+}
+
+/// Widening at a station: (left, right). Full value on the arc, linear over the
+/// spirals (or over 10 m outside PC/PT for simple curves), on the inside of the curve.
+pub fn widening_at(al: &Alignment, w: &[f64], s: f64) -> (f64, f64) {
+    let (mut l, mut r) = (0.0, 0.0);
+    for (c, wc) in al.curves().iter().zip(w) {
+        if *wc <= 0.0 || !wc.is_finite() {
+            continue;
+        }
+        let (a0, a1) = if c.ls_in > 0.0 { (c.sta_start, c.sta_cs_start) } else { (c.sta_start - 10.0, c.sta_start) };
+        let (b0, b1) = if c.ls_out > 0.0 { (c.sta_cs_end, c.sta_end) } else { (c.sta_end, c.sta_end + 10.0) };
+        let f = if s <= a0 || s >= b1 { 0.0 } else if s < a1 { (s - a0) / (a1 - a0) } else if s <= b0 { 1.0 } else { (b1 - s) / (b1 - b0) };
+        let v = f * wc;
+        if c.dir > 0.0 { l = f64::max(l, v) } else { r = f64::max(r, v) }
+    }
+    (l, r)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, interval: f64, widening: Option<&WideningSpec>, speed: f64, std_jtg: bool) -> crate::Result<Corridor> {
     asm.validate()?;
     if !(interval > 0.0) {
         return Err("interval must be > 0".into());
     }
-    let st = sample_stations(al, pr, se, interval);
+    let mut wres = Vec::new();
+    if let Some(ws) = widening {
+        let lanes = asm.lanes_m.len() + asm.side_cfg(false).lanes_m.len();
+        let lw = asm.lanes_m.iter().sum::<f64>() / asm.lanes_m.len() as f64;
+        for c in al.curves() {
+            let r = match ws.method.as_str() {
+                "JTG" => crate::widening::jtg(c.radius, ws.jtg_class),
+                "AASHTO" => crate::widening::aashto(c.radius, speed, lanes, lw, ws.vehicle.as_ref().ok_or("AASHTO widening needs a design vehicle")?),
+                m => return Err(format!("unknown widening method {m}")),
+            };
+            if r.widening_m.is_nan() {
+                return Err(format!("radius {:.1} m is below the JTG widening table for this vehicle class", c.radius));
+            }
+            wres.push(r);
+        }
+    }
+    let wv: Vec<f64> = wres.iter().map(|r| r.widening_m).collect();
+    let mut st = sample_stations(al, pr, se, interval);
+    for c in al.curves() {
+        if c.ls_in == 0.0 {
+            st.push(c.sta_start - 10.0)
+        }
+        if c.ls_out == 0.0 {
+            st.push(c.sta_end + 10.0)
+        }
+    }
+    let (s0, s1) = (al.start_station().max(pr.start()), al.end_station().min(pr.end()));
+    st.retain(|x| *x >= s0 - 1e-9 && *x <= s1 + 1e-9);
+    st.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    st.dedup_by(|a, b| (*a - *b).abs() < 0.01);
     let mut secs = Vec::new();
     for &s in &st {
-        secs.push(section_at(tin, al, pr, se, asm, s)?);
+        secs.push(section_at_opts(tin, al, pr, se, asm, s, widening_at(al, &wv, s), std_jtg)?);
     }
     let (mut cut, mut fill) = (0.0, 0.0);
     let mut layers = vec![0.0; asm.pavement.len()];
+    let (mut wc, mut wl, mut wr) = (0.0, 0.0, 0.0);
+    let wa = |s: &SideSection| s.wall.as_ref().map_or(0.0, |w| w.design.concrete_m2);
     for w in secs.windows(2) {
         let l = w[1].station - w[0].station;
+        wc += (wa(&w[0].left) + wa(&w[0].right) + wa(&w[1].left) + wa(&w[1].right)) / 2.0 * l;
+        if w[0].left.wall.is_some() && w[1].left.wall.is_some() {
+            wl += l
+        }
+        if w[0].right.wall.is_some() && w[1].right.wall.is_some() {
+            wr += l
+        }
         cut += (w[0].cut_area + w[1].cut_area) / 2.0 * l;
         fill += (w[0].fill_area + w[1].fill_area) / 2.0 * l;
         for (k, v) in layers.iter_mut().enumerate() {
@@ -445,6 +700,10 @@ pub fn build(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation
         fill_m3: fill,
         method: "average end area between sample lines (no curvature correction, bank volumes); earthwork measured to the subgrade datum".into(),
         sections_with_warnings: nw,
+        widening: wres,
+        wall_concrete_m3: wc,
+        wall_length_left_m: wl,
+        wall_length_right_m: wr,
     })
 }
 
@@ -464,17 +723,23 @@ impl Section {
 pub fn surface(c: &Corridor, datum: bool) -> crate::Result<(Tin, crate::tin::TinStats)> {
     let mut pts: Vec<[f64; 3]> = Vec::new();
     let mut faces = Vec::new();
-    let mut prev: Option<(usize, usize)> = None;
+    let mut prev: Option<(usize, usize, Vec<f64>)> = None;
     for s in &c.sections {
         let w = s.world(datum);
+        // signed offsets (right negative → left positive), same order as world()
+        let (l, r) = if datum { (&s.left.datum, &s.right.datum) } else { (&s.left.fg, &s.right.fg) };
+        let mut off: Vec<f64> = r.iter().rev().map(|p| -p[0]).collect();
+        off.pop();
+        off.extend(l.iter().map(|p| p[0]));
         let base = pts.len();
         pts.extend(&w);
-        if let Some((pb, pn)) = prev {
+        if let Some((pb, pn, po)) = prev {
             let (mut i, mut j) = (0, 0);
             let (n, m) = (pn, w.len());
-            let d = |a: [f64; 3], b: [f64; 3]| (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2);
+            // zipper in offset order: always advance the side whose next vertex has the smaller offset,
+            // so triangles never fold across closely spaced vertices (curb faces, walls)
             while i + 1 < n || j + 1 < m {
-                let adv_a = if j + 1 >= m { true } else if i + 1 >= n { false } else { d(pts[pb + i + 1], pts[base + j]) < d(pts[pb + i], pts[base + j + 1]) };
+                let adv_a = if j + 1 >= m { true } else if i + 1 >= n { false } else { po[i + 1] < off[j + 1] };
                 if adv_a {
                     faces.push([pb + i, pb + i + 1, base + j]);
                     i += 1;
@@ -484,7 +749,7 @@ pub fn surface(c: &Corridor, datum: bool) -> crate::Result<(Tin, crate::tin::Tin
                 }
             }
         }
-        prev = Some((base, w.len()));
+        prev = Some((base, w.len(), off));
     }
     Tin::from_faces(&pts, &faces)
 }
@@ -587,5 +852,50 @@ mod tests {
         let c = build(&flat(101.0), &al, &pr, None, &a, 100.0).unwrap();
         assert!((c.layer_m3[1].1 - 0.3 * 10.0 * 500.0).abs() < 1e-6);
         assert!(c.sections[0].fill_area > 0.0);
+    }
+    #[test]
+    fn curb_in_cut_steps_datum_and_matches_composite() {
+        // ground 103 (cut), CL 102, curb right only; pavement 0.3 m
+        let (al, pr) = straight();
+        let a: Assembly = serde_json::from_value(serde_json::json!({"name":"t","lanes_m":[3.5],"shoulder_m":0.0,"shoulder_slope":-0.04,"shoulder_paved":false,"cut_slope_h":1.0,"fill_slope_h":2.0,
+            "pavement":[{"name":"p","thickness_m":0.3}],
+            "right":{"curb":{"gutter_m":0.5,"gutter_slope":-0.06,"height_m":0.15,"top_m":0.15,"sidewalk_m":2.0,"sidewalk_slope":0.02}}})).unwrap();
+        let g = flat(103.0);
+        let c = build(&g, &al, &pr, None, &a, 20.0).unwrap();
+        let s = &c.sections[3];
+        // right datum must continue past the paved edge (regression: it used to stop at the gutter)
+        assert!(s.right.datum.last().unwrap()[0] > s.right.paved_width + 1.0, "{:?}", s.right.datum);
+        assert!((s.right.paved_width - 4.0).abs() < 1e-12);
+        let (top, _) = surface(&c, true).unwrap();
+        let (cut, _, _) = composite_volume(&top, &g, 0.1);
+        assert!((cut - c.cut_m3).abs() / c.cut_m3 < 0.01, "composite {cut} vs end area {}", c.cut_m3);
+    }
+    #[test]
+    fn wall_replaces_slope_beyond_row() {
+        let (al, pr) = straight();
+        let mut a = asm();
+        a.wall = Some(serde_json::from_value(serde_json::json!({"kind":"gravity","max_daylight_offset_m":7.0,"offset_from_hinge_m":0.0,"embedment_m":0.5,
+            "soil":{"gamma_kn_m3":18.0,"phi_deg":30.0,"base_friction":0.5,"bearing_kpa":200.0}})).unwrap());
+        // ground 99 → fill 3 m below CL 102: slope would daylight at 5 + 2·2.9 = 10.8 > 7 → wall at 5 m, exposed 101.9 − 99 = 2.9
+        let c = build(&flat(99.0), &al, &pr, None, &a, 20.0).unwrap();
+        let s = &c.sections[2];
+        let w = s.left.wall.as_ref().expect("wall");
+        assert!((w.offset - 5.0).abs() < 1e-9 && (w.design.exposed_h - 2.9).abs() < 1e-9 && (w.design.h - 3.4).abs() < 1e-9);
+        assert!(w.design.pass);
+        assert!((s.left.daylight - 5.01).abs() < 1e-9);
+        // fill area per side = trapezoid 0..5 (heights 3.0 → 2.9) + sliver of the 0.01 m face
+        assert!((s.fill_area / 2.0 - (5.0 * (3.0 + 2.9) / 2.0 + 0.01 * 2.9 / 2.0)).abs() < 1e-6, "{}", s.fill_area);
+    }
+    #[test]
+    fn widening_ramps_over_spiral() {
+        let al = Alignment::build(AlignmentInput { name: "a".into(), pis: vec![[0.0, 0.0], [0.0, 300.0], [300.0, 600.0]], radii: vec![150.0], spirals: vec![50.0], start_station: 0.0 }).unwrap();
+        let c = &al.curves()[0];
+        let w = [0.6];
+        assert_eq!(widening_at(&al, &w, c.sta_start - 1.0), (0.0, 0.0));
+        let mid = (c.sta_cs_start + c.sta_cs_end) / 2.0;
+        let (l, r) = widening_at(&al, &w, mid);
+        assert!((l + r - 0.6).abs() < 1e-12 && l.min(r) == 0.0);
+        let (l, r) = widening_at(&al, &w, c.sta_start + 25.0);
+        assert!((l + r - 0.3).abs() < 1e-9);
     }
 }

@@ -72,10 +72,28 @@ pub fn run(out: &str) -> Session {
     r.call("create_assembly", json!({"name":"二级路 2-lane rural","lanes_m":[3.5],"shoulder_m":0.75,"shoulder_slope":-0.04,"shoulder_paved":false,
         "ditch":{"foreslope_h":4.0,"depth_m":0.6,"bottom_width_m":0.6},"cut_slope_h":1.0,"fill_slope_h":1.5,
         "cut_bench":{"every_m":8.0,"width_m":2.0},"fill_bench":{"every_m":8.0,"width_m":2.0},
-        "pavement":[{"name":"沥青面层 AC","thickness_m":0.05},{"name":"水稳基层 Base","thickness_m":0.20},{"name":"底基层 Subbase","thickness_m":0.20}]}));
-    let v = r.call("build_corridor", json!({"interval_m": 20.0, "composite_cell_m": 0.5}));
+        "pavement":[{"name":"沥青面层 AC","thickness_m":0.05},{"name":"水稳基层 Base","thickness_m":0.20},{"name":"底基层 Subbase","thickness_m":0.20}],
+        // right side (village frontage): curb, gutter and sidewalk instead of shoulder and ditch
+        "right":{"curb":{"gutter_m":0.5,"gutter_slope":-0.06,"height_m":0.15,"top_m":0.15,"sidewalk_m":2.0,"sidewalk_slope":0.02},"remove":["ditch"]},
+        // walls where the earthwork would leave the 30 m right-of-way or slopes exceed 12 m
+        "wall":{"kind":"cantilever","max_daylight_offset_m":30.0,"max_slope_height_m":12.0,"offset_from_hinge_m":0.5,"embedment_m":0.8,
+                "soil":{"gamma_kn_m3":19.0,"phi_deg":30.0,"base_friction":0.45,"bearing_kpa":250.0,"surcharge_kpa":10.0}}}));
+    let v = r.call("build_corridor", json!({"interval_m": 20.0, "composite_cell_m": 0.5, "widening": {"method":"JTG","jtg_class":1}}));
     let res = &v["result"];
     println!("corridor: {} sections, cut {:.0} m3, fill {:.0} m3 (composite check cut {:+.2}%, fill {:+.2}%), warnings {}", res["sections"], res["cut_m3"].as_f64().unwrap(), res["fill_m3"].as_f64().unwrap(), res["composite_check"]["cut_diff_pct"].as_f64().unwrap(), res["composite_check"]["fill_diff_pct"].as_f64().unwrap(), res["sections_with_warnings"]);
+    println!("widening: {:?}; walls: {}", res["widening"].as_array().unwrap().iter().map(|w| w["widening_m"].as_f64().unwrap()).collect::<Vec<_>>(), res["walls"]);
+    // 4-leg crossroad: minor road 2 × 3.0 m, stop-controlled
+    let minor = json!({"name":"支路 minor","lanes_m":[3.0],"shoulder_m":0.5,"shoulder_slope":-0.04,"shoulder_paved":false,"cut_slope_h":1.0,"fill_slope_h":1.5,
+        "ditch":{"foreslope_h":3.0,"depth_m":0.4,"bottom_width_m":0.4},"pavement":[{"name":"沥青面层 AC","thickness_m":0.05},{"name":"水稳基层 Base","thickness_m":0.18}]});
+    let xin = |sta: f64| json!({"name":"X1","main_station": sta, "major_speed_kmh":40.0,"minor_speed_kmh":30.0,"min_return_radius_m":12.0,"max_approach_grade_pct":3.0,
+        "legs":[{"name":"北支路 N leg","side":"left","angle_deg":90.0,"length_m":120.0,"grade_pct":-2.0,"return_radii_m":[15.0,15.0],"assembly":minor},
+                {"name":"南支路 S leg","side":"right","angle_deg":90.0,"length_m":120.0,"grade_pct":2.0,"return_radii_m":[15.0,15.0],"assembly":minor}]});
+    // attempt 1 at K0+700: the south leg's sight triangle crosses the main road's cut slope
+    let v = r.call("design_intersection", xin(700.0));
+    println!("intersection at K0+700: {} mandatory failures (sight triangle obstructed)", v["result"]["mandatory_failures"]);
+    // attempt 2: the agent proposes K0+790 (main road in fill there); relocation is for the engineer to confirm
+    let v = r.call("design_intersection", xin(790.0));
+    println!("intersection at K0+790: {} checks, {} mandatory failures", v["result"]["checks"], v["result"]["mandatory_failures"]);
     // maintenance yard pad next to the road, at the ground elevation of its centre
     let (cx, cy) = (573700.0, 4139600.0);
     let z = r.s.tin.as_ref().unwrap().0.elevation_at(cx, cy).unwrap().round();
@@ -93,7 +111,7 @@ pub fn run(out: &str) -> Session {
             pipes.push(json!({"id": format!("P{}", i), "from": format!("YS{}", i), "to": format!("YS{}", i + 1), "diameter_m": if i < 5 { 0.4 } else { 0.6 }, "n": 0.013, "material": "钢筋混凝土管 RCP"}));
         }
     }
-    let crit = json!({"standard":"GB50014_2021","system":"storm","min_cover_m":0.7,"min_slope":0.003,"structure_drop_m":0.03,"intensity_mm_h":120.0});
+    let crit = json!({"standard":"GB50014_2021","system":"storm","min_cover_m":0.7,"min_slope":0.003,"structure_drop_m":0.03,"intensity_mm_h":120.0,"freeboard_m":0.3});
     let v = r.call("design_pipe_network", json!({"name":"雨水 Storm","criteria":crit,"structures":structures,"pipes":pipes}));
     println!("storm network attempt 1: {} mandatory failures (velocity / capacity)", v["result"]["mandatory_failures"]);
     // attempt 2: upsize P4–P5 to 0.6 m and the flat reach to 0.8 m and cap slopes at 3% with drop manholes
@@ -103,6 +121,26 @@ pub fn run(out: &str) -> Session {
     }
     let v = r.call("design_pipe_network", json!({"name":"雨水 Storm","criteria":crit,"structures":structures,"pipes":pipes}));
     println!("storm network attempt 2: {} pipes, {} mandatory failures", v["result"]["pipes"].as_array().unwrap().len(), v["result"]["mandatory_failures"]);
+    // sanitary sewer on the left side, 200 people per manhole, 200 L/person/day
+    let mut ss = vec![];
+    let mut sp = vec![];
+    let st2: Vec<f64> = (0..=12).map(|i| 30.0 + i as f64 * 80.0).filter(|s| *s < end - 10.0).collect();
+    for (i, s) in st2.iter().enumerate() {
+        let (x, y, h) = al.point_at(*s).unwrap();
+        ss.push(json!({"id": format!("WS{}", i + 1), "x": x - 3.0 * h.sin(), "y": y + 3.0 * h.cos(), "population": 200.0, "per_capita_lpd": 200.0}));
+        if i > 0 {
+            sp.push(json!({"id": format!("S{}", i), "from": format!("WS{}", i), "to": format!("WS{}", i + 1), "diameter_m": 0.3, "n": 0.013, "material": "HDPE 双壁波纹管", "max_slope": 0.03}));
+        }
+    }
+    let v = r.call("design_pipe_network", json!({"name":"污水 Sanitary","criteria":{"standard":"GB50014_2021","system":"sanitary","min_cover_m":1.0,"min_slope":0.003,"structure_drop_m":0.03,"freeboard_m":0.3},"structures":ss,"pipes":sp}));
+    println!("sanitary attempt 1 (min slope 0.3%): {} mandatory failures (self-cleansing velocity)", v["result"]["mandatory_failures"]);
+    // attempt 2: steeper minimum slope for the small upstream flows
+    let v = r.call("design_pipe_network", json!({"name":"污水 Sanitary","criteria":{"standard":"GB50014_2021","system":"sanitary","min_cover_m":1.0,"min_slope":0.012,"structure_drop_m":0.03,"freeboard_m":0.3},"structures":ss,"pipes":sp}));
+    println!("sanitary attempt 2 (min slope 1.2%): {} mandatory failures (head reach)", v["result"]["mandatory_failures"]);
+    // attempt 3: head reach S1 at 2%
+    sp[0]["min_slope"] = json!(0.02);
+    let v = r.call("design_pipe_network", json!({"name":"污水 Sanitary","criteria":{"standard":"GB50014_2021","system":"sanitary","min_cover_m":1.0,"min_slope":0.012,"structure_drop_m":0.03,"freeboard_m":0.3},"structures":ss,"pipes":sp}));
+    println!("sanitary attempt 3 (S1 at 2%): {} pipes, {} mandatory failures", v["result"]["pipes"].as_array().unwrap().len(), v["result"]["mandatory_failures"]);
     let v = r.call("compute_quantities", json!({"cut_factor":0.9,"table_step_m":100.0}));
     println!("mass haul: final ordinate {:.0} m3, balance points {}", v["result"]["final_ordinate_m3"].as_f64().unwrap(), v["result"]["balance_stations"]);
     let c = r.call("check_standards", json!({}));

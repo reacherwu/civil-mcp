@@ -35,6 +35,7 @@ pub struct Session {
     pub composite: Option<(f64, f64, usize, f64)>,
     pub gradings: Vec<Grading>,
     pub networks: Vec<Network>,
+    pub intersections: Vec<crate::intersect::Intersection>,
     pub mass_haul: Option<MassHaul>,
     pub materials: Vec<MaterialRow>,
     pub files: Vec<(String, String)>,
@@ -65,11 +66,12 @@ pub fn tool_list() -> Value {
       {"name":"create_profile","description":"Design vertical profile from VPIs [station, elevation] and parabolic curve lengths.","inputSchema":obj(json!({"name":s,"vpis":xy,"curve_lengths":arr(num.clone())}),&["name","vpis","curve_lengths"])},
       {"name":"design_superelevation","description":"Superelevation for each curve (AASHTO Method 1 or JTG i = V²/(127R) − μ, capped at e_max) with transition stations; rotation about the centreline.","inputSchema":obj(json!({}),&[])},
       {"name":"check_standards","description":"Run all alignment/profile/superelevation checks (and pipe checks if a network exists). Each result cites the rule and shows the formula.","inputSchema":obj(json!({}),&[])},
-      {"name":"create_assembly","description":"Define the typical section: lanes, shoulder, ditch (cut only), cut/fill slopes with optional benches, pavement layers.","inputSchema":obj(json!({"name":s,"lanes_m":arr(num.clone()),"shoulder_m":num,"shoulder_slope":num,"shoulder_paved":b,"ditch":{"type":"object","properties":{"foreslope_h":num,"depth_m":num,"bottom_width_m":num}},"cut_slope_h":num,"fill_slope_h":num,"cut_bench":{"type":"object","properties":{"every_m":num,"width_m":num}},"fill_bench":{"type":"object","properties":{"every_m":num,"width_m":num}},"pavement":arr(json!({"type":"object","properties":{"name":s,"thickness_m":num}})),"subgrade_slope_h":num}),&["name","lanes_m","shoulder_m","shoulder_slope","shoulder_paved","cut_slope_h","fill_slope_h"])},
-      {"name":"build_corridor","description":"Apply the assembly at sample lines (regular interval plus geometry key stations), daylight to ground, compute end-area volumes and a composite-volume cross-check, build corridor surfaces.","inputSchema":obj(json!({"interval_m":num,"composite_cell_m":num}),&["interval_m"])},
+      {"name":"create_assembly","description":"Define the typical section: lanes, shoulder or curb/gutter/sidewalk, ditch (cut only), cut/fill slopes with optional benches, pavement layers, retaining-wall rule, and right-side overrides for asymmetric sections.","inputSchema":obj(json!({"name":s,"lanes_m":arr(num.clone()),"shoulder_m":num,"shoulder_slope":num,"shoulder_paved":b,"ditch":{"type":"object","properties":{"foreslope_h":num,"depth_m":num,"bottom_width_m":num}},"cut_slope_h":num,"fill_slope_h":num,"cut_bench":{"type":"object","properties":{"every_m":num,"width_m":num}},"fill_bench":{"type":"object","properties":{"every_m":num,"width_m":num}},"pavement":arr(json!({"type":"object","properties":{"name":s,"thickness_m":num}})),"subgrade_slope_h":num,"curb":{"type":"object","description":"barrier curb + gutter (+ sidewalk): gutter_m, gutter_slope, height_m, top_m, sidewalk_m, sidewalk_slope"},"wall":{"type":"object","description":"retaining-wall rule: kind cantilever|gravity, max_daylight_offset_m (ROW), max_slope_height_m, offset_from_hinge_m, embedment_m, soil {gamma_kn_m3, phi_deg, base_friction, bearing_kpa, surcharge_kpa}"},"right":{"type":"object","description":"right-side overrides for asymmetric sections (lanes_m, shoulder_m, shoulder_slope, shoulder_paved, curb, ditch, cut_slope_h, fill_slope_h, wall, remove:[\"curb\"|\"ditch\"|\"wall\"])"}}),&["name","lanes_m","shoulder_m","shoulder_slope","shoulder_paved","cut_slope_h","fill_slope_h"])},
+      {"name":"build_corridor","description":"Apply the assembly at sample lines (regular interval plus geometry key stations), daylight to ground, compute end-area volumes and a composite-volume cross-check, build corridor surfaces.","inputSchema":obj(json!({"interval_m":num,"composite_cell_m":num,"widening":{"type":"object","description":"lane widening on curves: method JTG (jtg_class 1-3) or AASHTO (vehicle {name, track_u_m, wheelbases_m, front_overhang_m})"}}),&["interval_m"])},
       {"name":"get_section","description":"Cross section at a sample-line station (nearest).","inputSchema":obj(json!({"station":num}),&["station"])},
+      {"name":"design_intersection","description":"At-grade T or 4-leg intersection on the designed main road: legs (each with its own assembly), curb returns tangent to both edges, leg profiles tied to the main-road finished grade, a paving patch with volumes, and stop-control sight triangles (AASHTO case B1) tested for line-of-sight obstruction. Checks return radius, approach grade and sight distance.","inputSchema":obj(json!({"name":s,"main_station":num,"major_speed_kmh":num,"minor_speed_kmh":num,"min_return_radius_m":num,"max_approach_grade_pct":num,"time_gap_s":num,"legs":arr(json!({"type":"object","properties":{"name":s,"side":{"type":"string","enum":["left","right"]},"angle_deg":num,"length_m":num,"grade_pct":num,"return_radii_m":arr(num.clone()),"assembly":{"type":"object"}},"required":["name","side","length_m","grade_pct","return_radii_m","assembly"]}))}),&["name","main_station","legs","major_speed_kmh","minor_speed_kmh","min_return_radius_m","max_approach_grade_pct"])},
       {"name":"grade","description":"Grade a pad (closed polygon) or feature line (open, side left/right) to existing ground at cut/fill slopes; returns daylight line and composite volumes.","inputSchema":obj(json!({"name":s,"vertices":xyz,"closed":b,"side":s,"cut_slope_h":num,"fill_slope_h":num,"spacing_m":num,"cell_m":num}),&["name","vertices","closed","cut_slope_h","fill_slope_h"])},
-      {"name":"design_pipe_network","description":"Gravity storm/sanitary network: inverts from min cover/slope/drop, Manning full and partial flow, rational-method flows; checks per GB 50014-2021 or FHWA HEC-22. Rims default to the corridor surface, else existing ground.","inputSchema":obj(json!({"name":s,"criteria":{"type":"object","properties":{"standard":{"type":"string","enum":["GB50014_2021","FHWA_HEC22"]},"system":{"type":"string","enum":["storm","sanitary"]},"min_cover_m":num,"min_slope":num,"structure_drop_m":num,"intensity_mm_h":num},"required":["standard","system","min_cover_m","min_slope"]},"structures":arr(json!({"type":"object","properties":{"id":s,"x":num,"y":num,"rim":num,"area_ha":num,"c":num,"inflow_m3s":num},"required":["id","x","y"]})),"pipes":arr(json!({"type":"object","properties":{"id":s,"from":s,"to":s,"diameter_m":num,"n":num,"material":s},"required":["id","from","to","diameter_m","n"]}))}),&["name","criteria","structures","pipes"])},
+      {"name":"design_pipe_network","description":"Gravity storm/sanitary network: inverts from min cover/slope/drop, Manning full and partial flow, rational-method flows; checks per GB 50014-2021 or FHWA HEC-22. Rims default to the corridor surface, else existing ground.","inputSchema":obj(json!({"name":s,"criteria":{"type":"object","properties":{"standard":{"type":"string","enum":["GB50014_2021","FHWA_HEC22"]},"system":{"type":"string","enum":["storm","sanitary"]},"min_cover_m":num,"min_slope":num,"structure_drop_m":num,"intensity_mm_h":num,"tailwater_m":num,"freeboard_m":num},"required":["standard","system","min_cover_m","min_slope"]},"structures":arr(json!({"type":"object","properties":{"id":s,"x":num,"y":num,"rim":num,"area_ha":num,"c":num,"inflow_m3s":num,"population":num,"per_capita_lpd":num},"required":["id","x","y"]})),"pipes":arr(json!({"type":"object","properties":{"id":s,"from":s,"to":s,"diameter_m":num,"n":num,"material":s,"max_slope":num,"min_slope":num},"required":["id","from","to","diameter_m","n"]}))}),&["name","criteria","structures","pipes"])},
       {"name":"compute_quantities","description":"Mass haul ordinates/balance points and material table by station range.","inputSchema":obj(json!({"cut_factor":num,"free_haul_m":num,"table_step_m":num}),&[])},
       {"name":"generate_drawings","description":"Write model.dxf (world), sheets.pdf (all sheets, Chinese/English text, embedded font) and sheet-NN.dxf per sheet. PRELIMINARY stamp unless approved with zero mandatory failures.","inputSchema":obj(json!({}),&[])},
       {"name":"generate_review_report","description":"Write review.html listing every check (pass/fail with citation), quantities, output file hashes and the audit trail.","inputSchema":obj(json!({}),&[])},
@@ -83,7 +85,7 @@ fn f(v: &Value, k: &str) -> Option<f64> {
     v.get(k).and_then(|x| x.as_f64())
 }
 
-const DESIGN_TOOLS: &[&str] = &["set_design_basis", "load_points", "import_landxml", "build_surface", "create_alignment", "create_profile", "design_superelevation", "create_assembly", "build_corridor", "grade", "design_pipe_network"];
+const DESIGN_TOOLS: &[&str] = &["set_design_basis", "load_points", "import_landxml", "build_surface", "create_alignment", "create_profile", "design_superelevation", "create_assembly", "build_corridor", "design_intersection", "grade", "design_pipe_network"];
 
 impl Session {
     fn dir(&self) -> crate::Result<PathBuf> {
@@ -108,10 +110,32 @@ impl Session {
         for n in &self.networks {
             c.extend(n.checks.iter().cloned());
         }
+        for i in &self.intersections {
+            c.extend(i.checks.iter().cloned());
+        }
         for g in &self.gradings {
             c.push(standards::chk("G-DAYLIGHT", "Grading reaches daylight everywhere", format!("grading {}", g.name), g.warnings.len() as f64, 0.0, "points", "max", "mandatory", "footprint points without daylight".into(), "tool rule".into()));
         }
         if let Some(cor) = &self.corridor {
+            let std_jtg = self.basis.as_ref().map_or(true, |b| b.standard == standards::Standard::JtgD20_2017);
+            let cr = crate::walls::criteria(std_jtg);
+            for left in [true, false] {
+                let ws: Vec<(f64, &crate::corridor::WallPlaced)> = cor.sections.iter().filter_map(|s| { let sd = if left { &s.left } else { &s.right }; sd.wall.as_ref().map(|w| (s.station, w)) }).collect();
+                if ws.is_empty() {
+                    continue;
+                }
+                let side = if left { "left" } else { "right" };
+                let worst = |f: &dyn Fn(&crate::walls::WallDesign) -> f64, max: bool| ws.iter().map(|(st, w)| (f(&w.design), *st)).fold((if max { f64::MIN } else { f64::MAX }, 0.0), |a, b| if (max && b.0 > a.0) || (!max && b.0 < a.0) { b } else { a });
+                let (v, st) = worst(&|d| d.fs_sliding, false);
+                c.push(standards::chk("W-SLIDE", "挡土墙抗滑稳定 Wall sliding FS", format!("{side} wall (worst at {st:.1})"), v, cr.fs_sliding, "", "min", "mandatory", "Ks = μ·ΣV / Ea, Rankine Ka = tan²(45°−φ/2), Ea = ½γH²Ka + qKaH".into(), cr.citation.into()));
+                let (v, st) = worst(&|d| d.fs_overturning, false);
+                c.push(standards::chk("W-OVERTURN", "挡土墙抗倾覆稳定 Wall overturning FS", format!("{side} wall (worst at {st:.1})"), v, cr.fs_overturning, "", "min", "mandatory", "Kt = ΣM_resist / ΣM_overturn about the toe".into(), cr.citation.into()));
+                let (v, st) = worst(&|d| d.eccentricity / d.base_b, true);
+                c.push(standards::chk("W-ECC", "基底偏心距 Base eccentricity e/B", format!("{side} wall (worst at {st:.1})"), v, cr.e_frac, "", "max", "mandatory", "e = B/2 − (ΣMr − ΣMo)/ΣV".into(), cr.citation.into()));
+                let (v, st) = worst(&|d| d.q_max_kpa, true);
+                let bearing = self.assembly.as_ref().and_then(|a| if left { a.wall.as_ref() } else { a.right.as_ref().and_then(|r| r.wall.as_ref()).or(a.wall.as_ref()) }).map_or(f64::NAN, |w| w.soil.bearing_kpa);
+                c.push(standards::chk("W-BEAR", "基底最大压力 Max bearing pressure", format!("{side} wall (worst at {st:.1})"), v, cr.qmax_factor * bearing, "kPa", "max", "mandatory", "p_max = ΣV/B·(1 + 6e/B)".into(), cr.citation.into()));
+            }
             c.push(standards::chk("C-DAYLIGHT", "Corridor sections reach daylight", "corridor".into(), cor.sections_with_warnings as f64, 0.0, "sections", "max", "mandatory", "sections whose slopes did not meet ground within data/150 m".into(), "tool rule".into()));
         }
         c
@@ -129,6 +153,7 @@ impl Session {
         self.corridor_fg = None;
         self.corridor_datum = None;
         self.composite = None;
+        self.intersections.clear();
         self.mass_haul = None;
         self.materials.clear();
     }
@@ -368,7 +393,13 @@ impl Session {
                 let al = self.alignment.as_ref().ok_or("create_alignment first")?;
                 let pr = self.profile.as_ref().ok_or("create_profile first")?;
                 let asm = self.assembly.as_ref().ok_or("create_assembly first")?;
-                let c = corridor::build(t, al, pr, self.superelevation.as_ref(), asm, f(a, "interval_m").unwrap_or(10.0))?;
+                let b = self.need_basis()?;
+                let std_jtg = b.standard == standards::Standard::JtgD20_2017;
+                let ws: Option<corridor::WideningSpec> = match a.get("widening") {
+                    Some(v) if !v.is_null() => Some(serde_json::from_value(v.clone()).map_err(|e| e.to_string())?),
+                    _ => None,
+                };
+                let c = corridor::build_opts(t, al, pr, self.superelevation.as_ref(), asm, f(a, "interval_m").unwrap_or(10.0), ws.as_ref(), b.design_speed_kmh, std_jtg)?;
                 let (fg, _) = corridor::surface(&c, false)?;
                 let (dt, _) = corridor::surface(&c, true)?;
                 let cell = f(a, "composite_cell_m").unwrap_or(0.5);
@@ -377,9 +408,15 @@ impl Session {
                 let h = self.write("corridor.json", full.to_string().as_bytes())?;
                 let out = json!({"sections": c.sections.len(), "sample_stations": c.sample_stations.len(), "cut_m3": c.cut_m3, "fill_m3": c.fill_m3, "layers_m3": c.layer_m3, "method": c.method,
                     "composite_check": {"cut_m3": ccut, "fill_m3": cfill, "cell_m": cell, "cells": cells, "cut_diff_pct": (c.cut_m3 - ccut) / ccut.max(1e-9) * 100.0, "fill_diff_pct": (c.fill_m3 - cfill) / cfill.max(1e-9) * 100.0},
-                    "sections_with_warnings": c.sections_with_warnings, "detail_file": "corridor.json", "detail_sha256": h});
-                let prov = self.log("agent", name, a, &out, &["average end area: V = (A1+A2)/2·L; composite: Σ(Δz·cell²)".into()])?;
+                    "sections_with_warnings": c.sections_with_warnings, "widening": c.widening, "walls": {"concrete_m3": c.wall_concrete_m3, "length_left_m": c.wall_length_left_m, "length_right_m": c.wall_length_right_m, "sections_with_wall": c.sections.iter().filter(|s| s.left.wall.is_some() || s.right.wall.is_some()).count()}, "detail_file": "corridor.json", "detail_sha256": h});
+                let mut rules = vec!["average end area: V = (A1+A2)/2·L; composite: Σ(Δz·cell²)".to_string()];
+                rules.extend(c.widening.iter().map(|w| w.citation.clone()).collect::<std::collections::BTreeSet<_>>());
+                if c.wall_concrete_m3 > 0.0 {
+                    rules.push(crate::walls::criteria(std_jtg).citation.to_string());
+                }
+                let prov = self.log("agent", name, a, &out, &rules)?;
                 self.composite = Some((ccut, cfill, cells, cell));
+                self.intersections.clear();
                 self.corridor = Some(c);
                 self.corridor_fg = Some(fg);
                 self.corridor_datum = Some(dt);
@@ -390,6 +427,25 @@ impl Session {
                 let s = f(a, "station").ok_or("station required")?;
                 let sec = c.sections.iter().min_by(|x, y| (x.station - s).abs().partial_cmp(&(y.station - s).abs()).unwrap()).unwrap();
                 Ok(json!({"result": sec}))
+            }
+            "design_intersection" => {
+                let (eg, _) = self.tin.as_ref().ok_or("build_surface first")?;
+                let al = self.alignment.as_ref().ok_or("create_alignment first")?;
+                let pr = self.profile.as_ref().ok_or("create_profile first")?;
+                let c = self.corridor.as_ref().ok_or("build_corridor first")?;
+                let fg = self.corridor_fg.as_ref().ok_or("build_corridor first")?;
+                let inp: crate::intersect::IntersectionInput = serde_json::from_value(a.clone()).map_err(|e| e.to_string())?;
+                let x = crate::intersect::design(&inp, al, pr, c, fg, eg)?;
+                let fname = format!("intersection-{}.json", inp.name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>());
+                let h = self.write(&fname, serde_json::to_string(&x).unwrap().as_bytes())?;
+                let fails: Vec<&Check> = x.checks.iter().filter(|c| !c.pass && c.severity == "mandatory").collect();
+                let out = json!({"legs": x.legs.iter().map(|l| json!({"name": l.name, "returns": l.returns.iter().map(|r| r.radius).collect::<Vec<_>>(), "tie_in_elev": l.tie_in_elev, "leg_cut_m3": l.corridor.cut_m3, "leg_fill_m3": l.corridor.fill_m3, "patch_cut_m3": l.patch_cut_m3, "patch_fill_m3": l.patch_fill_m3, "sight": l.sight.iter().map(|s| json!({"direction": s.direction, "isd_m": s.along_major_m, "max_obstruction_m": s.max_obstruction_m, "clear": s.clear})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+                    "checks": x.checks.len(), "mandatory_failures": fails.len(), "failures": fails, "file": fname, "detail_sha256": h});
+                let rules: Vec<String> = x.checks.iter().map(|c| c.citation.clone()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+                let prov = self.log("agent", name, a, &json!({"legs": x.legs.len(), "mandatory_failures": fails.len()}), &rules)?;
+                self.intersections.retain(|i| i.name != x.name);
+                self.intersections.push(x);
+                Ok(json!({"result": out, "provenance": prov}))
             }
             "grade" => {
                 let (t, _) = self.tin.as_ref().ok_or("build_surface first")?;

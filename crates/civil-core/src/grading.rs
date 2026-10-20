@@ -63,7 +63,7 @@ pub fn point_in_poly(x: f64, y: f64, p: &[[f64; 3]]) -> bool {
 }
 
 /// Ear clipping of a CCW simple polygon given by indices into pts.
-fn ear_clip(pts: &[[f64; 3]], idx: &[usize]) -> crate::Result<Vec<[usize; 3]>> {
+pub fn ear_clip(pts: &[[f64; 3]], idx: &[usize]) -> crate::Result<Vec<[usize; 3]>> {
     let mut v = idx.to_vec();
     let mut out = Vec::new();
     let cross = |a: [f64; 3], b: [f64; 3], c: [f64; 3]| (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
