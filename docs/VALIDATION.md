@@ -1,4 +1,19 @@
-# Validation record (v4, measured 2026-10-20)
+# Validation record
+
+## v6 summary (measured 2026-10-20, demo: 288 checks, 0 mandatory failures)
+
+| Script / test | Result |
+|---|---|
+| `scripts/independent_check.py` (base) | 91 / 91 OK |
+| `scripts/independent_check_v5.py` (hydrology, culverts, slope, subsurface, walls, land, locality) | 70 / 70 within tolerance |
+| `scripts/independent_check_v6.py` (layered elastic vs PyMastic be301be + KENPAVE, MSE, wall shear/crack/footing, signals, capacity, rigid, landscape, locality) | 81 / 81 within tolerance |
+| Layered elastic vs KENPAVE 3-layer published example (`examples/lea_kenpave.rs`, `data/validation/kenpave_3layer.csv`) | deflection 0.058 %, σz 0.028 %, εr 0.088 %, εz 0.061 % |
+| CAD round trip, 39 DXF (ODA DXF→DWG→DXF, LibreDWG read) | 0 entity-count mismatches; ezdxf audit 0 errors |
+| `cargo test`, `cargo fmt --check`, `cargo clippy -D warnings` | pass (CI) |
+
+The sections below are the earlier, more detailed v4 record. They are kept for reference; counts in them refer to v4 (19-20 sheets).
+
+## v4 record (measured 2026-10-20)
 
 All numbers below were produced on 2026-10-20 from `cargo run --release -p civil-demo` (US AASHTO profile, 50 km/h, USGS 3DEP terrain) and the scripts named. Nothing here has been reviewed by a licensed engineer.
 

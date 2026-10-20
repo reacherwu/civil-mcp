@@ -740,7 +740,7 @@ impl Session {
                 "3 Drainage first".into(),
                 format!(
                     "{} culverts installed before the embankment over them (temporary stream diversion, dry season); outlet protection at the same time",
-                    cu["culverts"].as_array().map_or(0, |v| v.iter().filter(|x| x["diameter_m"].is_number()).count())
+                    cu["culverts"].as_array().map_or(0, |v| v.iter().filter(|x| x["hyd"].is_object()).count())
                 ),
             ));
         }
