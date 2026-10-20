@@ -401,7 +401,7 @@ pub fn write(x: &Export) -> String {
             let ty = if n.pipes.iter().any(|p| p.q_avg > 0.0) { "sanitary" } else { "storm" };
             let _ = writeln!(o, "    <PipeNetwork name=\"{}\" pipeNetType=\"{ty}\">\n      <Structs>", esc(&n.name));
             for (id, sx, sy, rim, sump) in &n.structures {
-                let _ = writeln!(o, "        <Struct name=\"{}\" elevRim=\"{rim:.4}\" elevSump=\"{sump:.4}\">\n          <Center>{sy:.4} {sx:.4}</Center>", esc(id));
+                let _ = writeln!(o, "        <Struct name=\"{}\" elevRim=\"{rim:.4}\" elevSump=\"{sump:.4}\">\n          <Center>{sy:.4} {sx:.4}</Center>\n          <CircStruct diameter=\"1.0\" desc=\"placeholder size: structure dimensions are not designed by civil-mcp\"/>", esc(id));
                 for p in n.pipes.iter().filter(|p| &p.to == id) {
                     let _ = writeln!(o, "          <Invert elev=\"{:.4}\" flowDir=\"in\" refPipe=\"{}\"/>", p.invert_dn, esc(&p.id));
                 }
