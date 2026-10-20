@@ -14,8 +14,9 @@ pub const SHEET_W: f64 = 841.0;
 pub const SHEET_H: f64 = 594.0;
 
 pub fn sta_label(s: f64) -> String {
+    // metric station / chainage: km + metres
     let k = (s / 1000.0).floor();
-    format!("K{}+{:06.2}", k as i64, s - k * 1000.0)
+    format!("{}+{:06.2}", k as i64, s - k * 1000.0)
 }
 
 fn sample_al(al: &Alignment, step: f64) -> Vec<(f64, f64, f64, f64)> {
@@ -53,7 +54,7 @@ pub struct Design<'a> {
     pub intersections: &'a [Intersection],
 }
 
-fn base(d: &mut Drawing) {
+pub(crate) fn base(d: &mut Drawing) {
     d.units_mm = true;
     for (l, c) in [("BORDER", 7), ("GRID", 9), ("CONTOUR-MINOR", 8), ("CONTOUR-MAJOR", 30), ("ALIGNMENT", 1), ("DAYLIGHT", 3), ("PROFILE-GROUND", 30), ("PROFILE-DESIGN", 1), ("XS-GROUND", 30), ("XS-DESIGN", 1), ("XS-DATUM", 3), ("PIPE", 5), ("STRUCTURE", 5), ("GRADING", 6), ("WALL", 4), ("CURB", 2), ("INTERSECTION", 6), ("SIGHT", 140), ("HGL", 4), ("EGL", 1), ("TEXT", 7), ("TITLE", 7), ("STAMP", 1)] {
         d.layer(l, c);
@@ -65,7 +66,7 @@ fn base(d: &mut Drawing) {
 /// with zero mandatory failures. Even then the sheet only says "approved in audit
 /// log"; sealing is the engineer's act.
 /// Greedy wrap by estimated width in ems (CJK = 1 em, other = 0.55 em).
-fn wrap(s: &str, max_em: f64) -> Vec<String> {
+pub(crate) fn wrap(s: &str, max_em: f64) -> Vec<String> {
     let mut out = vec![String::new()];
     let mut w = 0.0;
     for word in s.split_inclusive(' ') {
@@ -80,7 +81,11 @@ fn wrap(s: &str, max_em: f64) -> Vec<String> {
     out.into_iter().map(|l| l.trim_end().to_string()).collect()
 }
 
-fn title_block(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, page: usize, pages: usize) {
+pub(crate) fn title_block(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, page: usize, pages: usize) {
+    title_block_s(d, info, sheet_title, "AS SHOWN", page, pages)
+}
+
+pub(crate) fn title_block_s(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, scale: &str, page: usize, pages: usize) {
     let (tx0, ty0, tx1, ty1) = (SHEET_W - 150.0, 20.0, SHEET_W - 20.0, SHEET_H - 20.0);
     d.rect("TITLE", tx0, ty0, tx1, ty1);
     let mut y = ty1 - 4.0;
@@ -94,6 +99,7 @@ fn title_block(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, page: usize
     }
     t(d, &format!("Sheet: {sheet_title}"), 3.0, "TITLE");
     t(d, &format!("Sheet {page} of {pages}"), 2.5, "TITLE");
+    t(d, &format!("Scale: {scale} (A1)"), 2.5, "TITLE");
     t(d, &format!("Standards: {}", info.standard), 2.5, "TITLE");
     t(d, &format!("Design speed: {:.0} km/h", info.design_speed), 2.5, "TITLE");
     t(d, &format!("Checks: {}/{} pass", info.checks_total - info.checks_failed, info.checks_total), 2.5, "TITLE");
@@ -262,7 +268,7 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         d.text("TEXT", [p[0] - 10.0, p[1] + 17.0], 2.0, &format!("{} R={:.0} L={:.0}", if c.crest { "CREST" } else { "SAG" }, c.length / (c.a_pct.abs() / 100.0).max(1e-9), c.length));
     }
     d.text("TEXT", [qx0 + 4.0, qy1 - 7.0], 4.0, &format!("PROFILE  H 1:{:.0}  V 1:{:.0}  (existing ground brown, finished grade red)", 1000.0 / hs, 1000.0 / vs));
-    title_block(&mut d, info, "Plan and profile", page, pages);
+    title_block_s(&mut d, info, "Plan and profile", &format!("plan 1:{n:.0}; profile as shown"), page, pages);
     d
 }
 
