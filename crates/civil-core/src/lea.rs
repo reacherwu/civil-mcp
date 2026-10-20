@@ -1,3 +1,4 @@
+#![allow(clippy::excessive_precision, clippy::needless_range_loop)]
 //! Multilayer linear-elastic analysis (Burmister layered half-space) under uniform circular loads.
 //! Love stress function φ = J0(mr)·f(z), f = (P + Qζ)e^{+m(ζ-h)} + (R + Sζ)e^{-mζ} per layer, fully
 //! bonded interfaces (σz, τrz, w, u continuous), traction-free surface outside the load, bottom
@@ -42,7 +43,7 @@ pub fn j0(x: f64) -> f64 {
         let xx = ax - 0.785398164;
         let a1 = 1.0 + y * (-0.1098628627e-2 + y * (0.2734510407e-4 + y * (-0.2073370639e-5 + y * 0.2093887211e-6)));
         let a2 = -0.1562499995e-1 + y * (0.1430488765e-3 + y * (-0.6911147651e-5 + y * (0.7621095161e-6 - y * 0.934935152e-7)));
-        (0.636619772 / ax).sqrt() * (xx.cos() * a1 - z * xx.sin() * a2)
+        (std::f64::consts::FRAC_2_PI / ax).sqrt() * (xx.cos() * a1 - z * xx.sin() * a2)
     }
 }
 
@@ -60,7 +61,7 @@ pub fn j1(x: f64) -> f64 {
         let xx = ax - 2.356194491;
         let a1 = 1.0 + y * (0.183105e-2 + y * (-0.3516396496e-4 + y * (0.2457520174e-5 + y * (-0.240337019e-6))));
         let a2 = 0.04687499995 + y * (-0.2002690873e-3 + y * (0.8449199096e-5 + y * (-0.88228987e-6 + y * 0.105787412e-6)));
-        let a = (0.636619772 / ax).sqrt() * (xx.cos() * a1 - z * xx.sin() * a2);
+        let a = (std::f64::consts::FRAC_2_PI / ax).sqrt() * (xx.cos() * a1 - z * xx.sin() * a2);
         if x < 0.0 {
             -a
         } else {

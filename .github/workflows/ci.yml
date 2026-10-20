@@ -6,6 +6,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with: { components: "rustfmt, clippy" }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --release --all-targets
       - run: cargo test --release
       - run: cargo run --release -p civil-demo -- demo-out
       - uses: actions/setup-python@v5
@@ -15,3 +18,7 @@ jobs:
         run: python scripts/independent_check.py demo-out --xsd schema/LandXML-1.2.xsd
       - name: independent re-checks of the v5 calculations (hydrology, culverts, slope, subsurface, mechanistic, walls, land, locality)
         run: python scripts/independent_check_v5.py demo-out
+      - name: independent re-checks of the v6 calculations (layered elastic vs PyMastic + KENPAVE, MSE, signals, capacity, rigid, landscape, locality)
+        run: |
+          git clone -q https://github.com/Mostafa-Nakhaei/PyMastic.git /tmp/PyMastic && git -C /tmp/PyMastic checkout -q be301be2fa996495b753966b86fd440a0c618cd2
+          python scripts/independent_check_v6.py demo-out /tmp/PyMastic

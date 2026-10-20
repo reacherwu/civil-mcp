@@ -54,6 +54,12 @@ pub const TOOLS: &[&str] = &[
     "specialist_handoffs",
     "plan_erosion_control",
     "select_wall_types",
+    "design_signals",
+    "analyse_capacity",
+    "landscape_concept",
+    "design_rigid_pavement",
+    "constructability_report",
+    "design_foundation",
 ];
 
 pub fn tool_list() -> Vec<Value> {
@@ -515,7 +521,12 @@ impl Session {
             "register_utilities",
             "land_requirements",
             "plan_erosion_control",
+            "landscape_concept",
             "plan_traffic_management",
+            "design_signals",
+            "analyse_capacity",
+            "design_rigid_pavement",
+            "constructability_report",
         ];
         order.iter().filter_map(|k| self.ext.get(*k)).flat_map(|e| e.sheets.iter().cloned()).collect()
     }
@@ -550,6 +561,12 @@ impl Session {
             "specialist_handoffs" => self.x_handoffs(&b, &mut o, &mut files)?,
             "plan_erosion_control" => self.x_esc(a, &mut o, &mut files)?,
             "select_wall_types" => self.x_walltypes(a, &b, &mut o, &mut files)?,
+            "design_signals" => self.x_signals(a, &b, &mut o, &mut files)?,
+            "analyse_capacity" => self.x_capacity(a, &b, &mut o, &mut files)?,
+            "landscape_concept" => self.x_landscape(a, &mut o, &mut files)?,
+            "design_rigid_pavement" => self.x_rigid(a, &b, &mut o, &mut files)?,
+            "constructability_report" => self.x_constructability(a, &b, &mut o, &mut files)?,
+            "design_foundation" => self.x_foundation(a, &b, &mut o, &mut files)?,
             _ => return Err(format!("unknown tool {name}")),
         }
         let mut fl = json!({});
@@ -1131,6 +1148,10 @@ impl Session {
                     }
                     let hs = w.design.h - w.design.base_t;
                     let (mu, d, asr, asmin, as_, sp, ok) = crate::reinforce::stem(&inp, hs, w.design.stem_bot);
+                    let (vu, pvc) = crate::reinforce::stem_shear(&inp, hs, d);
+                    let ge = a["crack_gamma_e"].as_f64().unwrap_or(0.75);
+                    let scr = crate::reinforce::crack_spacing(&inp, mu / inp.load_factor, as_ / 1e6, d, w.design.stem_bot, ge);
+                    let fh = crate::reinforce::footing(&inp, &w.design);
                     res.push(crate::reinforce::RebarResult {
                         station: s.station,
                         side: side.into(),
@@ -1144,6 +1165,15 @@ impl Session {
                         spacing_mm: sp,
                         ok,
                         note: String::new(),
+                        vu_kn: vu,
+                        phi_vc_kn: pvc,
+                        s_crack_mm: scr,
+                        mu_heel: fh.0,
+                        mu_toe: fh.1,
+                        as_heel_mm2: fh.2,
+                        as_toe_mm2: fh.3,
+                        sp_heel_mm: fh.4,
+                        sp_toe_mm: fh.5,
                     });
                 }
             }
@@ -1169,6 +1199,55 @@ impl Session {
                 format!("Mu {:.1} kNm/m, As {:.0} mm2/m", r.mu_knm, r.as_mm2),
                 format!("{} ({})", crate::reinforce::LRFD_FLEX, inp.source),
             ));
+            let el = format!("wall {} {}", sta_label(r.station), r.side);
+            o.checks.push(chk(
+                "W-SHEAR",
+                "Stem base shear Vu ≤ φVc (no shear steel)",
+                el.clone(),
+                r.vu_kn,
+                r.phi_vc_kn,
+                "kN/m",
+                "max",
+                "mandatory",
+                "Vc = 0.083·2·√f'c·b·dv".into(),
+                format!("{} ({})", crate::reinforce::LRFD_SHEAR, inp.source),
+            ));
+            o.checks.push(chk(
+                "W-CRACK",
+                "Stem bar spacing ≤ crack-control maximum",
+                el.clone(),
+                r.spacing_mm,
+                r.s_crack_mm,
+                "mm",
+                "max",
+                "mandatory",
+                "service moment, γe from the engineer (default 0.75)".into(),
+                crate::reinforce::LRFD_CRACK.into(),
+            ));
+            o.checks.push(chk(
+                "W-HEEL",
+                "Footing heel steel fits (bar spacing ≥ 100 mm)",
+                el.clone(),
+                r.sp_heel_mm,
+                100.0,
+                "mm",
+                "min",
+                "mandatory",
+                format!("Mu heel {:.1} kNm/m, As {:.0} mm2/m", r.mu_heel, r.as_heel_mm2),
+                crate::reinforce::LRFD_FLEX.into(),
+            ));
+            o.checks.push(chk(
+                "W-TOE",
+                "Footing toe steel fits (bar spacing ≥ 100 mm)",
+                el,
+                r.sp_toe_mm,
+                100.0,
+                "mm",
+                "min",
+                "mandatory",
+                format!("Mu toe {:.1} kNm/m, As {:.0} mm2/m", r.mu_toe, r.as_toe_mm2),
+                crate::reinforce::LRFD_FLEX.into(),
+            ));
             rows.push(vec![
                 sta_label(r.station),
                 r.side.clone(),
@@ -1184,12 +1263,31 @@ impl Session {
                 if r.ok { "yes".into() } else { "NO".into() },
             ]);
         }
-        let mut wcsv = String::from("station,side,stem_h_m,t_m,mu_knm_per_m,d_m,as_req_mm2_per_m,as_min_mm2_per_m,as_mm2_per_m,spacing_mm,ok\n");
+        let mut wcsv = String::from("station,side,stem_h_m,t_m,mu_knm_per_m,d_m,as_req_mm2_per_m,as_min_mm2_per_m,as_mm2_per_m,spacing_mm,ok,vu_kn_per_m,phi_vc_kn_per_m,s_crack_mm,mu_heel_knm_per_m,mu_toe_knm_per_m,as_heel_mm2_per_m,as_toe_mm2_per_m,sp_heel_mm,sp_toe_mm\n");
         for r in &res {
             let _ = writeln!(
                 wcsv,
-                "{:.2},{},{:.4},{:.4},{:.4},{:.5},{:.2},{:.2},{:.2},{:.2},{}",
-                r.station, r.side, r.stem_h_m, r.t_m, r.mu_knm, r.d_m, r.as_req_mm2, r.as_min_mm2, r.as_mm2, r.spacing_mm, r.ok
+                "{:.2},{},{:.4},{:.4},{:.4},{:.5},{:.2},{:.2},{:.2},{:.2},{},{:.3},{:.3},{:.1},{:.3},{:.3},{:.2},{:.2},{:.1},{:.1}",
+                r.station,
+                r.side,
+                r.stem_h_m,
+                r.t_m,
+                r.mu_knm,
+                r.d_m,
+                r.as_req_mm2,
+                r.as_min_mm2,
+                r.as_mm2,
+                r.spacing_mm,
+                r.ok,
+                r.vu_kn,
+                r.phi_vc_kn,
+                r.s_crack_mm,
+                r.mu_heel,
+                r.mu_toe,
+                r.as_heel_mm2,
+                r.as_toe_mm2,
+                r.sp_heel_mm,
+                r.sp_toe_mm
             );
         }
         files.push(("wall-reinforcement.csv".into(), wcsv.into_bytes()));

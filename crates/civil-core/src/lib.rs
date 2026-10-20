@@ -32,6 +32,7 @@ pub mod protection;
 pub mod quantities;
 pub mod reinforce;
 pub mod report;
+pub mod rigid;
 pub mod route;
 pub mod signals;
 pub mod slope;

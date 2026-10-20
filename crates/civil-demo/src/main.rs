@@ -452,7 +452,7 @@ pub fn run(out: &str) -> Session {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    let v = r.call("locality_plan", json!({"utm_zone": 10, "north": true, "basemap_geojson": "data/basemap/osm-locality.geojson"}));
+    let v = r.call("locality_plan", json!({"utm_zone": 10, "north": true, "basemap_geojson": format!("{root}/../../data/basemap/osm-locality.geojson")}));
     println!("locality: start {:.6},{:.6}", v["result"]["start"]["lat"].as_f64().unwrap(), v["result"]["start"]["lon"].as_f64().unwrap());
     let v = r.call(
         "check_intersection_sight",
@@ -461,6 +461,60 @@ pub fn run(out: &str) -> Session {
     println!("intersection sight: required {:.1} m", v["result"]["required_m"].as_f64().unwrap());
     let v = r.call("plan_erosion_control", json!({"check_dam_h_m": 0.6, "fence_offset_m": 1.0, "source": demo}));
     println!("ESC: sediment fence {:.0} m, {} check dams", v["result"]["sediment_fence_m"].as_f64().unwrap(), v["result"]["check_dams"]);
+    // v6: signals (warrant + concept timing), capacity, landscape, rigid pavement (AU/NZ method shown for comparison), constructability
+    let v = r.call("design_signals", json!({
+        "warrants": {"hours": [[640.0, 165.0], [720.0, 185.0], [580.0, 155.0], [560.0, 152.0], [600.0, 160.0], [650.0, 175.0], [700.0, 195.0], [660.0, 180.0], [480.0, 120.0], [420.0, 95.0]],
+                     "major_lanes": 1, "minor_lanes": 1, "major_speed_kmh": 50.0, "isolated_community": false},
+        "timing": {"approaches": [
+            {"name": "EB", "major": true, "through_vph": 330.0, "left_vph": 40.0, "right_vph": 30.0, "lanes": 1, "speed_kmh": 50.0, "crossing_m": 12.0},
+            {"name": "WB", "major": true, "through_vph": 300.0, "left_vph": 35.0, "right_vph": 35.0, "lanes": 1, "speed_kmh": 50.0, "crossing_m": 12.0},
+            {"name": "NB", "major": false, "through_vph": 50.0, "left_vph": 70.0, "right_vph": 60.0, "lanes": 1, "speed_kmh": 30.0, "crossing_m": 14.0},
+            {"name": "SB", "major": false, "through_vph": 40.0, "left_vph": 55.0, "right_vph": 50.0, "lanes": 1, "speed_kmh": 30.0, "crossing_m": 14.0}],
+            "sat_flow_pcuhpl": 1800.0, "permissive_left_pcu": 2.0, "lost_per_phase_s": 4.0, "source": demo},
+        "x_max": 0.9, "los_target": "C"}));
+    println!(
+        "signals: warrant met {} ({}), cycle {:.0} s, delay {:.1} s/veh, LOS {}",
+        v["result"]["warrant"]["met"],
+        v["result"]["warrant"]["detail"],
+        v["result"]["timing"]["cycle_s"].as_f64().unwrap(),
+        v["result"]["timing"]["delay_s"].as_f64().unwrap(),
+        v["result"]["timing"]["los"]
+    );
+    let v = r.call("analyse_capacity", json!({
+        "link": {"peak_hour_vph": 760.0, "direction_split": 0.55, "phf": 0.92, "heavy_pct": 6.0, "e_t": 2.0, "capacity_pcphpl": 1700.0, "lanes_per_direction": 1.0, "ffs_kmh": 60.0,
+                 "los_vc": [[0.25, "A"], [0.4, "B"], [0.6, "C"], [0.8, "D"], [1.0, "E"]]},
+        "priority": {"movements": [
+            {"name": "minor left (NB)", "volume_vph": 70.0, "conflicting_vph": 700.0, "tc_s": 7.1, "tf_s": 3.5},
+            {"name": "minor right (NB)", "volume_vph": 60.0, "conflicting_vph": 330.0, "tc_s": 6.2, "tf_s": 3.3},
+            {"name": "major left (EB)", "volume_vph": 40.0, "conflicting_vph": 335.0, "tc_s": 4.1, "tf_s": 2.2}]},
+        "source": demo}));
+    println!("capacity: link v/c {:.2}, LOS {}", v["result"]["link"]["v_c"].as_f64().unwrap(), v["result"]["link"]["los"]);
+    let v = r.call("landscape_concept", json!({"tree_spacing_m": 12.0, "tree_offset_m": 11.0, "clear_zone_m": 3.0, "side": "R", "intersection_clear_m": 40.0, "pole_clear_m": 3.0, "shrub_density_per_m2": 1.0, "topsoil_mm": 100.0, "source": demo}));
+    println!("landscape: {} trees, areas {}", v["result"]["trees"], v["result"]["areas_m2"]);
+    let v = r.call(
+        "design_rigid_pavement",
+        json!({"base_type": "JRCP", "groups": [
+            {"name": "SAST 53 kN", "load_kn": 53.0, "tyres": 2.0, "repetitions": 2.0e5},
+            {"name": "SADT 80 kN", "load_kn": 80.0, "tyres": 4.0, "repetitions": 1.5e6},
+            {"name": "TADT 135 kN", "load_kn": 135.0, "tyres": 8.0, "repetitions": 6.0e5},
+            {"name": "TRDT 181 kN", "load_kn": 181.0, "tyres": 12.0, "repetitions": 3.0e5}],
+        "k_mpa_m": 70.0, "fcf_mpa": 4.5, "e_mpa": 30000.0, "nu": 0.15, "lsf": 1.2, "tyre_kpa": 750.0, "tied_shoulder": true, "source": demo}),
+    );
+    println!(
+        "rigid (AGPT02 structure, comparison): base {:.0} mm, fatigue {:.1} %, erosion {:.1} %",
+        v["result"]["result"]["h_mm"].as_f64().unwrap(),
+        v["result"]["result"]["fatigue_pct"].as_f64().unwrap(),
+        v["result"]["result"]["erosion_pct"].as_f64().unwrap()
+    );
+    let v = r.call("design_foundation", json!({"subgrade_cbr_pct": 4.0, "layers": [{"name": "granular subbase", "e_mpa": 150.0, "h_m": 0.15}], "h_max_m": 0.6, "target_e0_mpa": 100.0, "plate_radius_m": 0.15, "plate_kpa": 100.0, "source": demo}));
+    println!(
+        "foundation: subbase {:.2} m, E0 {:.0} MPa (target {})",
+        v["result"]["layers"][0]["h_m"].as_f64().unwrap(),
+        v["result"]["e0_mpa"].as_f64().unwrap(),
+        v["result"]["target"]
+    );
+    let v = r.call("constructability_report", json!({"max_fill_h_m": 10.0, "max_grade_paving_pct": 6.0, "mse_hold_h_m": 10.0, "source": demo}));
+    println!("constructability: {} stages, {} risks", v["result"]["sequence"].as_array().unwrap().len(), v["result"]["risks"].as_array().unwrap().len());
     r.call("cost_plan", json!({"contingency_pct": 30.0, "risks": [{"name": "unknown utilities (demo)", "p50": null, "p90": null}]}));
     r.call("specialist_handoffs", json!({}));
     let c = r.call("check_standards", json!({}));
