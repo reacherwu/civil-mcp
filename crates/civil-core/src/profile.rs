@@ -104,7 +104,8 @@ mod tests {
     use super::*;
     #[test]
     fn parabola_matches_closed_form() {
-        let p = Profile::build(ProfileInput { name: "p".into(), vpis: vec![[0.0, 100.0], [200.0, 110.0], [400.0, 104.0]], curve_lengths: vec![120.0] }).unwrap();
+        let p =
+            Profile::build(ProfileInput { name: "p".into(), vpis: vec![[0.0, 100.0], [200.0, 110.0], [400.0, 104.0]], curve_lengths: vec![120.0] }).unwrap();
         let c = &p.curves[0];
         assert!(c.crest && (c.a_pct + 8.0).abs() < 1e-9 && (c.k - 15.0).abs() < 1e-9);
         // at VPI the curve is offset by A*L/800 below the VPI

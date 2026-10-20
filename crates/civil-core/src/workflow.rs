@@ -101,7 +101,17 @@ pub struct Built {
     pub cor: Corridor,
 }
 
-pub fn evaluate(b: &DesignBasis, tin: &Tin, asm: &Assembly, ai: AlignmentInput, vpi_spacing: f64, interval: f64, shrink: f64, rates: &UnitRates, wc: Option<&crate::walls::Criteria>) -> crate::Result<(Evaluation, Built)> {
+pub fn evaluate(
+    b: &DesignBasis,
+    tin: &Tin,
+    asm: &Assembly,
+    ai: AlignmentInput,
+    vpi_spacing: f64,
+    interval: f64,
+    shrink: f64,
+    rates: &UnitRates,
+    wc: Option<&crate::walls::Criteria>,
+) -> crate::Result<(Evaluation, Built)> {
     let al = Alignment::build(ai.clone())?;
     let se = superelev::design(b, &al)?;
     let n = ((al.length / vpi_spacing).round() as usize).max(1);
@@ -118,7 +128,11 @@ pub fn summarize(b: &DesignBasis, al: &Alignment, pr: &Profile, cor: &Corridor, 
     let fails: Vec<String> = checks.iter().filter(|c| !c.pass && c.severity == "mandatory").map(|c| format!("{} {}", c.id, c.element)).collect();
     let imb = cor.cut_m3 * shrink - cor.fill_m3;
     let pav = al.length * (cor.assembly.paved_width() + cor.assembly.side_cfg(false).paved_width(0.0));
-    let cost = rates.excavation * cor.cut_m3 + rates.embankment * cor.fill_m3 + rates.borrow_waste * imb.abs() + rates.wall_concrete * cor.wall_concrete_m3 + rates.pavement_m2 * pav;
+    let cost = rates.excavation * cor.cut_m3
+        + rates.embankment * cor.fill_m3
+        + rates.borrow_waste * imb.abs()
+        + rates.wall_concrete * cor.wall_concrete_m3
+        + rates.pavement_m2 * pav;
     Evaluation {
         length_m: al.length,
         radii: radii.to_vec(),
@@ -166,7 +180,21 @@ pub struct OptResult {
 /// Minimises |cut·shrink − fill| + w_volume·(cut + fill) + w_wall·wall_concrete. Each candidate
 /// must keep every mandatory geometry check passing (max grade, vertical-curve lengths
 /// recomputed at the minimum). End VPIs are held fixed (tie-ins).
-pub fn optimize_profile(b: &DesignBasis, tin: &Tin, al: &Alignment, se: Option<&Superelevation>, asm: &Assembly, start: &ProfileInput, interval: f64, shrink: f64, w_volume: f64, w_wall: f64, w_haul: f64, steps_m: &[f64], wc: Option<&crate::walls::Criteria>) -> crate::Result<OptResult> {
+pub fn optimize_profile(
+    b: &DesignBasis,
+    tin: &Tin,
+    al: &Alignment,
+    se: Option<&Superelevation>,
+    asm: &Assembly,
+    start: &ProfileInput,
+    interval: f64,
+    shrink: f64,
+    w_volume: f64,
+    w_wall: f64,
+    w_haul: f64,
+    steps_m: &[f64],
+    wc: Option<&crate::walls::Criteria>,
+) -> crate::Result<OptResult> {
     let rs = standards::resolve(b)?;
     let rates = UnitRates::default();
     let radii: Vec<f64> = al.curves().iter().map(|c| c.radius).collect();
@@ -208,7 +236,15 @@ pub fn optimize_profile(b: &DesignBasis, tin: &Tin, al: &Alignment, se: Option<&
                             best_pi = pi;
                             v = c;
                             improved = true;
-                            steps.push(OptStep { iteration: it, vpi: k, delta_m: d, objective: o, imbalance_m3: ev.imbalance_m3, cut_m3: ev.cut_m3, fill_m3: ev.fill_m3 });
+                            steps.push(OptStep {
+                                iteration: it,
+                                vpi: k,
+                                delta_m: d,
+                                objective: o,
+                                imbalance_m3: ev.imbalance_m3,
+                                cut_m3: ev.cut_m3,
+                                fill_m3: ev.fill_m3,
+                            });
                             break;
                         }
                     }

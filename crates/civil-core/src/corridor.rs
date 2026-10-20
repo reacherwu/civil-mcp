@@ -150,7 +150,13 @@ fn d_sg() -> f64 {
 impl Assembly {
     pub fn validate(&self) -> crate::Result<()> {
         let pos = |x: f64| x > 0.0 && x.is_finite();
-        if self.lanes_m.is_empty() || !self.lanes_m.iter().all(|w| pos(*w)) || self.shoulder_m < 0.0 || !pos(self.cut_slope_h) || !pos(self.fill_slope_h) || !pos(self.subgrade_slope_h) {
+        if self.lanes_m.is_empty()
+            || !self.lanes_m.iter().all(|w| pos(*w))
+            || self.shoulder_m < 0.0
+            || !pos(self.cut_slope_h)
+            || !pos(self.fill_slope_h)
+            || !pos(self.subgrade_slope_h)
+        {
             return Err("assembly: lanes > 0, shoulder >= 0, slopes > 0 required".into());
         }
         if let Some(d) = &self.ditch {
@@ -178,18 +184,50 @@ impl Assembly {
         self.pavement.iter().map(|l| l.thickness_m).sum()
     }
     pub fn side_cfg(&self, left: bool) -> SideCfg {
-        let mut c = SideCfg { lanes_m: self.lanes_m.clone(), shoulder_m: self.shoulder_m, shoulder_slope: self.shoulder_slope, shoulder_paved: self.shoulder_paved, curb: self.curb.clone(), ditch: self.ditch.clone(), cut_slope_h: self.cut_slope_h, fill_slope_h: self.fill_slope_h, cut_bench: self.cut_bench.clone(), fill_bench: self.fill_bench.clone(), wall: self.wall.clone(), pavement_t: self.pavement_thickness(), subgrade_slope_h: self.subgrade_slope_h };
+        let mut c = SideCfg {
+            lanes_m: self.lanes_m.clone(),
+            shoulder_m: self.shoulder_m,
+            shoulder_slope: self.shoulder_slope,
+            shoulder_paved: self.shoulder_paved,
+            curb: self.curb.clone(),
+            ditch: self.ditch.clone(),
+            cut_slope_h: self.cut_slope_h,
+            fill_slope_h: self.fill_slope_h,
+            cut_bench: self.cut_bench.clone(),
+            fill_bench: self.fill_bench.clone(),
+            wall: self.wall.clone(),
+            pavement_t: self.pavement_thickness(),
+            subgrade_slope_h: self.subgrade_slope_h,
+        };
         if !left {
             if let Some(o) = &self.right {
-                if let Some(v) = &o.lanes_m { c.lanes_m = v.clone() }
-                if let Some(v) = o.shoulder_m { c.shoulder_m = v }
-                if let Some(v) = o.shoulder_slope { c.shoulder_slope = v }
-                if let Some(v) = o.shoulder_paved { c.shoulder_paved = v }
-                if o.curb.is_some() { c.curb = o.curb.clone() }
-                if o.ditch.is_some() { c.ditch = o.ditch.clone() }
-                if let Some(v) = o.cut_slope_h { c.cut_slope_h = v }
-                if let Some(v) = o.fill_slope_h { c.fill_slope_h = v }
-                if o.wall.is_some() { c.wall = o.wall.clone() }
+                if let Some(v) = &o.lanes_m {
+                    c.lanes_m = v.clone()
+                }
+                if let Some(v) = o.shoulder_m {
+                    c.shoulder_m = v
+                }
+                if let Some(v) = o.shoulder_slope {
+                    c.shoulder_slope = v
+                }
+                if let Some(v) = o.shoulder_paved {
+                    c.shoulder_paved = v
+                }
+                if o.curb.is_some() {
+                    c.curb = o.curb.clone()
+                }
+                if o.ditch.is_some() {
+                    c.ditch = o.ditch.clone()
+                }
+                if let Some(v) = o.cut_slope_h {
+                    c.cut_slope_h = v
+                }
+                if let Some(v) = o.fill_slope_h {
+                    c.fill_slope_h = v
+                }
+                if o.wall.is_some() {
+                    c.wall = o.wall.clone()
+                }
                 for r in &o.remove {
                     match r.as_str() {
                         "curb" => c.curb = None,
@@ -398,7 +436,7 @@ fn side(cfg: &SideCfg, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>, extr
     }
     let hinge = [o, z];
     let gh = g(o);
-    let cut = gh.map_or(false, |gz| gz >= z);
+    let cut = gh.is_some_and(|gz| gz >= z);
     let mut warning = None;
     let mut start = hinge;
     let (tail, ok, w) = if cut {
@@ -428,21 +466,41 @@ fn side(cfg: &SideCfg, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>, extr
     let mut tail = tail;
     if let (Some(rule), Some(last)) = (&cfg.wall, tail.last().copied()) {
         let height = (last[1] - start[1]).abs();
-        let trig_off = rule.max_daylight_offset_m.map_or(false, |m| last[0] > m);
-        let trig_h = rule.max_slope_height_m.map_or(false, |m| height > m);
+        let trig_off = rule.max_daylight_offset_m.is_some_and(|m| last[0] > m);
+        let trig_h = rule.max_slope_height_m.is_some_and(|m| height > m);
         if trig_off || trig_h {
             let ow = start[0] + rule.offset_from_hinge_m;
             if let Some(gz) = g(ow + 0.01) {
                 let exposed = if cut { gz - start[1] } else { start[1] - gz };
                 if exposed > 0.0 {
                     let h = exposed + rule.embedment_m;
-                    let cr = wc.cloned().ok_or("retaining wall needed but no wall criteria for this standards profile (enter design_basis.wall_criteria)").unwrap_or_else(|e| crate::walls::Criteria { fs_sliding: f64::INFINITY, fs_overturning: f64::INFINITY, e_frac: 0.0, qmax_factor: 0.0, citation: e.to_string() });
+                    let cr = wc
+                        .cloned()
+                        .ok_or("retaining wall needed but no wall criteria for this standards profile (enter design_basis.wall_criteria)")
+                        .unwrap_or_else(|e| crate::walls::Criteria {
+                            fs_sliding: f64::INFINITY,
+                            fs_overturning: f64::INFINITY,
+                            e_frac: 0.0,
+                            qmax_factor: 0.0,
+                            citation: e.to_string(),
+                        });
                     let mut d = crate::walls::proportion(&rule.kind, h, &rule.soil, &cr);
                     d.exposed_h = exposed;
-                    let trigger = if trig_off { format!("daylight {:.1} m > ROW {:.1} m", last[0], rule.max_daylight_offset_m.unwrap()) } else { format!("slope height {:.1} m > {:.1} m", height, rule.max_slope_height_m.unwrap()) };
+                    let trigger = if trig_off {
+                        format!("daylight {:.1} m > ROW {:.1} m", last[0], rule.max_daylight_offset_m.unwrap())
+                    } else {
+                        format!("slope height {:.1} m > {:.1} m", height, rule.max_slope_height_m.unwrap())
+                    };
                     tail = vec![[ow, start[1]], [ow + 0.01, gz]];
                     warning = None;
-                    wall = Some(WallPlaced { offset: ow, top_z: if cut { gz } else { start[1] }, bottom_z: if cut { start[1] } else { gz }, cut, trigger, design: d });
+                    wall = Some(WallPlaced {
+                        offset: ow,
+                        top_z: if cut { gz } else { start[1] },
+                        bottom_z: if cut { start[1] } else { gz },
+                        cut,
+                        trigger,
+                        design: d,
+                    });
                 }
             }
         }
@@ -450,7 +508,21 @@ fn side(cfg: &SideCfg, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>, extr
     let n_tail = tail.len();
     for (i, p) in tail.iter().enumerate() {
         fg.push(*p);
-        let code = if wall.is_some() { if i == 0 { if cut { "WALL-BOTTOM" } else { "WALL-TOP" } } else { "DAYLIGHT" } } else if i + 1 == n_tail { "DAYLIGHT" } else { "SLOPE" };
+        let code = if wall.is_some() {
+            if i == 0 {
+                if cut {
+                    "WALL-BOTTOM"
+                } else {
+                    "WALL-TOP"
+                }
+            } else {
+                "DAYLIGHT"
+            }
+        } else if i + 1 == n_tail {
+            "DAYLIGHT"
+        } else {
+            "SLOPE"
+        };
         codes.push(code.into());
     }
     let daylight = fg.last().unwrap()[0];
@@ -585,7 +657,16 @@ pub fn section_at(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelev
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn section_at_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, s: f64, widen: (f64, f64), wc: Option<&crate::walls::Criteria>) -> crate::Result<Section> {
+pub fn section_at_opts(
+    tin: &Tin,
+    al: &Alignment,
+    pr: &Profile,
+    se: Option<&Superelevation>,
+    asm: &Assembly,
+    s: f64,
+    widen: (f64, f64),
+    wc: Option<&crate::walls::Criteria>,
+) -> crate::Result<Section> {
     let (x, y, h) = al.point_at(s).ok_or("station off alignment")?;
     let cl = pr.elevation_at(s).ok_or("station off profile")?;
     let (nx, ny) = (-h.sin(), h.cos());
@@ -608,7 +689,23 @@ pub fn section_at_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Supe
         o += 1.0;
     }
     let warnings = [left.warning.clone(), right.warning.clone()].into_iter().flatten().collect();
-    Ok(Section { station: s, x, y, heading: h, cl_elev: cl, ground_cl: gcl, slope_left: sl, slope_right: sr, left, right, ground, cut_area: cl_ + cr, fill_area: fl + fr, layer_areas, warnings })
+    Ok(Section {
+        station: s,
+        x,
+        y,
+        heading: h,
+        cl_elev: cl,
+        ground_cl: gcl,
+        slope_left: sl,
+        slope_right: sr,
+        left,
+        right,
+        ground,
+        cut_area: cl_ + cr,
+        fill_area: fl + fr,
+        layer_areas,
+        warnings,
+    })
 }
 
 pub fn build(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, interval: f64) -> crate::Result<Corridor> {
@@ -626,15 +723,37 @@ pub fn widening_at(al: &Alignment, w: &[f64], s: f64) -> (f64, f64) {
         }
         let (a0, a1) = if c.ls_in > 0.0 { (c.sta_start, c.sta_cs_start) } else { (c.sta_start - 10.0, c.sta_start) };
         let (b0, b1) = if c.ls_out > 0.0 { (c.sta_cs_end, c.sta_end) } else { (c.sta_end, c.sta_end + 10.0) };
-        let f = if s <= a0 || s >= b1 { 0.0 } else if s < a1 { (s - a0) / (a1 - a0) } else if s <= b0 { 1.0 } else { (b1 - s) / (b1 - b0) };
+        let f = if s <= a0 || s >= b1 {
+            0.0
+        } else if s < a1 {
+            (s - a0) / (a1 - a0)
+        } else if s <= b0 {
+            1.0
+        } else {
+            (b1 - s) / (b1 - b0)
+        };
         let v = f * wc;
-        if c.dir > 0.0 { l = f64::max(l, v) } else { r = f64::max(r, v) }
+        if c.dir > 0.0 {
+            l = f64::max(l, v)
+        } else {
+            r = f64::max(r, v)
+        }
     }
     (l, r)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, interval: f64, widening: Option<&WideningSpec>, speed: f64, wc: Option<&crate::walls::Criteria>) -> crate::Result<Corridor> {
+pub fn build_opts(
+    tin: &Tin,
+    al: &Alignment,
+    pr: &Profile,
+    se: Option<&Superelevation>,
+    asm: &Assembly,
+    interval: f64,
+    widening: Option<&WideningSpec>,
+    speed: f64,
+    wc: Option<&crate::walls::Criteria>,
+) -> crate::Result<Corridor> {
     asm.validate()?;
     if !(interval > 0.0) {
         return Err("interval must be > 0".into());
@@ -741,7 +860,13 @@ pub fn surface(c: &Corridor, datum: bool) -> crate::Result<(Tin, crate::tin::Tin
             // zipper in offset order: always advance the side whose next vertex has the smaller offset,
             // so triangles never fold across closely spaced vertices (curb faces, walls)
             while i + 1 < n || j + 1 < m {
-                let adv_a = if j + 1 >= m { true } else if i + 1 >= n { false } else { po[i + 1] < off[j + 1] };
+                let adv_a = if j + 1 >= m {
+                    true
+                } else if i + 1 >= n {
+                    false
+                } else {
+                    po[i + 1] < off[j + 1]
+                };
                 if adv_a {
                     faces.push([pb + i, pb + i + 1, base + j]);
                     i += 1;
@@ -805,12 +930,16 @@ mod tests {
     }
     fn straight() -> (Alignment, Profile) {
         (
-            Alignment::build(AlignmentInput { name: "a".into(), pis: vec![[0.0, 0.0], [0.0, 500.0]], radii: vec![], spirals: vec![], start_station: 0.0 }).unwrap(),
+            Alignment::build(AlignmentInput { name: "a".into(), pis: vec![[0.0, 0.0], [0.0, 500.0]], radii: vec![], spirals: vec![], start_station: 0.0 })
+                .unwrap(),
             Profile::build(ProfileInput { name: "p".into(), vpis: vec![[0.0, 102.0], [500.0, 102.0]], curve_lengths: vec![] }).unwrap(),
         )
     }
     fn asm() -> Assembly {
-        serde_json::from_value(serde_json::json!({"name":"t","lanes_m":[5.0],"shoulder_m":0.0,"shoulder_slope":-0.04,"shoulder_paved":false,"cut_slope_h":2.0,"fill_slope_h":2.0})).unwrap()
+        serde_json::from_value(
+            serde_json::json!({"name":"t","lanes_m":[5.0],"shoulder_m":0.0,"shoulder_slope":-0.04,"shoulder_paved":false,"cut_slope_h":2.0,"fill_slope_h":2.0}),
+        )
+        .unwrap()
     }
     #[test]
     fn fill_prism_matches_hand_calc() {
@@ -859,9 +988,12 @@ mod tests {
     fn curb_in_cut_steps_datum_and_matches_composite() {
         // ground 103 (cut), CL 102, curb right only; pavement 0.3 m
         let (al, pr) = straight();
-        let a: Assembly = serde_json::from_value(serde_json::json!({"name":"t","lanes_m":[3.5],"shoulder_m":0.0,"shoulder_slope":-0.04,"shoulder_paved":false,"cut_slope_h":1.0,"fill_slope_h":2.0,
+        let a: Assembly = serde_json::from_value(
+            serde_json::json!({"name":"t","lanes_m":[3.5],"shoulder_m":0.0,"shoulder_slope":-0.04,"shoulder_paved":false,"cut_slope_h":1.0,"fill_slope_h":2.0,
             "pavement":[{"name":"p","thickness_m":0.3}],
-            "right":{"curb":{"gutter_m":0.5,"gutter_slope":-0.06,"height_m":0.15,"top_m":0.15,"sidewalk_m":2.0,"sidewalk_slope":0.02}}})).unwrap();
+            "right":{"curb":{"gutter_m":0.5,"gutter_slope":-0.06,"height_m":0.15,"top_m":0.15,"sidewalk_m":2.0,"sidewalk_slope":0.02}}}),
+        )
+        .unwrap();
         let g = flat(103.0);
         let c = build(&g, &al, &pr, None, &a, 20.0).unwrap();
         let s = &c.sections[3];
@@ -876,8 +1008,11 @@ mod tests {
     fn wall_replaces_slope_beyond_row() {
         let (al, pr) = straight();
         let mut a = asm();
-        a.wall = Some(serde_json::from_value(serde_json::json!({"kind":"gravity","max_daylight_offset_m":7.0,"offset_from_hinge_m":0.0,"embedment_m":0.5,
-            "soil":{"gamma_kn_m3":18.0,"phi_deg":30.0,"base_friction":0.5,"bearing_kpa":200.0}})).unwrap());
+        a.wall = Some(
+            serde_json::from_value(serde_json::json!({"kind":"gravity","max_daylight_offset_m":7.0,"offset_from_hinge_m":0.0,"embedment_m":0.5,
+            "soil":{"gamma_kn_m3":18.0,"phi_deg":30.0,"base_friction":0.5,"bearing_kpa":200.0}}))
+            .unwrap(),
+        );
         // ground 99 → fill 3 m below CL 102: slope would daylight at 5 + 2·2.9 = 10.8 > 7 → wall at 5 m, exposed 101.9 − 99 = 2.9
         let c = build(&flat(99.0), &al, &pr, None, &a, 20.0).unwrap();
         let s = &c.sections[2];
@@ -890,7 +1025,14 @@ mod tests {
     }
     #[test]
     fn widening_ramps_over_spiral() {
-        let al = Alignment::build(AlignmentInput { name: "a".into(), pis: vec![[0.0, 0.0], [0.0, 300.0], [300.0, 600.0]], radii: vec![150.0], spirals: vec![50.0], start_station: 0.0 }).unwrap();
+        let al = Alignment::build(AlignmentInput {
+            name: "a".into(),
+            pis: vec![[0.0, 0.0], [0.0, 300.0], [300.0, 600.0]],
+            radii: vec![150.0],
+            spirals: vec![50.0],
+            start_station: 0.0,
+        })
+        .unwrap();
         let c = &al.curves()[0];
         let w = [0.6];
         assert_eq!(widening_at(&al, &w, c.sta_start - 1.0), (0.0, 0.0));

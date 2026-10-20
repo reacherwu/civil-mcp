@@ -56,7 +56,31 @@ pub struct Design<'a> {
 
 pub(crate) fn base(d: &mut Drawing) {
     d.units_mm = true;
-    for (l, c) in [("BORDER", 7), ("GRID", 9), ("CONTOUR-MINOR", 8), ("CONTOUR-MAJOR", 30), ("ALIGNMENT", 1), ("DAYLIGHT", 3), ("PROFILE-GROUND", 30), ("PROFILE-DESIGN", 1), ("XS-GROUND", 30), ("XS-DESIGN", 1), ("XS-DATUM", 3), ("PIPE", 5), ("STRUCTURE", 5), ("GRADING", 6), ("WALL", 4), ("CURB", 2), ("INTERSECTION", 6), ("SIGHT", 140), ("HGL", 4), ("EGL", 1), ("TEXT", 7), ("TITLE", 7), ("STAMP", 1)] {
+    for (l, c) in [
+        ("BORDER", 7),
+        ("GRID", 9),
+        ("CONTOUR-MINOR", 8),
+        ("CONTOUR-MAJOR", 30),
+        ("ALIGNMENT", 1),
+        ("DAYLIGHT", 3),
+        ("PROFILE-GROUND", 30),
+        ("PROFILE-DESIGN", 1),
+        ("XS-GROUND", 30),
+        ("XS-DESIGN", 1),
+        ("XS-DATUM", 3),
+        ("PIPE", 5),
+        ("STRUCTURE", 5),
+        ("GRADING", 6),
+        ("WALL", 4),
+        ("CURB", 2),
+        ("INTERSECTION", 6),
+        ("SIGHT", 140),
+        ("HGL", 4),
+        ("EGL", 1),
+        ("TEXT", 7),
+        ("TITLE", 7),
+        ("STAMP", 1),
+    ] {
         d.layer(l, c);
     }
     d.rect("BORDER", 10.0, 10.0, SHEET_W - 10.0, SHEET_H - 10.0);
@@ -108,7 +132,7 @@ pub(crate) fn title_block_s(d: &mut Drawing, info: &SheetInfo, sheet_title: &str
     t(d, &h[..32.min(h.len())], 2.0, "TITLE");
     t(d, &h[32.min(h.len())..], 2.0, "TITLE");
     t(d, "Prepared by: civil-mcp agent tools", 2.5, "TITLE");
-    t(d, &format!("Engineer in responsible charge:"), 2.5, "TITLE");
+    t(d, "Engineer in responsible charge:", 2.5, "TITLE");
     t(d, &info.engineer, 2.5, "TITLE");
     match info.approved_seq {
         Some(seq) if info.checks_failed == 0 => {
@@ -207,7 +231,11 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
     for c in al.curves() {
         let (x, y, _) = al.point_at((c.sta_start + c.sta_end) / 2.0).unwrap();
         let p = tp(x, y);
-        let txt = if c.ls_in > 0.0 { format!("JD{} R={:.0} Ls={:.0} α={:.2}°", c.index, c.radius, c.ls_in, c.delta_deg.abs()) } else { format!("JD{} R={:.0} L={:.1} α={:.2}°", c.index, c.radius, c.arc_len, c.delta_deg.abs()) };
+        let txt = if c.ls_in > 0.0 {
+            format!("JD{} R={:.0} Ls={:.0} α={:.2}°", c.index, c.radius, c.ls_in, c.delta_deg.abs())
+        } else {
+            format!("JD{} R={:.0} L={:.1} α={:.2}°", c.index, c.radius, c.arc_len, c.delta_deg.abs())
+        };
         d.text("TEXT", [p[0] + 3.0, p[1] - 6.0], 2.2, &txt);
     }
     d.text("TEXT", [px0 + 4.0, py1 - 7.0], 4.0, &format!("PLAN  1:{n:.0}   contours 1 m (index 5 m)  N↑"));
@@ -265,9 +293,19 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         let p = tq(v[0], v[1]);
         d.poly("PROFILE-DESIGN", vec![[p[0], p[1]], [p[0], p[1] + 12.0]]);
         d.text("TEXT", [p[0] - 10.0, p[1] + 14.0], 2.0, &format!("VPI {} EL {:.2}", sta_label(v[0]), v[1]));
-        d.text("TEXT", [p[0] - 10.0, p[1] + 17.0], 2.0, &format!("{} R={:.0} L={:.0}", if c.crest { "CREST" } else { "SAG" }, c.length / (c.a_pct.abs() / 100.0).max(1e-9), c.length));
+        d.text(
+            "TEXT",
+            [p[0] - 10.0, p[1] + 17.0],
+            2.0,
+            &format!("{} R={:.0} L={:.0}", if c.crest { "CREST" } else { "SAG" }, c.length / (c.a_pct.abs() / 100.0).max(1e-9), c.length),
+        );
     }
-    d.text("TEXT", [qx0 + 4.0, qy1 - 7.0], 4.0, &format!("PROFILE  H 1:{:.0}  V 1:{:.0}  (existing ground brown, finished grade red)", 1000.0 / hs, 1000.0 / vs));
+    d.text(
+        "TEXT",
+        [qx0 + 4.0, qy1 - 7.0],
+        4.0,
+        &format!("PROFILE  H 1:{:.0}  V 1:{:.0}  (existing ground brown, finished grade red)", 1000.0 / hs, 1000.0 / vs),
+    );
     title_block_s(&mut d, info, "Plan and profile", &format!("plan 1:{n:.0}; profile as shown"), page, pages);
     d
 }
@@ -313,7 +351,12 @@ fn plan_intersection(d: &mut Drawing, x: &Intersection, tp: &dyn Fn(f64, f64) ->
         }
         if label {
             let e = l.cl[1];
-            d.text("TEXT", tp(e[0], e[1]), 2.0, &format!("{} R={}", l.name, l.returns.iter().map(|r| format!("{:.0}", r.radius)).collect::<Vec<_>>().join("/")));
+            d.text(
+                "TEXT",
+                tp(e[0], e[1]),
+                2.0,
+                &format!("{} R={}", l.name, l.returns.iter().map(|r| format!("{:.0}", r.radius)).collect::<Vec<_>>().join("/")),
+            );
         }
     }
     if label {
@@ -379,7 +422,10 @@ pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) 
     let mut rim = vec![];
     for (i, p) in best.iter().enumerate() {
         let (ca, cb) = (ch[i], ch[i + 1]);
-        d.poly("PIPE", vec![tp(ca, p.invert_up), tp(cb, p.invert_dn), tp(cb, p.invert_dn + p.diameter_m), tp(ca, p.invert_up + p.diameter_m), tp(ca, p.invert_up)]);
+        d.poly(
+            "PIPE",
+            vec![tp(ca, p.invert_up), tp(cb, p.invert_dn), tp(cb, p.invert_dn + p.diameter_m), tp(ca, p.invert_up + p.diameter_m), tp(ca, p.invert_up)],
+        );
         d.line("HGL", tp(ca, p.hgl_up), tp(cb, p.hgl_dn));
         d.line("EGL", tp(ca, p.egl_up), tp(cb, p.egl_dn));
         let m = tp((ca + cb) / 2.0, p.invert_up.min(p.invert_dn));
@@ -407,7 +453,22 @@ pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) 
     d.text("TEXT", [x0 + 4.0, y1 - 13.0], 2.2, &format!("cyan = HGL, red = EGL, brown = rim; method {}", net.hgl_method));
     let mut y = y0 - 8.0;
     for c in net.checks.iter().filter(|c| !c.pass) {
-        d.text("TEXT", [x0, y], 2.0, &format!("{} {} {} {}: {:.3} vs {} {:.3} {}", c.id, if c.severity == "mandatory" { "mandatory" } else { "advisory" }, c.element, c.item, c.value, c.kind, c.limit, c.unit));
+        d.text(
+            "TEXT",
+            [x0, y],
+            2.0,
+            &format!(
+                "{} {} {} {}: {:.3} vs {} {:.3} {}",
+                c.id,
+                if c.severity == "mandatory" { "mandatory" } else { "advisory" },
+                c.element,
+                c.item,
+                c.value,
+                c.kind,
+                c.limit,
+                c.unit
+            ),
+        );
         y -= 4.0;
         if y < 14.0 {
             break;
@@ -428,12 +489,16 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
         for s in chunk {
             let w = s.left.daylight.max(s.right.daylight) + 3.0;
             wmax = wmax.max(w);
-            let zs: Vec<f64> = s.left.fg.iter().chain(s.right.fg.iter()).map(|p| p[1]).chain(s.ground.iter().filter(|p| p[0].abs() <= w).map(|p| p[1])).collect();
+            let zs: Vec<f64> =
+                s.left.fg.iter().chain(s.right.fg.iter()).map(|p| p[1]).chain(s.ground.iter().filter(|p| p[0].abs() <= w).map(|p| p[1])).collect();
             let (lo, hi) = zs.iter().fold((f64::MAX, f64::MIN), |a, z| (a.0.min(*z), a.1.max(*z)));
             hmax = hmax.max(hi - lo + 3.0);
         }
         let scale_h = ((cw - 10.0) / (2.0 * wmax)).min((ch - 26.0) / hmax);
-        let nice = [50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0].into_iter().find(|n| 1000.0 / n <= scale_h).unwrap_or(2000.0);
+        let nice = [50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0]
+            .into_iter()
+            .find(|n| 1000.0 / n <= scale_h)
+            .unwrap_or(2000.0);
         let sc = 1000.0 / nice;
         let mut d = Drawing::default();
         base(&mut d);
@@ -442,7 +507,15 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
             let (x0, y1) = (20.0 + col as f64 * cw, SHEET_H - 20.0 - row as f64 * ch);
             let y0 = y1 - ch;
             d.rect("GRID", x0 + 2.0, y0 + 2.0, x0 + cw - 2.0, y1 - 2.0);
-            let zlo = s.left.fg.iter().chain(s.right.fg.iter()).map(|p| p[1]).chain(s.ground.iter().filter(|p| p[0].abs() <= wmax).map(|p| p[1])).fold(f64::MAX, f64::min) - 1.0;
+            let zlo = s
+                .left
+                .fg
+                .iter()
+                .chain(s.right.fg.iter())
+                .map(|p| p[1])
+                .chain(s.ground.iter().filter(|p| p[0].abs() <= wmax).map(|p| p[1]))
+                .fold(f64::MAX, f64::min)
+                - 1.0;
             let xc = x0 + cw / 2.0;
             let tp = |o: f64, z: f64| [xc + o * sc, y0 + 14.0 + (z - zlo) * sc];
             // cut / fill fills between datum and ground (sampled)
@@ -480,8 +553,24 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
             }
             d.line("GRID", tp(0.0, zlo), tp(0.0, zlo + hmax - 2.0));
             d.text("TEXT", [x0 + 4.0, y1 - 7.0], 2.5, &format!("STA {}", sta_label(s.station)));
-            d.text("TEXT", [x0 + 4.0, y0 + 7.0], 1.8, &format!("FG {:.2} EG {:.2}  cut {:.1} m² fill {:.1} m²", s.cl_elev, s.ground_cl, s.cut_area, s.fill_area));
-            d.text("TEXT", [x0 + 4.0, y0 + 3.5], 1.6, &format!("cross slope L {:+.2}% R {:+.2}%  daylight L {:.1} R {:.1} m", s.slope_left * 100.0, s.slope_right * 100.0, s.left.daylight, s.right.daylight));
+            d.text(
+                "TEXT",
+                [x0 + 4.0, y0 + 7.0],
+                1.8,
+                &format!("FG {:.2} EG {:.2}  cut {:.1} m² fill {:.1} m²", s.cl_elev, s.ground_cl, s.cut_area, s.fill_area),
+            );
+            d.text(
+                "TEXT",
+                [x0 + 4.0, y0 + 3.5],
+                1.6,
+                &format!(
+                    "cross slope L {:+.2}% R {:+.2}%  daylight L {:.1} R {:.1} m",
+                    s.slope_left * 100.0,
+                    s.slope_right * 100.0,
+                    s.left.daylight,
+                    s.right.daylight
+                ),
+            );
         }
         d.text("TEXT", [20.0, 12.0], 2.5, &format!("CROSS SECTIONS 1:{nice:.0}  (red = cut, green = fill, green line = subgrade datum)"));
         title_block(&mut d, info, "Cross sections", first_page + pi, pages);
@@ -494,7 +583,16 @@ pub fn n_xs_pages(c: &Corridor) -> usize {
     c.sections.len().div_ceil(12)
 }
 
-pub fn mass_haul_sheet(mh: &MassHaul, rows: &[MaterialRow], c: &Corridor, nets: &[Network], grads: &[Grading], info: &SheetInfo, page: usize, pages: usize) -> Drawing {
+pub fn mass_haul_sheet(
+    mh: &MassHaul,
+    rows: &[MaterialRow],
+    c: &Corridor,
+    nets: &[Network],
+    grads: &[Grading],
+    info: &SheetInfo,
+    page: usize,
+    pages: usize,
+) -> Drawing {
     let mut d = Drawing::default();
     base(&mut d);
     let (x0, y0, x1, y1) = (20.0, 320.0, SHEET_W - 160.0, SHEET_H - 20.0);
@@ -587,10 +685,16 @@ pub fn model(ds: &Design, contour_interval: f64) -> Drawing {
     }
     if let Some(c) = ds.corridor {
         for (left, f) in [(true, 1.0), (false, -1.0)] {
-            d.poly("DAYLIGHT", c.sections.iter().map(|s| {
-                let o = if left { s.left.daylight } else { s.right.daylight } * f;
-                [s.x - s.heading.sin() * o, s.y + s.heading.cos() * o]
-            }).collect());
+            d.poly(
+                "DAYLIGHT",
+                c.sections
+                    .iter()
+                    .map(|s| {
+                        let o = if left { s.left.daylight } else { s.right.daylight } * f;
+                        [s.x - s.heading.sin() * o, s.y + s.heading.cos() * o]
+                    })
+                    .collect(),
+            );
         }
     }
     if let Some(c) = ds.corridor {

@@ -17,7 +17,15 @@ use serde_json::Value;
 const X1: f64 = SHEET_W - 160.0; // right edge of the drawing area (title block to the right)
 
 fn circle(d: &mut Drawing, l: &str, c: [f64; 2], r: f64) {
-    d.poly(l, (0..=48).map(|k| { let a = k as f64 / 48.0 * std::f64::consts::TAU; [c[0] + r * a.cos(), c[1] + r * a.sin()] }).collect());
+    d.poly(
+        l,
+        (0..=48)
+            .map(|k| {
+                let a = k as f64 / 48.0 * std::f64::consts::TAU;
+                [c[0] + r * a.cos(), c[1] + r * a.sin()]
+            })
+            .collect(),
+    );
 }
 
 fn para(d: &mut Drawing, x: f64, y: &mut f64, h: f64, max_em: f64, s: &str) {
@@ -55,7 +63,19 @@ fn table(d: &mut Drawing, x: f64, y: f64, widths: &[f64], h: f64, rows: &[Vec<St
 fn new_sheet() -> Drawing {
     let mut d = Drawing::default();
     base(&mut d);
-    for (l, c) in [("ROUTE-A", 1), ("ROUTE-B", 3), ("ROUTE-C", 5), ("ROUTE-SELECTED", 6), ("PAVEMENT", 2), ("SUBGRADE", 8), ("BARRIER", 1), ("HAZARD", 6), ("LINING", 4), ("DETAIL", 7), ("HATCH", 8)] {
+    for (l, c) in [
+        ("ROUTE-A", 1),
+        ("ROUTE-B", 3),
+        ("ROUTE-C", 5),
+        ("ROUTE-SELECTED", 6),
+        ("PAVEMENT", 2),
+        ("SUBGRADE", 8),
+        ("BARRIER", 1),
+        ("HAZARD", 6),
+        ("LINING", 4),
+        ("DETAIL", 7),
+        ("HATCH", 8),
+    ] {
         d.layer(l, c);
     }
     d
@@ -105,7 +125,8 @@ pub fn route_sheet(tin: &Tin, route: &Value, selected: &str, info: &SheetInfo, p
     let alts = route["alternatives"].as_array().cloned().unwrap_or_default();
     let (px0, py0, px1, py1) = (20.0, 200.0, X1, SHEET_H - 20.0);
     d.rect("BORDER", px0, py0, px1, py1);
-    let pts: Vec<[f64; 2]> = alts.iter().flat_map(|a| a["path"].as_array().cloned().unwrap_or_default()).filter_map(|p| Some([p[0].as_f64()?, p[1].as_f64()?])).collect();
+    let pts: Vec<[f64; 2]> =
+        alts.iter().flat_map(|a| a["path"].as_array().cloned().unwrap_or_default()).filter_map(|p| Some([p[0].as_f64()?, p[1].as_f64()?])).collect();
     if pts.is_empty() {
         return d;
     }
@@ -147,11 +168,26 @@ pub fn route_sheet(tin: &Tin, route: &Value, selected: &str, info: &SheetInfo, p
         }
     }
     // comparison table
-    let mut rows = vec![["Alternative", "Length m", "Min R m", "Max grade %", "Cut m3", "Fill m3", "Imbalance m3", "Wall conc. m3", "Mandatory fails", "Cost proxy"].iter().map(|s| s.to_string()).collect::<Vec<_>>()];
+    let mut rows =
+        vec![["Alternative", "Length m", "Min R m", "Max grade %", "Cut m3", "Fill m3", "Imbalance m3", "Wall conc. m3", "Mandatory fails", "Cost proxy"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()];
     for a in &alts {
         let e = &a["evaluation"];
         let f = |k: &str, p: usize| e[k].as_f64().map_or("-".into(), |v| format!("{v:.p$}"));
-        rows.push(vec![a["name"].as_str().unwrap_or("?").into(), f("length_m", 0), f("min_radius_m", 0), f("max_design_grade_pct", 2), f("cut_m3", 0), f("fill_m3", 0), f("imbalance_m3", 0), f("wall_concrete_m3", 0), e["geometry_mandatory_failures"].to_string(), f("cost_proxy", 0)]);
+        rows.push(vec![
+            a["name"].as_str().unwrap_or("?").into(),
+            f("length_m", 0),
+            f("min_radius_m", 0),
+            f("max_design_grade_pct", 2),
+            f("cut_m3", 0),
+            f("fill_m3", 0),
+            f("imbalance_m3", 0),
+            f("wall_concrete_m3", 0),
+            e["geometry_mandatory_failures"].to_string(),
+            f("cost_proxy", 0),
+        ]);
     }
     let yb = table(&mut d, 20.0, 190.0, &[48.0, 22.0, 20.0, 24.0, 24.0, 24.0, 28.0, 28.0, 30.0, 28.0], 2.6, &rows);
     let mut y = yb - 8.0;
@@ -192,7 +228,12 @@ pub fn typical_sections(asm: &Assembly, nc: f64, info: &SheetInfo, page: usize, 
                 x += cfg.shoulder_m;
                 z += cfg.shoulder_m * cfg.shoulder_slope;
                 pts.push([ox + side * x * s, oy + z * s]);
-                d.text("TEXT", [ox + side * (x - cfg.shoulder_m / 2.0) * s - 6.0, oy + 14.0], 2.0, &format!("Shoulder {:.2} m {:.1}%", cfg.shoulder_m, cfg.shoulder_slope * 100.0));
+                d.text(
+                    "TEXT",
+                    [ox + side * (x - cfg.shoulder_m / 2.0) * s - 6.0, oy + 14.0],
+                    2.0,
+                    &format!("Shoulder {:.2} m {:.1}%", cfg.shoulder_m, cfg.shoulder_slope * 100.0),
+                );
             }
             if let Some(c) = &cfg.curb {
                 x += c.gutter_m;
@@ -289,9 +330,22 @@ pub fn superelevation_sheet(se: &Superelevation, al: &Alignment, info: &SheetInf
     d.poly("HGL", r);
     d.text("PROFILE-DESIGN", [x0 + 4.0, y1 + 6.0], 3.0, "Left edge cross slope (rise per run outward from CL)");
     d.text("HGL", [x0 + 4.0, y1 + 12.0], 3.0, "Right edge cross slope");
-    let mut rows = vec![["Curve", "R m", "e", "Method", "Runoff start", "Full e", "Full e end", "Runoff end", "Rel. gradient %"].iter().map(|s| s.to_string()).collect::<Vec<_>>()];
+    let mut rows = vec![["Curve", "R m", "e", "Method", "Runoff start", "Full e", "Full e end", "Runoff end", "Rel. gradient %"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()];
     for c in &se.curves {
-        rows.push(vec![c.curve.to_string(), format!("{:.0}", c.radius), format!("{:.3}", c.e), c.method.clone(), sta_label(c.a_in), sta_label(c.b_in), sta_label(c.b_out), sta_label(c.a_out), format!("{:.3}", c.relative_gradient * 100.0)]);
+        rows.push(vec![
+            c.curve.to_string(),
+            format!("{:.0}", c.radius),
+            format!("{:.3}", c.e),
+            c.method.clone(),
+            sta_label(c.a_in),
+            sta_label(c.b_in),
+            sta_label(c.b_out),
+            sta_label(c.a_out),
+            format!("{:.3}", c.relative_gradient * 100.0),
+        ]);
     }
     table(&mut d, 40.0, 180.0, &[18.0, 20.0, 18.0, 120.0, 30.0, 30.0, 30.0, 30.0, 30.0], 2.6, &rows);
     title_block_s(&mut d, info, "Superelevation diagram", "H 1:as shown; V as shown", page, pages);
@@ -353,7 +407,13 @@ pub fn pavement_sheet(p: &PavementDesign, info: &SheetInfo, page: usize, pages: 
     d.poly("SUBGRADE", vec![[sx, sy - 25.0], [sx + 120.0, sy - 25.0], [sx + 145.0, sy - 37.5]]);
     d.poly("SUBGRADE", vec![[sx, sy - 40.0], [sx + 120.0, sy - 40.0], [sx + 140.0, sy - 50.0]]);
     let mut yy = sy - 60.0;
-    for t in ["Strip topsoil and unsuitable material; proof-roll exposed subgrade.", "Scarify and recompact the top 300 mm (dashed) to the specified density.", "Replace soft spots identified by proof-rolling (engineer to direct).", "Subgrade drains where the geotechnical report requires them.", "Density, moisture and CBR testing per the governing specification."] {
+    for t in [
+        "Strip topsoil and unsuitable material; proof-roll exposed subgrade.",
+        "Scarify and recompact the top 300 mm (dashed) to the specified density.",
+        "Replace soft spots identified by proof-rolling (engineer to direct).",
+        "Subgrade drains where the geotechnical report requires them.",
+        "Density, moisture and CBR testing per the governing specification.",
+    ] {
         para(&mut d, sx, &mut yy, 2.4, 120.0, t);
     }
     title_block_s(&mut d, info, "Pavement and subgrade details", "1:10 (layers)", page, pages);
@@ -398,19 +458,48 @@ pub fn protection_sheet(pt: &Protection, c: &Corridor, info: &SheetInfo, page: u
     d.text("HAZARD", [x0, yc + 58.0], 2.4, "Ticks: hazards inside the clear zone (embankment above warrant height, steep slopes, walls). Thick lines: barrier runs incl. length of need. Blue: ditch lining reaches.");
     let mut rows = vec![["Side", "From", "To", "Length m", "LON m", "Type", "Reason"].iter().map(|s| s.to_string()).collect::<Vec<_>>()];
     for b in &pt.barriers {
-        rows.push(vec![b.side.clone(), sta_label(b.from), sta_label(b.to), format!("{:.0}", b.length_m), format!("{:.1}", b.length_of_need_m), b.barrier_type.clone(), b.reason.clone()]);
+        rows.push(vec![
+            b.side.clone(),
+            sta_label(b.from),
+            sta_label(b.to),
+            format!("{:.0}", b.length_m),
+            format!("{:.1}", b.length_of_need_m),
+            b.barrier_type.clone(),
+            b.reason.clone(),
+        ]);
     }
     let yb = table(&mut d, 20.0, yc - 70.0, &[16.0, 26.0, 26.0, 20.0, 18.0, 45.0, 120.0], 2.4, &rows);
-    let mut rows = vec![["Side", "From", "To", "Q m3/s", "Depth m", "V m/s", "Slope %", "tau_d N/m2", "Lining", "tau_p N/m2"].iter().map(|s| s.to_string()).collect::<Vec<_>>()];
+    let mut rows = vec![["Side", "From", "To", "Q m3/s", "Depth m", "V m/s", "Slope %", "tau_d N/m2", "Lining", "tau_p N/m2"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()];
     for r in &pt.ditches {
-        rows.push(vec![r.side.clone(), sta_label(r.from), sta_label(r.to), format!("{:.3}", r.q_max_m3s), format!("{:.2}", r.depth_m), format!("{:.2}", r.velocity_mps), format!("{:.2}", r.slope * 100.0), format!("{:.1}", r.tau_d), r.lining.clone(), if r.tau_p.is_finite() { format!("{:.0}", r.tau_p) } else { "rigid".into() }]);
+        rows.push(vec![
+            r.side.clone(),
+            sta_label(r.from),
+            sta_label(r.to),
+            format!("{:.3}", r.q_max_m3s),
+            format!("{:.2}", r.depth_m),
+            format!("{:.2}", r.velocity_mps),
+            format!("{:.2}", r.slope * 100.0),
+            format!("{:.1}", r.tau_d),
+            r.lining.clone(),
+            if r.tau_p.is_finite() { format!("{:.0}", r.tau_p) } else { "rigid".into() },
+        ]);
     }
     let yb = table(&mut d, 20.0, yb - 8.0, &[16.0, 26.0, 26.0, 18.0, 18.0, 16.0, 16.0, 22.0, 60.0, 22.0], 2.4, &rows);
     let mut y = yb - 6.0;
     for n in pt.notes.iter().take(6) {
         para(&mut d, 20.0, &mut y, 2.2, 300.0, n);
     }
-    title_block_s(&mut d, info, "Roadside protection layout (straight-line diagram)", &format!("H 1:{:.0}", ((s1 - s0) / (x1 - x0) * 1000.0 / 100.0).ceil() * 100.0), page, pages);
+    title_block_s(
+        &mut d,
+        info,
+        "Roadside protection layout (straight-line diagram)",
+        &format!("H 1:{:.0}", ((s1 - s0) / (x1 - x0) * 1000.0 / 100.0).ceil() * 100.0),
+        page,
+        pages,
+    );
     d
 }
 
@@ -419,18 +508,33 @@ pub fn protection_sheet(pt: &Protection, c: &Corridor, info: &SheetInfo, page: u
 pub fn drainage_details(nets: &[Network], info: &SheetInfo, page: usize, pages: usize) -> Drawing {
     let mut d = new_sheet();
     let s = 20.0; // 1:50 → 20 mm per m
-    // trench
+                  // trench
     let (tx, ty) = (60.0, SHEET_H - 150.0);
     let dmax = nets.iter().flat_map(|n| n.pipes.iter().map(|p| p.diameter_m)).fold(0.3, f64::max);
     let w = dmax + 0.6;
     d.text("TITLE", [tx - 20.0, SHEET_H - 40.0], 3.5, "PIPE TRENCH (SCHEMATIC, 1:50)");
     let (bed, cover) = (0.15, 0.3);
     let depth = bed + dmax + cover + 0.9;
-    d.poly("DETAIL", vec![[tx - 1.0 * s, ty + depth * s], [tx, ty + depth * s], [tx, ty], [tx + w * s, ty], [tx + w * s, ty + depth * s], [tx + w * s + 1.0 * s, ty + depth * s]]);
+    d.poly(
+        "DETAIL",
+        vec![
+            [tx - 1.0 * s, ty + depth * s],
+            [tx, ty + depth * s],
+            [tx, ty],
+            [tx + w * s, ty],
+            [tx + w * s, ty + depth * s],
+            [tx + w * s + 1.0 * s, ty + depth * s],
+        ],
+    );
     d.rect("HATCH", tx, ty, tx + w * s, ty + bed * s);
     circle(&mut d, "PIPE", [tx + w * s / 2.0, ty + (bed + dmax / 2.0) * s], dmax / 2.0 * s);
     d.line("HATCH", [tx, ty + (bed + dmax + cover) * s], [tx + w * s, ty + (bed + dmax + cover) * s]);
-    for (yv, t) in [(bed / 2.0, format!("Bedding {:.0} mm", bed * 1000.0)), (bed + dmax / 2.0, format!("Pipe D up to {:.0} mm", dmax * 1000.0)), (bed + dmax + cover / 2.0, format!("Haunch/initial backfill to {:.0} mm over crown", cover * 1000.0)), (bed + dmax + cover + 0.45, "Trench backfill / pavement per typical section".into())] {
+    for (yv, t) in [
+        (bed / 2.0, format!("Bedding {:.0} mm", bed * 1000.0)),
+        (bed + dmax / 2.0, format!("Pipe D up to {:.0} mm", dmax * 1000.0)),
+        (bed + dmax + cover / 2.0, format!("Haunch/initial backfill to {:.0} mm over crown", cover * 1000.0)),
+        (bed + dmax + cover + 0.45, "Trench backfill / pavement per typical section".into()),
+    ] {
         d.text("TEXT", [tx + w * s + 26.0, ty + yv * s - 1.0], 2.2, &t);
     }
     d.text("TEXT", [tx, ty - 6.0], 2.2, &format!("Trench width D + 600 mm = {:.2} m", w));
@@ -438,12 +542,24 @@ pub fn drainage_details(nets: &[Network], info: &SheetInfo, page: usize, pages: 
     let (mx, my) = (330.0, SHEET_H - 160.0);
     d.text("TITLE", [mx - 20.0, SHEET_H - 40.0], 3.5, "MANHOLE (SCHEMATIC, 1:50)");
     let (r_b, h_b, h_c) = (0.6, 2.0, 0.6);
-    d.poly("STRUCTURE", vec![[mx - r_b * s, my], [mx - r_b * s, my + h_b * s], [mx - 0.3 * s, my + (h_b + h_c) * s], [mx - 0.3 * s, my + (h_b + h_c + 0.2) * s]]);
-    d.poly("STRUCTURE", vec![[mx + r_b * s, my], [mx + r_b * s, my + h_b * s], [mx + 0.3 * s, my + (h_b + h_c) * s], [mx + 0.3 * s, my + (h_b + h_c + 0.2) * s]]);
+    d.poly(
+        "STRUCTURE",
+        vec![[mx - r_b * s, my], [mx - r_b * s, my + h_b * s], [mx - 0.3 * s, my + (h_b + h_c) * s], [mx - 0.3 * s, my + (h_b + h_c + 0.2) * s]],
+    );
+    d.poly(
+        "STRUCTURE",
+        vec![[mx + r_b * s, my], [mx + r_b * s, my + h_b * s], [mx + 0.3 * s, my + (h_b + h_c) * s], [mx + 0.3 * s, my + (h_b + h_c + 0.2) * s]],
+    );
     d.rect("STRUCTURE", mx - (r_b + 0.15) * s, my - 0.2 * s, mx + (r_b + 0.15) * s, my);
     d.poly("STRUCTURE", vec![[mx - r_b * s, my + 0.3 * s], [mx - 0.25 * s, my + 0.15 * s], [mx + 0.25 * s, my + 0.15 * s], [mx + r_b * s, my + 0.3 * s]]);
     d.rect("STRUCTURE", mx - 0.4 * s, my + (h_b + h_c + 0.2) * s, mx + 0.4 * s, my + (h_b + h_c + 0.3) * s);
-    for (yv, t) in [(-0.1, "Base slab 200 mm"), (0.22, "Benching to pipe soffit, channel formed"), (h_b / 2.0, "Barrel 1200 mm ID (precast)"), (h_b + h_c / 2.0, "Eccentric cone / reducer"), (h_b + h_c + 0.25, "Frame and cover to finished grade")] {
+    for (yv, t) in [
+        (-0.1, "Base slab 200 mm"),
+        (0.22, "Benching to pipe soffit, channel formed"),
+        (h_b / 2.0, "Barrel 1200 mm ID (precast)"),
+        (h_b + h_c / 2.0, "Eccentric cone / reducer"),
+        (h_b + h_c + 0.25, "Frame and cover to finished grade"),
+    ] {
         d.text("TEXT", [mx + (r_b + 0.4) * s, my + yv * s - 1.0], 2.2, t);
     }
     // inlet
@@ -457,10 +573,12 @@ pub fn drainage_details(nets: &[Network], info: &SheetInfo, page: usize, pages: 
     d.text("TEXT", [ix + 1.1 * s, iy + 0.7 * s], 2.2, "Box 600 x 900 mm, outlet pipe to trunk");
     d.text("TEXT", [ix + 1.1 * s, iy - 0.1 * s], 2.2, "Base 150 mm");
     // schedule
-    let mut rows = vec![["Network", "Structure", "Rim", "Sump invert", "Depth m", "Inverts out (pipe, D mm)"].iter().map(|s| s.to_string()).collect::<Vec<_>>()];
+    let mut rows =
+        vec![["Network", "Structure", "Rim", "Sump invert", "Depth m", "Inverts out (pipe, D mm)"].iter().map(|s| s.to_string()).collect::<Vec<_>>()];
     for n in nets {
         for st in &n.structures {
-            let outs: Vec<String> = n.pipes.iter().filter(|p| p.from == st.0).map(|p| format!("{} {:.3} D{:.0}", p.id, p.invert_up, p.diameter_m * 1000.0)).collect();
+            let outs: Vec<String> =
+                n.pipes.iter().filter(|p| p.from == st.0).map(|p| format!("{} {:.3} D{:.0}", p.id, p.invert_up, p.diameter_m * 1000.0)).collect();
             rows.push(vec![n.name.clone(), st.0.clone(), format!("{:.3}", st.3), format!("{:.3}", st.4), format!("{:.2}", st.3 - st.4), outs.join("; ")]);
         }
     }
@@ -477,10 +595,46 @@ pub fn drainage_details(nets: &[Network], info: &SheetInfo, page: usize, pages: 
 pub fn details_atlas(std: Standard, info: &SheetInfo, page: usize, pages: usize) -> Drawing {
     let mut d = new_sheet();
     let refs: [(&str, &str); 8] = match std {
-        Standard::Us => [("Curb and gutter", "State DOT standard plan; FP-14 Section 609"), ("W-beam guardrail", "AASHTO RDG 2011 Ch. 5; FP-14 Section 617; MASH-tested system"), ("Riprap / ditch lining", "HEC-15 (2005); FP-14 Sections 251, 629"), ("Pipe trench and bedding", "FP-14 Section 602; pipe manufacturer / AASHTO LRFD Sec. 12"), ("Manhole", "FP-14 Section 604; state DOT standard plan"), ("Grate inlet", "HEC-22 (2009) inlet capacity; FP-14 Section 604"), ("Pavement edge / shoulder", "AASHTO 93 design; FP-14 Sections 301, 401"), ("Sidewalk", "FP-14 Section 615; PROWAG accessibility")],
-        Standard::Ca => [("Curb and gutter", "Provincial standard drawing (engineer to cite)"), ("Roadside barrier", "TAC GDG 2017 Ch. 7; provincial barrier standard"), ("Riprap / ditch lining", "Provincial drainage manual (engineer to cite)"), ("Pipe trench and bedding", "Provincial / OPSD-type standard (engineer to cite)"), ("Manhole", "Provincial standard drawing (engineer to cite)"), ("Catch basin", "Provincial standard drawing (engineer to cite)"), ("Pavement edge / shoulder", "Provincial pavement design manual"), ("Sidewalk", "Municipal standard (engineer to cite)")],
-        Standard::Uk => [("Kerb and channel", "MCHW Highway Construction Details (HCD) B series; SHW Series 1100"), ("Vehicle restraint system", "CD 377; SHW Series 400"), ("Lined ditch / erosion protection", "CD 521 / CD 524; SHW Series 500"), ("Pipe bedding", "HCD F series; SHW Series 500"), ("Chamber / manhole", "HCD F series; SHW Series 500"), ("Gully", "CD 526; HCD F series"), ("Pavement edge", "CD 226; SHW Series 700/900"), ("Footway", "SHW Series 1100")],
-        Standard::Au | Standard::Nz => [("Kerb and channel", "State road authority standard drawing (engineer to cite)"), ("Safety barrier", "AGRD06 Roadside Design; AS/NZS 3845"), ("Lined drain / scour protection", "AGRD05 Drainage (engineer to cite)"), ("Pipe bedding", "AS/NZS 3725 / AS/NZS 2566 (engineer to cite)"), ("Maintenance hole", "State / council standard drawing"), ("Pit / gully", "AGRD05; council standard drawing"), ("Pavement edge", "AGPT02 design; state specification"), ("Footpath", "Council standard drawing")],
+        Standard::Us => [
+            ("Curb and gutter", "State DOT standard plan; FP-14 Section 609"),
+            ("W-beam guardrail", "AASHTO RDG 2011 Ch. 5; FP-14 Section 617; MASH-tested system"),
+            ("Riprap / ditch lining", "HEC-15 (2005); FP-14 Sections 251, 629"),
+            ("Pipe trench and bedding", "FP-14 Section 602; pipe manufacturer / AASHTO LRFD Sec. 12"),
+            ("Manhole", "FP-14 Section 604; state DOT standard plan"),
+            ("Grate inlet", "HEC-22 (2009) inlet capacity; FP-14 Section 604"),
+            ("Pavement edge / shoulder", "AASHTO 93 design; FP-14 Sections 301, 401"),
+            ("Sidewalk", "FP-14 Section 615; PROWAG accessibility"),
+        ],
+        Standard::Ca => [
+            ("Curb and gutter", "Provincial standard drawing (engineer to cite)"),
+            ("Roadside barrier", "TAC GDG 2017 Ch. 7; provincial barrier standard"),
+            ("Riprap / ditch lining", "Provincial drainage manual (engineer to cite)"),
+            ("Pipe trench and bedding", "Provincial / OPSD-type standard (engineer to cite)"),
+            ("Manhole", "Provincial standard drawing (engineer to cite)"),
+            ("Catch basin", "Provincial standard drawing (engineer to cite)"),
+            ("Pavement edge / shoulder", "Provincial pavement design manual"),
+            ("Sidewalk", "Municipal standard (engineer to cite)"),
+        ],
+        Standard::Uk => [
+            ("Kerb and channel", "MCHW Highway Construction Details (HCD) B series; SHW Series 1100"),
+            ("Vehicle restraint system", "CD 377; SHW Series 400"),
+            ("Lined ditch / erosion protection", "CD 521 / CD 524; SHW Series 500"),
+            ("Pipe bedding", "HCD F series; SHW Series 500"),
+            ("Chamber / manhole", "HCD F series; SHW Series 500"),
+            ("Gully", "CD 526; HCD F series"),
+            ("Pavement edge", "CD 226; SHW Series 700/900"),
+            ("Footway", "SHW Series 1100"),
+        ],
+        Standard::Au | Standard::Nz => [
+            ("Kerb and channel", "State road authority standard drawing (engineer to cite)"),
+            ("Safety barrier", "AGRD06 Roadside Design; AS/NZS 3845"),
+            ("Lined drain / scour protection", "AGRD05 Drainage (engineer to cite)"),
+            ("Pipe bedding", "AS/NZS 3725 / AS/NZS 2566 (engineer to cite)"),
+            ("Maintenance hole", "State / council standard drawing"),
+            ("Pit / gully", "AGRD05; council standard drawing"),
+            ("Pavement edge", "AGPT02 design; state specification"),
+            ("Footpath", "Council standard drawing"),
+        ],
     };
     let (cw, ch) = ((X1 - 20.0) / 4.0, (SHEET_H - 40.0) / 2.0);
     for (k, (name, r)) in refs.iter().enumerate() {
@@ -491,7 +645,10 @@ pub fn details_atlas(std: Standard, info: &SheetInfo, page: usize, pages: usize)
         para(&mut d, cx + 4.0, &mut y, 2.2, (cw - 8.0) / 2.2 / 0.62, &format!("Reference: {r}"));
         let (ox, oy) = (cx + 30.0, cy + 70.0);
         match k {
-            0 => d.poly("DETAIL", vec![[ox, oy], [ox + 60.0, oy - 4.0], [ox + 60.0, oy + 15.0], [ox + 75.0, oy + 15.0], [ox + 75.0, oy - 20.0], [ox, oy - 20.0], [ox, oy]]),
+            0 => d.poly(
+                "DETAIL",
+                vec![[ox, oy], [ox + 60.0, oy - 4.0], [ox + 60.0, oy + 15.0], [ox + 75.0, oy + 15.0], [ox + 75.0, oy - 20.0], [ox, oy - 20.0], [ox, oy]],
+            ),
             1 => {
                 d.rect("DETAIL", ox + 30.0, oy - 40.0, ox + 36.0, oy + 40.0);
                 d.poly("BARRIER", vec![[ox + 36.0, oy + 30.0], [ox + 50.0, oy + 32.0], [ox + 46.0, oy + 22.0], [ox + 50.0, oy + 12.0], [ox + 36.0, oy + 14.0]]);
@@ -504,7 +661,17 @@ pub fn details_atlas(std: Standard, info: &SheetInfo, page: usize, pages: usize)
                 }
             }
             3 => {
-                d.poly("DETAIL", vec![[ox, oy + 40.0], [ox + 20.0, oy + 40.0], [ox + 20.0, oy - 20.0], [ox + 60.0, oy - 20.0], [ox + 60.0, oy + 40.0], [ox + 80.0, oy + 40.0]]);
+                d.poly(
+                    "DETAIL",
+                    vec![
+                        [ox, oy + 40.0],
+                        [ox + 20.0, oy + 40.0],
+                        [ox + 20.0, oy - 20.0],
+                        [ox + 60.0, oy - 20.0],
+                        [ox + 60.0, oy + 40.0],
+                        [ox + 80.0, oy + 40.0],
+                    ],
+                );
                 circle(&mut d, "PIPE", [ox + 40.0, oy - 2.0], 12.0);
                 d.rect("HATCH", ox + 20.0, oy - 20.0, ox + 60.0, oy - 15.0);
             }

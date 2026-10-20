@@ -96,7 +96,9 @@ pub fn tool_list() -> Value {
       {"name":"generate_deliverables","description":"Write the design-stage deliverables: design report, drainage report, pavement design report, parameter register (verified vs engineer input), departures register, bill of quantities grouped by the profile's measurement method, setting-out report, cost-proxy estimate and deliverables matrix status (Markdown/CSV).","inputSchema":obj(json!({"stage":s}),&[])},
       {"name":"get_state","description":"Summary of what is loaded/designed.","inputSchema":obj(json!({}),&[])}
     ]);
-    if let Some(a) = v.as_array_mut() { a.extend(crate::ext::tool_list()); }
+    if let Some(a) = v.as_array_mut() {
+        a.extend(crate::ext::tool_list());
+    }
     v
 }
 
@@ -104,7 +106,24 @@ fn f(v: &Value, k: &str) -> Option<f64> {
     v.get(k).and_then(|x| x.as_f64())
 }
 
-const DESIGN_TOOLS: &[&str] = &["set_design_basis", "design_pavement", "select_route", "optimize_profile", "design_protection", "load_points", "import_landxml", "build_surface", "create_alignment", "create_profile", "design_superelevation", "create_assembly", "build_corridor", "design_intersection", "grade", "design_pipe_network"];
+const DESIGN_TOOLS: &[&str] = &[
+    "set_design_basis",
+    "design_pavement",
+    "select_route",
+    "optimize_profile",
+    "design_protection",
+    "load_points",
+    "import_landxml",
+    "build_surface",
+    "create_alignment",
+    "create_profile",
+    "design_superelevation",
+    "create_assembly",
+    "build_corridor",
+    "design_intersection",
+    "grade",
+    "design_pipe_network",
+];
 
 impl Session {
     pub(crate) fn dir(&self) -> crate::Result<PathBuf> {
@@ -137,28 +156,119 @@ impl Session {
             c.extend(p.checks.iter().cloned());
         }
         for g in &self.gradings {
-            c.push(standards::chk("G-DAYLIGHT", "Grading reaches daylight everywhere", format!("grading {}", g.name), g.warnings.len() as f64, 0.0, "points", "max", "mandatory", "footprint points without daylight".into(), "tool rule".into()));
+            c.push(standards::chk(
+                "G-DAYLIGHT",
+                "Grading reaches daylight everywhere",
+                format!("grading {}", g.name),
+                g.warnings.len() as f64,
+                0.0,
+                "points",
+                "max",
+                "mandatory",
+                "footprint points without daylight".into(),
+                "tool rule".into(),
+            ));
         }
         if let Some(cor) = &self.corridor {
-            let cr = self.wall_criteria().unwrap_or_else(|e| crate::walls::Criteria { fs_sliding: f64::INFINITY, fs_overturning: f64::INFINITY, e_frac: 0.0, qmax_factor: 0.0, citation: e });
+            let cr = self.wall_criteria().unwrap_or_else(|e| crate::walls::Criteria {
+                fs_sliding: f64::INFINITY,
+                fs_overturning: f64::INFINITY,
+                e_frac: 0.0,
+                qmax_factor: 0.0,
+                citation: e,
+            });
             for left in [true, false] {
-                let ws: Vec<(f64, &crate::corridor::WallPlaced)> = cor.sections.iter().filter_map(|s| { let sd = if left { &s.left } else { &s.right }; sd.wall.as_ref().map(|w| (s.station, w)) }).collect();
+                let ws: Vec<(f64, &crate::corridor::WallPlaced)> = cor
+                    .sections
+                    .iter()
+                    .filter_map(|s| {
+                        let sd = if left { &s.left } else { &s.right };
+                        sd.wall.as_ref().map(|w| (s.station, w))
+                    })
+                    .collect();
                 if ws.is_empty() {
                     continue;
                 }
                 let side = if left { "left" } else { "right" };
-                let worst = |f: &dyn Fn(&crate::walls::WallDesign) -> f64, max: bool| ws.iter().map(|(st, w)| (f(&w.design), *st)).fold((if max { f64::MIN } else { f64::MAX }, 0.0), |a, b| if (max && b.0 > a.0) || (!max && b.0 < a.0) { b } else { a });
+                let worst = |f: &dyn Fn(&crate::walls::WallDesign) -> f64, max: bool| {
+                    ws.iter().map(|(st, w)| (f(&w.design), *st)).fold((if max { f64::MIN } else { f64::MAX }, 0.0), |a, b| {
+                        if (max && b.0 > a.0) || (!max && b.0 < a.0) {
+                            b
+                        } else {
+                            a
+                        }
+                    })
+                };
                 let (v, st) = worst(&|d| d.fs_sliding, false);
-                c.push(standards::chk("W-SLIDE", "Wall sliding FS", format!("{side} wall (worst at {st:.1})"), v, cr.fs_sliding, "", "min", "mandatory", "Ks = μ·ΣV / Ea, Rankine Ka = tan²(45°−φ/2), Ea = ½γH²Ka + qKaH".into(), cr.citation.clone()));
+                c.push(standards::chk(
+                    "W-SLIDE",
+                    "Wall sliding FS",
+                    format!("{side} wall (worst at {st:.1})"),
+                    v,
+                    cr.fs_sliding,
+                    "",
+                    "min",
+                    "mandatory",
+                    "Ks = μ·ΣV / Ea, Rankine Ka = tan²(45°−φ/2), Ea = ½γH²Ka + qKaH".into(),
+                    cr.citation.clone(),
+                ));
                 let (v, st) = worst(&|d| d.fs_overturning, false);
-                c.push(standards::chk("W-OVERTURN", "Wall overturning FS", format!("{side} wall (worst at {st:.1})"), v, cr.fs_overturning, "", "min", "mandatory", "Kt = ΣM_resist / ΣM_overturn about the toe".into(), cr.citation.clone()));
+                c.push(standards::chk(
+                    "W-OVERTURN",
+                    "Wall overturning FS",
+                    format!("{side} wall (worst at {st:.1})"),
+                    v,
+                    cr.fs_overturning,
+                    "",
+                    "min",
+                    "mandatory",
+                    "Kt = ΣM_resist / ΣM_overturn about the toe".into(),
+                    cr.citation.clone(),
+                ));
                 let (v, st) = worst(&|d| d.eccentricity / d.base_b, true);
-                c.push(standards::chk("W-ECC", "Base eccentricity e/B", format!("{side} wall (worst at {st:.1})"), v, cr.e_frac, "", "max", "mandatory", "e = B/2 − (ΣMr − ΣMo)/ΣV".into(), cr.citation.clone()));
+                c.push(standards::chk(
+                    "W-ECC",
+                    "Base eccentricity e/B",
+                    format!("{side} wall (worst at {st:.1})"),
+                    v,
+                    cr.e_frac,
+                    "",
+                    "max",
+                    "mandatory",
+                    "e = B/2 − (ΣMr − ΣMo)/ΣV".into(),
+                    cr.citation.clone(),
+                ));
                 let (v, st) = worst(&|d| d.q_max_kpa, true);
-                let bearing = self.assembly.as_ref().and_then(|a| if left { a.wall.as_ref() } else { a.right.as_ref().and_then(|r| r.wall.as_ref()).or(a.wall.as_ref()) }).map_or(f64::NAN, |w| w.soil.bearing_kpa);
-                c.push(standards::chk("W-BEAR", "Max bearing pressure", format!("{side} wall (worst at {st:.1})"), v, cr.qmax_factor * bearing, "kPa", "max", "mandatory", "p_max = ΣV/B·(1 + 6e/B)".into(), cr.citation.clone()));
+                let bearing = self
+                    .assembly
+                    .as_ref()
+                    .and_then(|a| if left { a.wall.as_ref() } else { a.right.as_ref().and_then(|r| r.wall.as_ref()).or(a.wall.as_ref()) })
+                    .map_or(f64::NAN, |w| w.soil.bearing_kpa);
+                c.push(standards::chk(
+                    "W-BEAR",
+                    "Max bearing pressure",
+                    format!("{side} wall (worst at {st:.1})"),
+                    v,
+                    cr.qmax_factor * bearing,
+                    "kPa",
+                    "max",
+                    "mandatory",
+                    "p_max = ΣV/B·(1 + 6e/B)".into(),
+                    cr.citation.clone(),
+                ));
             }
-            c.push(standards::chk("C-DAYLIGHT", "Corridor sections reach daylight", "corridor".into(), cor.sections_with_warnings as f64, 0.0, "sections", "max", "mandatory", "sections whose slopes did not meet ground within data/150 m".into(), "tool rule".into()));
+            c.push(standards::chk(
+                "C-DAYLIGHT",
+                "Corridor sections reach daylight",
+                "corridor".into(),
+                cor.sections_with_warnings as f64,
+                0.0,
+                "sections",
+                "max",
+                "mandatory",
+                "sections whose slopes did not meet ground within data/150 m".into(),
+                "tool rule".into(),
+            ));
         }
         c
     }
@@ -187,7 +297,10 @@ impl Session {
     }
 
     pub fn call(&mut self, name: &str, a: &Value) -> crate::Result<Value> {
-        let r = match self.call_ext(name, a) { Some(r) => r, None => self.call_inner(name, a) };
+        let r = match self.call_ext(name, a) {
+            Some(r) => r,
+            None => self.call_inner(name, a),
+        };
         if r.is_ok() && (DESIGN_TOOLS.contains(&name) || crate::ext::TOOLS.contains(&name)) {
             self.approved_seq = None;
         }
@@ -253,14 +366,14 @@ impl Session {
                 let out = json!({"application": x.application, "cg_points": x.points.len(), "surfaces": surfs, "alignments": als});
                 if a["use_surface"].as_bool().unwrap_or(true) {
                     let want = a["surface"].as_str();
-                    if let Some(s) = x.surfaces.iter().find(|s| want.map_or(true, |w| w == s.name)) {
+                    if let Some(s) = x.surfaces.iter().find(|s| want.is_none_or(|w| w == s.name)) {
                         self.tin = Some(Tin::from_faces(&s.points, &s.faces)?);
                         self.invalidate_corridor();
                     }
                 }
                 if a["use_alignment"].as_bool().unwrap_or(true) {
                     let want = a["alignment"].as_str();
-                    if let Some(al) = x.alignments.iter().find(|s| want.map_or(true, |w| w == s.name)) {
+                    if let Some(al) = x.alignments.iter().find(|s| want.is_none_or(|w| w == s.name)) {
                         if !al.elements.is_empty() {
                             self.alignment = Some(landxml::to_alignment(al)?);
                             self.invalidate_from_alignment();
@@ -285,7 +398,13 @@ impl Session {
                 if let Some(t) = &self.corridor_fg {
                     surfaces.push(("Corridor FG", t));
                 }
-                let xml = landxml::write(&landxml::Export { points: &self.points, surfaces, alignment: self.alignment.as_ref(), profiles: self.profile.iter().collect(), networks: self.networks.iter().collect() });
+                let xml = landxml::write(&landxml::Export {
+                    points: &self.points,
+                    surfaces,
+                    alignment: self.alignment.as_ref(),
+                    profiles: self.profile.iter().collect(),
+                    networks: self.networks.iter().collect(),
+                });
                 let h = self.write(&file, xml.as_bytes())?;
                 let out = json!({"file": file, "sha256": h, "bytes": xml.len()});
                 let prov = self.log("agent", name, a, &out, &["LandXML 1.2 schema".into()])?;
@@ -359,7 +478,13 @@ impl Session {
                 let se = superelev::design(&b, al)?;
                 let out = serde_json::to_value(&se).unwrap();
                 let h = self.write("superelevation.json", out.to_string().as_bytes())?;
-                let prov = self.log("agent", name, a, &json!({"curves": se.curves.len(), "detail_sha256": h, "e": se.curves.iter().map(|c| c.e).collect::<Vec<_>>()}), &[format!("{:?} superelevation", b.standard)])?;
+                let prov = self.log(
+                    "agent",
+                    name,
+                    a,
+                    &json!({"curves": se.curves.len(), "detail_sha256": h, "e": se.curves.iter().map(|c| c.e).collect::<Vec<_>>()}),
+                    &[format!("{:?} superelevation", b.standard)],
+                )?;
                 self.superelevation = Some(se);
                 self.invalidate_corridor();
                 Ok(json!({"result": out, "provenance": prov}))
@@ -380,7 +505,12 @@ impl Session {
                 let mut asm: Assembly = serde_json::from_value(a.clone()).map_err(|e| e.to_string())?;
                 if asm.pavement.is_empty() {
                     if let Some(p) = &self.pavement {
-                        asm.pavement = p.layers.iter().filter(|l| l.thickness_mm > 0.0).map(|l| corridor::Layer { name: l.name.clone(), thickness_m: l.thickness_mm / 1000.0 }).collect();
+                        asm.pavement = p
+                            .layers
+                            .iter()
+                            .filter(|l| l.thickness_mm > 0.0)
+                            .map(|l| corridor::Layer { name: l.name.clone(), thickness_m: l.thickness_mm / 1000.0 })
+                            .collect();
                     }
                 }
                 asm.validate()?;
@@ -401,7 +531,17 @@ impl Session {
                     Some(v) if !v.is_null() => Some(serde_json::from_value(v.clone()).map_err(|e| e.to_string())?),
                     _ => None,
                 };
-                let c = corridor::build_opts(t, al, pr, self.superelevation.as_ref(), asm, f(a, "interval_m").unwrap_or(10.0), ws.as_ref(), b.design_speed_kmh, wcr.as_ref())?;
+                let c = corridor::build_opts(
+                    t,
+                    al,
+                    pr,
+                    self.superelevation.as_ref(),
+                    asm,
+                    f(a, "interval_m").unwrap_or(10.0),
+                    ws.as_ref(),
+                    b.design_speed_kmh,
+                    wcr.as_ref(),
+                )?;
                 let (fg, _) = corridor::surface(&c, false)?;
                 let (dt, _) = corridor::surface(&c, true)?;
                 let cell = f(a, "composite_cell_m").unwrap_or(0.5);
@@ -499,25 +639,62 @@ impl Session {
                 let pr = self.profile.as_ref().ok_or("create_profile first")?;
                 let head = self.log.as_ref().map(|l| l.head.clone()).unwrap_or_default();
                 let all = self.all_checks();
-                let info = SheetInfo { project: b.project.clone(), engineer: b.engineer_of_record.clone(), standard: format!("{:?}", b.standard), design_speed: b.design_speed_kmh, audit_head: head.clone(), checks_failed: all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(), checks_total: all.len(), approved_seq: self.approved_seq };
-                let ds = Design { tin: t, al, pr, corridor: self.corridor.as_ref(), networks: &self.networks, gradings: &self.gradings, intersections: &self.intersections };
+                let info = SheetInfo {
+                    project: b.project.clone(),
+                    engineer: b.engineer_of_record.clone(),
+                    standard: format!("{:?}", b.standard),
+                    design_speed: b.design_speed_kmh,
+                    audit_head: head.clone(),
+                    checks_failed: all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(),
+                    checks_total: all.len(),
+                    approved_seq: self.approved_seq,
+                };
+                let ds = Design {
+                    tin: t,
+                    al,
+                    pr,
+                    corridor: self.corridor.as_ref(),
+                    networks: &self.networks,
+                    gradings: &self.gradings,
+                    intersections: &self.intersections,
+                };
                 // sheet order follows a design-stage plan set: cover/index/notes, route selection,
                 // plan & profile, typicals, superelevation, pavement, cross sections, protection,
                 // drainage profiles and details, earthwork/quantities, standard details
                 let nxs = self.corridor.as_ref().map_or(0, sheet::n_xs_pages);
                 let mut titles: Vec<String> = vec!["Cover, sheet index and general notes".into()];
-                if self.route.is_some() { titles.push("Route alternatives and selection".into()); }
+                if self.route.is_some() {
+                    titles.push("Route alternatives and selection".into());
+                }
                 titles.push("Plan and profile".into());
-                if self.assembly.is_some() { titles.push("Typical sections".into()); }
-                if self.superelevation.is_some() { titles.push("Superelevation diagram".into()); }
-                if self.pavement.is_some() { titles.push("Pavement and subgrade details".into()); }
-                for i in 0..nxs { titles.push(format!("Cross sections ({} of {nxs})", i + 1)); }
-                if self.protection.is_some() && self.corridor.is_some() { titles.push("Roadside protection layout".into()); }
-                for n in &self.networks { titles.push(format!("Pipe plan/profile {}", n.name)); }
-                if !self.networks.is_empty() { titles.push("Drainage details and structure schedule".into()); }
-                if self.corridor.is_some() && self.mass_haul.is_some() { titles.push("Mass haul and quantities".into()); }
+                if self.assembly.is_some() {
+                    titles.push("Typical sections".into());
+                }
+                if self.superelevation.is_some() {
+                    titles.push("Superelevation diagram".into());
+                }
+                if self.pavement.is_some() {
+                    titles.push("Pavement and subgrade details".into());
+                }
+                for i in 0..nxs {
+                    titles.push(format!("Cross sections ({} of {nxs})", i + 1));
+                }
+                if self.protection.is_some() && self.corridor.is_some() {
+                    titles.push("Roadside protection layout".into());
+                }
+                for n in &self.networks {
+                    titles.push(format!("Pipe plan/profile {}", n.name));
+                }
+                if !self.networks.is_empty() {
+                    titles.push("Drainage details and structure schedule".into());
+                }
+                if self.corridor.is_some() && self.mass_haul.is_some() {
+                    titles.push("Mass haul and quantities".into());
+                }
                 let exts = self.ext_sheets();
-                for e in &exts { titles.push(e.title.clone()); }
+                for e in &exts {
+                    titles.push(e.title.clone());
+                }
                 titles.push("Standard details atlas (references)".into());
                 let pages = titles.len();
                 let index: Vec<(String, String)> = titles.iter().enumerate().map(|(i, t)| (t.clone(), format!("sheet-{:02}.dxf", i + 1))).collect();
@@ -530,27 +707,63 @@ impl Session {
                     "Standard details are schematic references; construct to the cited agency standard drawings and specification.".into(),
                     "These drawings are generated by agent tools from the audit-logged design. Status: PRELIMINARY unless the engineer has recorded approval; sealing is the engineer's act.".into(),
                 ];
-                if let Some(rc) = &self.route_choice { notes.push(format!("Selected route: {} (recorded with reasons in the audit log).", rc["selected"].as_str().or(rc["alternative"].as_str()).unwrap_or("see route sheet"))); }
+                if let Some(rc) = &self.route_choice {
+                    notes.push(format!(
+                        "Selected route: {} (recorded with reasons in the audit log).",
+                        rc["selected"].as_str().or(rc["alternative"].as_str()).unwrap_or("see route sheet")
+                    ));
+                }
                 let mut sheets = vec![crate::sheetset::cover(&info, b.standard, &index, &notes, pages)];
                 let mut pg = 2;
                 if let Some(rt) = &self.route {
-                    let sel = self.route_choice.as_ref().and_then(|r| r["selected"].as_str().or(r["alternative"].as_str()).map(String::from)).unwrap_or_else(|| rt["recommendation"]["recommended"].as_str().unwrap_or("").to_string());
-                    sheets.push(crate::sheetset::route_sheet(t, rt, &sel, &info, pg, pages)); pg += 1;
+                    let sel = self
+                        .route_choice
+                        .as_ref()
+                        .and_then(|r| r["selected"].as_str().or(r["alternative"].as_str()).map(String::from))
+                        .unwrap_or_else(|| rt["recommendation"]["recommended"].as_str().unwrap_or("").to_string());
+                    sheets.push(crate::sheetset::route_sheet(t, rt, &sel, &info, pg, pages));
+                    pg += 1;
                 }
-                sheets.push(sheet::plan_profile(&ds, &info, pg, pages)); pg += 1;
-                if let Some(asm) = &self.assembly { sheets.push(crate::sheetset::typical_sections(asm, b.normal_crown, &info, pg, pages)); pg += 1; }
-                if let Some(se) = &self.superelevation { sheets.push(crate::sheetset::superelevation_sheet(se, al, &info, pg, pages)); pg += 1; }
-                if let Some(pv) = &self.pavement { sheets.push(crate::sheetset::pavement_sheet(pv, &info, pg, pages)); pg += 1; }
-                if let Some(c) = &self.corridor { sheets.extend(sheet::cross_sections(c, &info, pg, pages)); pg += nxs; }
-                if let (Some(pt), Some(c)) = (&self.protection, &self.corridor) { sheets.push(crate::sheetset::protection_sheet(pt, c, &info, pg, pages)); pg += 1; }
-                for n in self.networks.iter() { sheets.push(sheet::pipe_profile(n, &info, pg, pages)); pg += 1; }
-                if !self.networks.is_empty() { sheets.push(crate::sheetset::drainage_details(&self.networks, &info, pg, pages)); pg += 1; }
+                sheets.push(sheet::plan_profile(&ds, &info, pg, pages));
+                pg += 1;
+                if let Some(asm) = &self.assembly {
+                    sheets.push(crate::sheetset::typical_sections(asm, b.normal_crown, &info, pg, pages));
+                    pg += 1;
+                }
+                if let Some(se) = &self.superelevation {
+                    sheets.push(crate::sheetset::superelevation_sheet(se, al, &info, pg, pages));
+                    pg += 1;
+                }
+                if let Some(pv) = &self.pavement {
+                    sheets.push(crate::sheetset::pavement_sheet(pv, &info, pg, pages));
+                    pg += 1;
+                }
+                if let Some(c) = &self.corridor {
+                    sheets.extend(sheet::cross_sections(c, &info, pg, pages));
+                    pg += nxs;
+                }
+                if let (Some(pt), Some(c)) = (&self.protection, &self.corridor) {
+                    sheets.push(crate::sheetset::protection_sheet(pt, c, &info, pg, pages));
+                    pg += 1;
+                }
+                for n in self.networks.iter() {
+                    sheets.push(sheet::pipe_profile(n, &info, pg, pages));
+                    pg += 1;
+                }
+                if !self.networks.is_empty() {
+                    sheets.push(crate::sheetset::drainage_details(&self.networks, &info, pg, pages));
+                    pg += 1;
+                }
                 if let Some(c) = &self.corridor {
                     if let Some(mh) = &self.mass_haul {
-                        sheets.push(sheet::mass_haul_sheet(mh, &self.materials, c, &self.networks, &self.gradings, &info, pg, pages)); pg += 1;
+                        sheets.push(sheet::mass_haul_sheet(mh, &self.materials, c, &self.networks, &self.gradings, &info, pg, pages));
+                        pg += 1;
                     }
                 }
-                for e in &exts { sheets.push(crate::ext::render(e, &info, pg, pages)); pg += 1; }
+                for e in &exts {
+                    sheets.push(crate::ext::render(e, &info, pg, pages));
+                    pg += 1;
+                }
                 sheets.push(crate::sheetset::details_atlas(b.standard, &info, pg, pages));
                 debug_assert_eq!(sheets.len(), pages);
                 let model = sheet::model(&ds, 1.0).to_dxf();
@@ -563,7 +776,11 @@ impl Session {
                     let n = format!("sheet-{:02}.dxf", i + 1);
                     files[&n] = json!(self.write(&n, d.as_bytes())?);
                 }
-                let status = if info.approved_seq.is_some() && info.checks_failed == 0 { "APPROVED IN AUDIT LOG (seal by engineer)" } else { "PRELIMINARY - NOT FOR CONSTRUCTION" };
+                let status = if info.approved_seq.is_some() && info.checks_failed == 0 {
+                    "APPROVED IN AUDIT LOG (seal by engineer)"
+                } else {
+                    "PRELIMINARY - NOT FOR CONSTRUCTION"
+                };
                 let out = json!({"files": files, "pages": pages, "sheet_index": titles, "status": status, "audit_head_on_sheet": head});
                 let prov = self.log("agent", name, a, &out, &[])?;
                 Ok(json!({"result": out, "provenance": prov}))
@@ -580,14 +797,30 @@ impl Session {
                 if let Some(se) = &self.superelevation {
                     let mut h = String::from("<table><tr><th>Curve</th><th>R m</th><th>e</th><th>method</th><th>transition start–full</th><th>full–end</th><th>rel. gradient %</th><th>note</th></tr>");
                     for c in &se.curves {
-                        h += &format!("<tr><td>{}</td><td>{:.1}</td><td>{:.4}</td><td>{}</td><td>{:.2}–{:.2}</td><td>{:.2}–{:.2}</td><td>{:.3}</td><td>{}</td></tr>", c.curve, c.radius, c.e, c.method, c.a_in, c.b_in, c.b_out, c.a_out, c.relative_gradient * 100.0, c.note);
+                        h += &format!(
+                            "<tr><td>{}</td><td>{:.1}</td><td>{:.4}</td><td>{}</td><td>{:.2}–{:.2}</td><td>{:.2}–{:.2}</td><td>{:.3}</td><td>{}</td></tr>",
+                            c.curve,
+                            c.radius,
+                            c.e,
+                            c.method,
+                            c.a_in,
+                            c.b_in,
+                            c.b_out,
+                            c.a_out,
+                            c.relative_gradient * 100.0,
+                            c.note
+                        );
                     }
                     blocks.push(("Superelevation".to_string(), h + "</table>"));
                 }
                 if let Some(c) = &self.corridor {
                     let mut h = format!("<p>{} sample lines. Method: {}. <b>Cut {:.1} m³, fill {:.1} m³</b>.", c.sections.len(), c.method, c.cut_m3, c.fill_m3);
                     if let Some((cc, cf, n, cell)) = self.composite {
-                        h += &format!(" Composite cross-check ({cell} m grid, {n} cells): cut {cc:.1} m³ ({:+.2}%), fill {cf:.1} m³ ({:+.2}%).", (c.cut_m3 - cc) / cc.max(1e-9) * 100.0, (c.fill_m3 - cf) / cf.max(1e-9) * 100.0);
+                        h += &format!(
+                            " Composite cross-check ({cell} m grid, {n} cells): cut {cc:.1} m³ ({:+.2}%), fill {cf:.1} m³ ({:+.2}%).",
+                            (c.cut_m3 - cc) / cc.max(1e-9) * 100.0,
+                            (c.fill_m3 - cf) / cf.max(1e-9) * 100.0
+                        );
                     }
                     h += "</p><ul>";
                     for (n, v) in &c.layer_m3 {
@@ -596,10 +829,22 @@ impl Session {
                     blocks.push(("Corridor and earthwork".to_string(), h + "</ul>"));
                 }
                 if let Some(mh) = &self.mass_haul {
-                    blocks.push(("Mass haul".to_string(), format!("<p>Cut factor {:.2}. Balance stations: {}. Final ordinate {:.0} m³ (positive = surplus). Haul moment ∫|M|ds = {:.0} m³·m.</p>", mh.cut_factor, mh.balance_stations.iter().map(|s| sheet::sta_label(*s)).collect::<Vec<_>>().join(", "), mh.final_ordinate, mh.haul_moment_m3m)));
+                    blocks.push((
+                        "Mass haul".to_string(),
+                        format!(
+                            "<p>Cut factor {:.2}. Balance stations: {}. Final ordinate {:.0} m³ (positive = surplus). Haul moment ∫|M|ds = {:.0} m³·m.</p>",
+                            mh.cut_factor,
+                            mh.balance_stations.iter().map(|s| sheet::sta_label(*s)).collect::<Vec<_>>().join(", "),
+                            mh.final_ordinate,
+                            mh.haul_moment_m3m
+                        ),
+                    ));
                 }
                 for g in &self.gradings {
-                    blocks.push((format!("Grading {}", g.name), format!("<p>Cut {:.1} m³, fill {:.1} m³ ({} m composite grid). Warnings: {}</p>", g.cut_m3, g.fill_m3, g.cell_m, g.warnings.len())));
+                    blocks.push((
+                        format!("Grading {}", g.name),
+                        format!("<p>Cut {:.1} m³, fill {:.1} m³ ({} m composite grid). Warnings: {}</p>", g.cut_m3, g.fill_m3, g.cell_m, g.warnings.len()),
+                    ));
                 }
                 for n in &self.networks {
                     let mut h = String::from("<table><tr><th>Pipe</th><th>From→To</th><th>L m</th><th>D m</th><th>S %</th><th>Inv up/dn</th><th>Q design m³/s</th><th>Q full</th><th>V full m/s</th><th>h/D</th><th>cover min m</th><th>HGL up/dn</th><th>regime</th></tr>");
@@ -648,15 +893,31 @@ impl Session {
                 let mut a2 = a.clone();
                 if let Some(tr) = a.get("traffic").filter(|v| !v.is_null()) {
                     let g = |k: &str| tr.get(k).and_then(|x| x.as_f64()).ok_or(format!("traffic.{k} required"));
-                    let n = crate::pavement::cumulative_traffic(g("aadt")?, g("hv_frac")?, g("esa_per_hv")?, g("growth")?, g("years")?, g("dir_factor")?, g("lane_factor")?);
+                    let n = crate::pavement::cumulative_traffic(
+                        g("aadt")?,
+                        g("hv_frac")?,
+                        g("esa_per_hv")?,
+                        g("growth")?,
+                        g("years")?,
+                        g("dir_factor")?,
+                        g("lane_factor")?,
+                    );
                     let n = if b.standard == standards::Standard::Uk { n / 1e6 } else { n };
                     a2["design_traffic"] = json!(n);
-                    self.traffic = Some(json!({"inputs": tr, "design_traffic": n, "unit": if b.standard == standards::Standard::Uk { "msa" } else if matches!(b.standard, standards::Standard::Au | standards::Standard::Nz) { "DESA" } else { "ESAL (W18)" }, "formula": "N = 365·AADT·HV·ESA/HV·DF·LF·((1+g)^n − 1)/g"}));
+                    self.traffic = Some(
+                        json!({"inputs": tr, "design_traffic": n, "unit": if b.standard == standards::Standard::Uk { "msa" } else if matches!(b.standard, standards::Standard::Au | standards::Standard::Nz) { "DESA" } else { "ESAL (W18)" }, "formula": "N = 365·AADT·HV·ESA/HV·DF·LF·((1+g)^n − 1)/g"}),
+                    );
                 }
                 let inp: crate::pavement::PavementInput = serde_json::from_value(a2).map_err(|e| e.to_string())?;
                 let pd = crate::pavement::design(b.standard, &inp)?;
                 let out = serde_json::to_value(&pd).unwrap();
-                let prov = self.log("agent", name, a, &json!({"layers": pd.layers, "total_mm": pd.total_mm, "sn_required": pd.sn_required}), &[pd.citation.clone()])?;
+                let prov = self.log(
+                    "agent",
+                    name,
+                    a,
+                    &json!({"layers": pd.layers, "total_mm": pd.total_mm, "sn_required": pd.sn_required}),
+                    std::slice::from_ref(&pd.citation),
+                )?;
                 self.pavement = Some(pd);
                 Ok(json!({"result": out, "traffic": self.traffic, "provenance": prov}))
             }
@@ -665,11 +926,20 @@ impl Session {
                 let (t, st) = self.tin.as_ref().ok_or("build_surface first")?;
                 let asm = self.assembly.as_ref().ok_or("create_assembly first (alternatives are compared with the typical section)")?.clone();
                 let rs = standards::resolve(&b)?;
-                let p2 = |k: &str| -> crate::Result<[f64; 2]> { let v = a[k].as_array().ok_or(format!("{k} required"))?; Ok([v[0].as_f64().unwrap_or(0.0), v[1].as_f64().unwrap_or(0.0)]) };
+                let p2 = |k: &str| -> crate::Result<[f64; 2]> {
+                    let v = a[k].as_array().ok_or(format!("{k} required"))?;
+                    Ok([v[0].as_f64().unwrap_or(0.0), v[1].as_f64().unwrap_or(0.0)])
+                };
                 let (s0, s1) = (p2("start")?, p2("end")?);
                 let cell = f(a, "cell_m").unwrap_or(10.0);
-                let alts: Vec<crate::route::AltSpec> = match a.get("alternatives").filter(|v| !v.is_null()) { Some(v) => serde_json::from_value(v.clone()).map_err(|e| e.to_string())?, None => crate::route::default_alts() };
-                let rates: crate::workflow::UnitRates = match a.get("rates").filter(|v| !v.is_null()) { Some(v) => serde_json::from_value(v.clone()).map_err(|e| e.to_string())?, None => crate::workflow::UnitRates { excavation: 1.0, embankment: 1.0, borrow_waste: 1.5, wall_concrete: 30.0, pavement_m2: 0.0 } };
+                let alts: Vec<crate::route::AltSpec> = match a.get("alternatives").filter(|v| !v.is_null()) {
+                    Some(v) => serde_json::from_value(v.clone()).map_err(|e| e.to_string())?,
+                    None => crate::route::default_alts(),
+                };
+                let rates: crate::workflow::UnitRates = match a.get("rates").filter(|v| !v.is_null()) {
+                    Some(v) => serde_json::from_value(v.clone()).map_err(|e| e.to_string())?,
+                    None => crate::workflow::UnitRates { excavation: 1.0, embankment: 1.0, borrow_waste: 1.5, wall_concrete: 30.0, pavement_m2: 0.0 },
+                };
                 let gmax = rs.g_desirable.unwrap_or(rs.g_max);
                 let grid = crate::route::Grid::from_tin(t, cell, st.bbox);
                 let r_pref = f(a, "radius_pref_m").unwrap_or(3.0 * rs.r_min);
@@ -689,26 +959,54 @@ impl Session {
                     // drop PIs whose fitted radius is below the minimum and refit
                     for _ in 0..60 {
                         match radii.iter().position(|r| *r < rs.r_min) {
-                            Some(k) if pis.len() > 3 => { pis.remove(k + 1); pis = crate::route::clean_pis(pis, 4.0, 40.0); radii = crate::route::fit_radii(&pis, r_pref, ls, 0.45); }
+                            Some(k) if pis.len() > 3 => {
+                                pis.remove(k + 1);
+                                pis = crate::route::clean_pis(pis, 4.0, 40.0);
+                                radii = crate::route::fit_radii(&pis, r_pref, ls, 0.45);
+                            }
                             _ => break,
                         }
                     }
                     // spiral no longer than 90 % of what the deflection allows (2·Ls/(2R) < Δ)
-                    let spirals: Vec<f64> = radii.iter().enumerate().map(|(k, r)| { let d = crate::route::deflection(pis[k], pis[k + 1], pis[k + 2]); (ls.min(0.9 * r * d) / 5.0).floor() * 5.0 }).collect();
+                    let spirals: Vec<f64> = radii
+                        .iter()
+                        .enumerate()
+                        .map(|(k, r)| {
+                            let d = crate::route::deflection(pis[k], pis[k + 1], pis[k + 2]);
+                            (ls.min(0.9 * r * d) / 5.0).floor() * 5.0
+                        })
+                        .collect();
                     let ai = crate::align::AlignmentInput { name: spec.name.clone(), pis: pis.clone(), radii: radii.clone(), spirals, start_station: 0.0 };
-                    let ev = crate::workflow::evaluate(&b, t, &asm, ai.clone(), f(a, "vpi_spacing_m").unwrap_or(150.0), f(a, "interval_m").unwrap_or(20.0), shrink, &rates, wc.as_ref());
+                    let ev = crate::workflow::evaluate(
+                        &b,
+                        t,
+                        &asm,
+                        ai.clone(),
+                        f(a, "vpi_spacing_m").unwrap_or(150.0),
+                        f(a, "interval_m").unwrap_or(20.0),
+                        shrink,
+                        &rates,
+                        wc.as_ref(),
+                    );
                     self.route_inputs.push((spec.name.clone(), ai));
                     rows.push(json!({"name": spec.name, "weights": spec, "path": path, "pis": pis, "search_cost": cost, "nodes_expanded": nexp, "path_length_m": plen, "max_ground_grade_pct": pg,
                         "evaluation": ev.as_ref().map(|e| serde_json::to_value(&e.0).unwrap()).unwrap_or_else(|e| json!({"error": e}))}));
                 }
                 // recommendation: fewest mandatory failures, then lowest cost proxy
-                let key = |r: &Value| (r["evaluation"]["geometry_mandatory_failures"].as_u64().unwrap_or(999), r["evaluation"]["cost_proxy"].as_f64().unwrap_or(f64::INFINITY));
+                let key = |r: &Value| {
+                    (r["evaluation"]["geometry_mandatory_failures"].as_u64().unwrap_or(999), r["evaluation"]["cost_proxy"].as_f64().unwrap_or(f64::INFINITY))
+                };
                 let best = rows.iter().min_by(|x, y| key(x).partial_cmp(&key(y)).unwrap()).cloned().ok_or("no alternatives")?;
                 let mut reasons = vec![];
                 for r in &rows {
-                    if r["name"] == best["name"] { continue; }
+                    if r["name"] == best["name"] {
+                        continue;
+                    }
                     let (e, eb) = (&r["evaluation"], &best["evaluation"]);
-                    if e.get("error").is_some() { reasons.push(format!("{} rejected: {}", r["name"].as_str().unwrap(), e["error"])); continue; }
+                    if e.get("error").is_some() {
+                        reasons.push(format!("{} rejected: {}", r["name"].as_str().unwrap(), e["error"]));
+                        continue;
+                    }
                     reasons.push(format!("vs {}: cost proxy {:.0} vs {:.0} ({:+.1}%), length {:.0} vs {:.0} m, cut+fill {:.0} vs {:.0} m³, imbalance {:.0} vs {:.0} m³, wall concrete {:.0} vs {:.0} m³, max grade {:.1} vs {:.1} %, mandatory failures {} vs {}",
                         r["name"].as_str().unwrap(), eb["cost_proxy"].as_f64().unwrap_or(0.0), e["cost_proxy"].as_f64().unwrap_or(0.0), (eb["cost_proxy"].as_f64().unwrap_or(0.0) / e["cost_proxy"].as_f64().unwrap_or(1.0) - 1.0) * 100.0,
                         eb["length_m"].as_f64().unwrap_or(0.0), e["length_m"].as_f64().unwrap_or(0.0), eb["cut_m3"].as_f64().unwrap_or(0.0) + eb["fill_m3"].as_f64().unwrap_or(0.0), e["cut_m3"].as_f64().unwrap_or(0.0) + e["fill_m3"].as_f64().unwrap_or(0.0),
@@ -717,8 +1015,15 @@ impl Session {
                 let rec = json!({"recommended": best["name"], "rule": "fewest mandatory geometry failures, then lowest cost proxy (unit rates are agent placeholders unless the engineer enters rates)", "reasons": reasons, "rates": rates, "grid_cell_m": cell, "max_grade_pct_used": gmax, "r_min_m": rs.r_min});
                 let full = json!({"alternatives": rows, "recommendation": rec});
                 let h = self.write("route-alternatives.json", full.to_string().as_bytes())?;
-                let summary: Vec<Value> = rows.iter().map(|r| json!({"name": r["name"], "pis": r["pis"].as_array().map_or(0, |p| p.len()), "evaluation": r["evaluation"]})).collect();
-                let prov = self.log("agent", name, a, &json!({"alternatives": summary, "recommendation": rec, "detail_sha256": h}), &["least-cost path (heading-constrained Dijkstra) + full corridor evaluation".into()])?;
+                let summary: Vec<Value> =
+                    rows.iter().map(|r| json!({"name": r["name"], "pis": r["pis"].as_array().map_or(0, |p| p.len()), "evaluation": r["evaluation"]})).collect();
+                let prov = self.log(
+                    "agent",
+                    name,
+                    a,
+                    &json!({"alternatives": summary, "recommendation": rec, "detail_sha256": h}),
+                    &["least-cost path (heading-constrained Dijkstra) + full corridor evaluation".into()],
+                )?;
                 self.route = Some(full);
                 Ok(json!({"result": {"alternatives": summary, "recommendation": rec, "file": "route-alternatives.json"}, "provenance": prov}))
             }
@@ -729,8 +1034,14 @@ impl Session {
                 let mut ai = ai;
                 ai.name = "CL".into();
                 let al = Alignment::build(ai.clone())?;
-                let reasons = a.get("reasons").cloned().filter(|v| !v.is_null()).or_else(|| self.route.as_ref().map(|r| r["recommendation"]["reasons"].clone())).unwrap_or(json!([]));
-                let out = json!({"selected": alt, "by": actor, "reasons": reasons, "length_m": al.length, "pis": ai.pis, "radii": ai.radii, "spirals": ai.spirals});
+                let reasons = a
+                    .get("reasons")
+                    .cloned()
+                    .filter(|v| !v.is_null())
+                    .or_else(|| self.route.as_ref().map(|r| r["recommendation"]["reasons"].clone()))
+                    .unwrap_or(json!([]));
+                let out =
+                    json!({"selected": alt, "by": actor, "reasons": reasons, "length_m": al.length, "pis": ai.pis, "radii": ai.radii, "spirals": ai.spirals});
                 let prov = self.log(&actor, name, a, &out, &["route selection record".into()])?;
                 self.route_choice = Some(out.clone());
                 self.alignment = Some(al);
@@ -743,13 +1054,28 @@ impl Session {
                 let al = self.alignment.as_ref().ok_or("create_alignment first")?;
                 let pr = self.profile.as_ref().ok_or("create_profile first")?;
                 let asm = self.assembly.as_ref().ok_or("create_assembly first")?;
-                let steps: Vec<f64> = a.get("steps_m").and_then(|v| v.as_array()).map(|v| v.iter().filter_map(|x| x.as_f64()).collect()).unwrap_or(vec![2.0, 1.0, 0.5]);
+                let steps: Vec<f64> =
+                    a.get("steps_m").and_then(|v| v.as_array()).map(|v| v.iter().filter_map(|x| x.as_f64()).collect()).unwrap_or(vec![2.0, 1.0, 0.5]);
                 let wc = self.wall_criteria().ok();
-                let r = crate::workflow::optimize_profile(&b, t, al, self.superelevation.as_ref(), asm, &pr.input, f(a, "interval_m").unwrap_or(20.0), f(a, "shrink").unwrap_or(0.9), f(a, "w_volume").unwrap_or(0.05), f(a, "w_wall").unwrap_or(5.0), f(a, "w_haul").unwrap_or(0.0), &steps, wc.as_ref())?;
+                let r = crate::workflow::optimize_profile(
+                    &b,
+                    t,
+                    al,
+                    self.superelevation.as_ref(),
+                    asm,
+                    &pr.input,
+                    f(a, "interval_m").unwrap_or(20.0),
+                    f(a, "shrink").unwrap_or(0.9),
+                    f(a, "w_volume").unwrap_or(0.05),
+                    f(a, "w_wall").unwrap_or(5.0),
+                    f(a, "w_haul").unwrap_or(0.0),
+                    &steps,
+                    wc.as_ref(),
+                )?;
                 let p = Profile::build(r.after.clone())?;
                 let out = json!({"objective_before": r.objective_before, "objective_after": r.objective_after, "before": r.before_eval, "after": r.after_eval, "evaluations": r.evaluations, "accepted_moves": r.steps.len(), "vpis_after": r.after.vpis, "curve_lengths_after": r.after.curve_lengths, "method": r.method});
                 let h = self.write("profile-optimisation.json", serde_json::to_string(&r).unwrap().as_bytes())?;
-                let prov = self.log("agent", name, a, &json!({"summary": out, "detail_sha256": h}), &[r.method.clone()])?;
+                let prov = self.log("agent", name, a, &json!({"summary": out, "detail_sha256": h}), std::slice::from_ref(&r.method))?;
                 self.profile = Some(p);
                 self.optimisation = Some(r);
                 self.invalidate_corridor();
@@ -760,7 +1086,10 @@ impl Session {
                 let c = self.corridor.as_ref().ok_or("build_corridor first")?;
                 let pr = self.profile.as_ref().ok_or("create_profile first")?;
                 let inp: crate::protection::ProtectionInput = serde_json::from_value(a.clone()).map_err(|e| e.to_string())?;
-                let g = |s: f64| { let h = 1.0; (pr.elevation_at(s + h).unwrap_or(0.0) - pr.elevation_at(s - h).unwrap_or(0.0)) / (2.0 * h) };
+                let g = |s: f64| {
+                    let h = 1.0;
+                    (pr.elevation_at(s + h).unwrap_or(0.0) - pr.elevation_at(s - h).unwrap_or(0.0)) / (2.0 * h)
+                };
                 let p = crate::protection::design(b.standard, c, &g, &inp)?;
                 let h = self.write("protection.json", serde_json::to_string(&p).unwrap().as_bytes())?;
                 let fails = p.checks.iter().filter(|c| !c.pass && c.severity == "mandatory").count();

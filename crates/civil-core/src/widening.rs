@@ -27,8 +27,19 @@ pub struct WideningResult {
 pub fn table(radius: f64, rows: &[[f64; 2]], citation: &str) -> WideningResult {
     let mut r = rows.to_vec();
     r.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
-    let w = if r.is_empty() { f64::NAN } else if radius > r.last().unwrap()[0] { 0.0 } else { r.iter().find(|x| radius <= x[0]).map_or(f64::NAN, |x| x[1]) };
-    WideningResult { radius, widening_m: w, method: "engineer-entered widening table".into(), citation: if citation.is_empty() { "engineer-entered table (no citation given)".into() } else { citation.into() } }
+    let w = if r.is_empty() {
+        f64::NAN
+    } else if radius > r.last().unwrap()[0] {
+        0.0
+    } else {
+        r.iter().find(|x| radius <= x[0]).map_or(f64::NAN, |x| x[1])
+    };
+    WideningResult {
+        radius,
+        widening_m: w,
+        method: "engineer-entered widening table".into(),
+        citation: if citation.is_empty() { "engineer-entered table (no citation given)".into() } else { citation.into() },
+    }
 }
 
 /// AASHTO Green Book 2018 §3.3.10 (metric): w_c = N(U + C) + (N − 1)F_A + Z,
@@ -36,14 +47,25 @@ pub fn table(radius: f64, rows: &[[f64; 2]], citation: &str) -> WideningResult {
 pub fn aashto(radius: f64, speed_kmh: f64, lanes: usize, lane_width: f64, v: &Vehicle) -> WideningResult {
     let n = lanes as f64;
     let wn = n * lane_width;
-    let c = if wn <= 6.0 { 0.6 } else if wn <= 6.6 { 0.75 } else { 0.9 };
+    let c = if wn <= 6.0 {
+        0.6
+    } else if wn <= 6.6 {
+        0.75
+    } else {
+        0.9
+    };
     let sl2: f64 = v.wheelbases_m.iter().map(|l| l * l).sum();
     let u = v.track_u_m + radius - (radius * radius - sl2).sqrt();
     let l1 = v.wheelbases_m.first().copied().unwrap_or(0.0);
     let fa = (radius * radius + v.front_overhang_m * (2.0 * l1 + v.front_overhang_m)).sqrt() - radius;
     let z = 0.1 * speed_kmh / radius.sqrt();
     let wc = n * (u + c) + (n - 1.0) * fa + z;
-    WideningResult { radius, widening_m: (wc - wn).max(0.0), method: format!("AASHTO off-tracking, {} (u={}, L={:?}, A={}), C={c}, w_n={wn}", v.name, v.track_u_m, v.wheelbases_m, v.front_overhang_m), citation: "AASHTO A Policy on Geometric Design of Highways and Streets 2018, §3.3.10 Traveled-way widening on horizontal curves".into() }
+    WideningResult {
+        radius,
+        widening_m: (wc - wn).max(0.0),
+        method: format!("AASHTO off-tracking, {} (u={}, L={:?}, A={}), C={c}, w_n={wn}", v.name, v.track_u_m, v.wheelbases_m, v.front_overhang_m),
+        citation: "AASHTO A Policy on Geometric Design of Highways and Streets 2018, §3.3.10 Traveled-way widening on horizontal curves".into(),
+    }
 }
 
 #[cfg(test)]

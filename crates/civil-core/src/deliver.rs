@@ -73,20 +73,32 @@ fn csv(s: &str) -> String {
 
 pub fn departures(s: &Session) -> Vec<[String; 7]> {
     let b = s.basis.as_ref();
-    let uk = b.map_or(false, |b| b.standard == Standard::Uk);
+    let uk = b.is_some_and(|b| b.standard == Standard::Uk);
     let mut v = Vec::new();
     for c in s.all_checks() {
         if c.pass {
             continue;
         }
         let kind = if c.severity == "mandatory" {
-            if uk { "departure from standard (GG 101)" } else { "design exception / departure" }
+            if uk {
+                "departure from standard (GG 101)"
+            } else {
+                "design exception / departure"
+            }
         } else if ["H-RDES", "V-GDES", "V-LVC"].contains(&c.id.as_str()) && uk {
             "relaxation (CD 109)"
         } else {
             "advisory — engineer to note"
         };
-        v.push([c.id.clone(), c.element.clone(), kind.into(), format!("{:.3} {} vs {} {:.3}", c.value, c.unit, c.kind, c.limit), c.citation.clone(), "open".into(), String::new()]);
+        v.push([
+            c.id.clone(),
+            c.element.clone(),
+            kind.into(),
+            format!("{:.3} {} vs {} {:.3}", c.value, c.unit, c.kind, c.limit),
+            c.citation.clone(),
+            "open".into(),
+            String::new(),
+        ]);
     }
     for d in &s.departures {
         let g = |k: &str| d[k].as_str().unwrap_or("").to_string();
@@ -168,14 +180,51 @@ pub fn boq(s: &Session) -> (Vec<BoqRow>, String) {
         }
         for (n, v) in &c.layer_m3 {
             let l = n.to_lowercase();
-            let (us, uk) = if l.contains("pcc") || l.contains("urc") || l.contains("concrete") { ("FP-14 Div 500", "SHW Series 1000") } else if l.contains("asphalt") || l.contains("surfac") || l.contains("binder") || l.contains("ac") { ("FP-14 401", "SHW Series 900") } else if l.contains("hbgm") { ("FP-14 Div 300", "SHW Series 800") } else { ("FP-14 301", "SHW Series 800") };
+            let (us, uk) = if l.contains("pcc") || l.contains("urc") || l.contains("concrete") {
+                ("FP-14 Div 500", "SHW Series 1000")
+            } else if l.contains("asphalt") || l.contains("surfac") || l.contains("binder") || l.contains("ac") {
+                ("FP-14 401", "SHW Series 900")
+            } else if l.contains("hbgm") {
+                ("FP-14 Div 300", "SHW Series 800")
+            } else {
+                ("FP-14 301", "SHW Series 800")
+            };
             add(code(us, uk, "Pavements"), &format!("Pavement layer: {n}"), "m³", *v, "corridor layer areas");
         }
-        let curb_len: f64 = c.sections.windows(2).map(|w| { let l = w[1].station - w[0].station; let k = |sd: &crate::corridor::SideSection| sd.codes.iter().any(|x| x == "TOP-CURB") as u8 as f64; (k(&w[0].left) + k(&w[0].right) + k(&w[1].left) + k(&w[1].right)) / 2.0 * l }).sum();
+        let curb_len: f64 = c
+            .sections
+            .windows(2)
+            .map(|w| {
+                let l = w[1].station - w[0].station;
+                let k = |sd: &crate::corridor::SideSection| sd.codes.iter().any(|x| x == "TOP-CURB") as u8 as f64;
+                (k(&w[0].left) + k(&w[0].right) + k(&w[1].left) + k(&w[1].right)) / 2.0 * l
+            })
+            .sum();
         add(code("FP-14 609", "SHW Series 1100", "Kerbs and footpaths"), "Curb and gutter", "m", curb_len, "sections with curb");
-        let walk: f64 = c.sections.windows(2).map(|w| { let l = w[1].station - w[0].station; let wa = |sd: &crate::corridor::SideSection| { let i = sd.codes.iter().position(|x| x == "BACK-CURB"); let j = sd.codes.iter().position(|x| x == "BACK-WALK"); match (i, j) { (Some(i), Some(j)) => sd.fg[j][0] - sd.fg[i][0], _ => 0.0 } }; (wa(&w[0].left) + wa(&w[0].right) + wa(&w[1].left) + wa(&w[1].right)) / 2.0 * l }).sum();
+        let walk: f64 = c
+            .sections
+            .windows(2)
+            .map(|w| {
+                let l = w[1].station - w[0].station;
+                let wa = |sd: &crate::corridor::SideSection| {
+                    let i = sd.codes.iter().position(|x| x == "BACK-CURB");
+                    let j = sd.codes.iter().position(|x| x == "BACK-WALK");
+                    match (i, j) {
+                        (Some(i), Some(j)) => sd.fg[j][0] - sd.fg[i][0],
+                        _ => 0.0,
+                    }
+                };
+                (wa(&w[0].left) + wa(&w[0].right) + wa(&w[1].left) + wa(&w[1].right)) / 2.0 * l
+            })
+            .sum();
         add(code("FP-14 615", "SHW Series 1100", "Kerbs and footpaths"), "Sidewalk / footway", "m²", walk, "sections with sidewalk");
-        add(code("FP-14 258", "SHW Series 600/1700 (structures)", "Retaining walls"), "Reinforced concrete retaining wall (concrete)", "m³", c.wall_concrete_m3, "wall proportioning per section");
+        add(
+            code("FP-14 258", "SHW Series 600/1700 (structures)", "Retaining walls"),
+            "Reinforced concrete retaining wall (concrete)",
+            "m³",
+            c.wall_concrete_m3,
+            "wall proportioning per section",
+        );
     }
     for n in &s.networks {
         let mut by: std::collections::BTreeMap<String, f64> = Default::default();
@@ -189,46 +238,117 @@ pub fn boq(s: &Session) -> (Vec<BoqRow>, String) {
     }
     if let Some(p) = &s.protection {
         for b in &p.barriers {
-            add(code("FP-14 617", "SHW Series 400", "Road safety barriers"), &format!("{} ({} {:.0}–{:.0})", b.barrier_type, b.side, b.from, b.to), "m", b.length_m, "hazards in clear zone + length of need");
+            add(
+                code("FP-14 617", "SHW Series 400", "Road safety barriers"),
+                &format!("{} ({} {:.0}–{:.0})", b.barrier_type, b.side, b.from, b.to),
+                "m",
+                b.length_m,
+                "hazards in clear zone + length of need",
+            );
         }
         for d in &p.ditches {
             let l = d.to - d.from;
             if let Some(d50) = d.riprap_d50_m {
-                add(code("FP-14 251", "SHW Series 500", "Drainage"), &format!("Rock riprap ditch lining D50 {:.0} mm ({} {:.0}–{:.0})", d50 * 1000.0, d.side, d.from, d.to), "m³", l * 2.5 * 2.0 * d50, "length × 2.5 m wetted perimeter × 2·D50 thickness");
+                add(
+                    code("FP-14 251", "SHW Series 500", "Drainage"),
+                    &format!("Rock riprap ditch lining D50 {:.0} mm ({} {:.0}–{:.0})", d50 * 1000.0, d.side, d.from, d.to),
+                    "m³",
+                    l * 2.5 * 2.0 * d50,
+                    "length × 2.5 m wetted perimeter × 2·D50 thickness",
+                );
             } else if !d.lining.starts_with("bare") {
-                add(code("FP-14 629", "SHW Series 500", "Drainage"), &format!("Ditch lining: {} ({} {:.0}–{:.0})", d.lining, d.side, d.from, d.to), "m", l, "HEC-15 lining selection");
+                add(
+                    code("FP-14 629", "SHW Series 500", "Drainage"),
+                    &format!("Ditch lining: {} ({} {:.0}–{:.0})", d.lining, d.side, d.from, d.to),
+                    "m",
+                    l,
+                    "HEC-15 lining selection",
+                );
             }
         }
         for a in &p.slope_protection {
-            add(code(if a.class.starts_with("topsoil") { "FP-14 625" } else { "FP-14 629" }, "SHW Series 3000 / 600", "Landscaping and erosion control"), &format!("Slope protection: {}", a.class), "m²", a.area_m2, "slope area by class");
+            add(
+                code(if a.class.starts_with("topsoil") { "FP-14 625" } else { "FP-14 629" }, "SHW Series 3000 / 600", "Landscaping and erosion control"),
+                &format!("Slope protection: {}", a.class),
+                "m²",
+                a.area_m2,
+                "slope area by class",
+            );
         }
     }
     // v5 items from the extension tools
     if let Some(e) = s.ext.get("design_culverts") {
         let mut by: std::collections::BTreeMap<String, (f64, usize)> = Default::default();
         for c in e.result["culverts"].as_array().cloned().unwrap_or_default() {
-            if let (Some(d), Some(l)) = (c["hyd"]["d_m"].as_f64(), c["length_m"].as_f64()) { let k = format!("{:.0} mm", d * 1000.0); let v = by.entry(k).or_default(); v.0 += l; v.1 += 1; }
+            if let (Some(d), Some(l)) = (c["hyd"]["d_m"].as_f64(), c["length_m"].as_f64()) {
+                let k = format!("{:.0} mm", d * 1000.0);
+                let v = by.entry(k).or_default();
+                v.0 += l;
+                v.1 += 1;
+            }
         }
         for (k, (l, n)) in by {
             add(code("FP-14 602", "SHW Series 500", "Drainage"), &format!("Culvert pipe {k}"), "m", l, "HDS-5 culvert design");
-            add(code("FP-14 602", "SHW Series 500", "Drainage"), &format!("Culvert headwalls / end treatments {k}"), "each", 2.0 * n as f64, "two ends per culvert");
+            add(
+                code("FP-14 602", "SHW Series 500", "Drainage"),
+                &format!("Culvert headwalls / end treatments {k}"),
+                "each",
+                2.0 * n as f64,
+                "two ends per culvert",
+            );
         }
     }
     if let (Some(_), Some(al)) = (s.ext.get("design_subsurface_drainage"), &s.alignment) {
-        add(code("FP-14 605", "SHW Series 500", "Drainage"), "Pavement edge drain (both sides)", "m", 2.0 * (al.end_station() - al.start_station()), "subsurface drainage design");
+        add(
+            code("FP-14 605", "SHW Series 500", "Drainage"),
+            "Pavement edge drain (both sides)",
+            "m",
+            2.0 * (al.end_station() - al.start_station()),
+            "subsurface drainage design",
+        );
     }
     if let Some(e) = s.ext.get("design_lighting") {
-        add(code("FP-14 636 (verify)", "SHW Series 1300", "Lighting"), "Lighting column with luminaire", "each", e.result["poles"].as_array().map_or(0, |v| v.len()) as f64, "lighting layout");
+        add(
+            code("FP-14 636 (verify)", "SHW Series 1300", "Lighting"),
+            "Lighting column with luminaire",
+            "each",
+            e.result["poles"].as_array().map_or(0, |v| v.len()) as f64,
+            "lighting layout",
+        );
     }
     if let Some(e) = s.ext.get("design_marking_signing") {
-        add(code("FP-14 633 (verify)", "SHW Series 1200", "Signs and markings"), "Permanent signs", "each", e.result["signs"].as_array().map_or(0, |v| v.len()) as f64, "sign schedule");
+        add(
+            code("FP-14 633 (verify)", "SHW Series 1200", "Signs and markings"),
+            "Permanent signs",
+            "each",
+            e.result["signs"].as_array().map_or(0, |v| v.len()) as f64,
+            "sign schedule",
+        );
         if let Some(al) = &s.alignment {
-            add(code("FP-14 634 (verify)", "SHW Series 1200", "Signs and markings"), "Longitudinal pavement marking (centre + 2 edge lines)", "m", 3.0 * (al.end_station() - al.start_station()), "marking layout");
+            add(
+                code("FP-14 634 (verify)", "SHW Series 1200", "Signs and markings"),
+                "Longitudinal pavement marking (centre + 2 edge lines)",
+                "m",
+                3.0 * (al.end_station() - al.start_station()),
+                "marking layout",
+            );
         }
     }
     if let Some(e) = s.ext.get("plan_erosion_control") {
-        add(code("FP-14 157 (verify)", "SHW Series 600 (verify)", "Landscaping and erosion control"), "Sediment fence", "m", e.result["sediment_fence_m"].as_f64().unwrap_or(0.0), "ESC plan");
-        add(code("FP-14 157 (verify)", "SHW Series 600 (verify)", "Landscaping and erosion control"), "Ditch check dams", "each", e.result["check_dams"].as_f64().unwrap_or(0.0), "ESC plan");
+        add(
+            code("FP-14 157 (verify)", "SHW Series 600 (verify)", "Landscaping and erosion control"),
+            "Sediment fence",
+            "m",
+            e.result["sediment_fence_m"].as_f64().unwrap_or(0.0),
+            "ESC plan",
+        );
+        add(
+            code("FP-14 157 (verify)", "SHW Series 600 (verify)", "Landscaping and erosion control"),
+            "Ditch check dams",
+            "each",
+            e.result["check_dams"].as_f64().unwrap_or(0.0),
+            "ESC plan",
+        );
     }
     let method = match std {
         Standard::Us => "Items grouped by FHWA FP-14 Standard Specifications section (204 earthwork, 251 riprap, 258 RC walls, 301 aggregate, 401 asphalt, 602 culverts and drains, 604 manholes and inlets, 609 curb and gutter, 615 sidewalks, 617 guardrail, 625 turf, 629 RECP). State DOT item numbers must be mapped by the estimator.",
@@ -236,7 +356,6 @@ pub fn boq(s: &Session) -> (Vec<BoqRow>, String) {
         Standard::Ca => "Items mapped to Ontario Provincial Standard Specifications (OPSS) construction specifications as the default Canadian reference (marked verify); other provinces map to their own item lists (e.g. BC MoTI SS). Item numbers are for the estimator to confirm.",
         Standard::Au => "Items mapped to TfNSW QA specification series as an example state schedule (marked verify); Queensland (MRTS), Victoria (DoT Section) and other states map to their own specifications.",
         Standard::Nz => "Items mapped to NZTA (Waka Kotahi) specifications (marked verify) for the schedule of quantities.",
-        _ => "Generic work groups.",
     };
     (rows, method.into())
 }
@@ -269,7 +388,9 @@ pub fn write_all(s: &Session, stage: &str) -> crate::Result<Vec<(String, Vec<u8>
     // BoQ + cost
     let (rows, method) = boq(s);
     let mut q = format!("# {method}\ncode,item,unit,quantity,basis\n");
-    let mut cst = String::from("# Quantities from boq.csv. Rates are left blank for the estimator; this tool does not supply market prices.\ncode,item,unit,quantity,rate,amount\n");
+    let mut cst = String::from(
+        "# Quantities from boq.csv. Rates are left blank for the estimator; this tool does not supply market prices.\ncode,item,unit,quantity,rate,amount\n",
+    );
     for r in &rows {
         let _ = writeln!(q, "{},{},{},{:.1},{}", csv(&r.code), csv(&r.item), r.unit, r.qty, csv(&r.basis));
         let _ = writeln!(cst, "{},{},{},{:.1},,", csv(&r.code), csv(&r.item), r.unit, r.qty);
@@ -280,13 +401,20 @@ pub fn write_all(s: &Session, stage: &str) -> crate::Result<Vec<(String, Vec<u8>
     if let (Some(al), Some(pr)) = (&s.alignment, &s.profile) {
         let mut so = String::from("# Curve table\ncurve,radius_m,spiral_in_m,spiral_out_m,delta_deg,TS_or_PC,SC,CS,ST_or_PT\n");
         for c in al.curves() {
-            let _ = writeln!(so, "{},{:.3},{:.3},{:.3},{:.4},{:.3},{:.3},{:.3},{:.3}", c.index, c.radius, c.ls_in, c.ls_out, c.delta_deg, c.sta_start, c.sta_cs_start, c.sta_cs_end, c.sta_end);
+            let _ = writeln!(
+                so,
+                "{},{:.3},{:.3},{:.3},{:.4},{:.3},{:.3},{:.3},{:.3}",
+                c.index, c.radius, c.ls_in, c.ls_out, c.delta_deg, c.sta_start, c.sta_cs_start, c.sta_cs_end, c.sta_end
+            );
         }
         let _ = writeln!(so, "# PI coordinates\npi,easting,northing");
         for (i, p) in al.pis.iter().enumerate() {
             let _ = writeln!(so, "{},{:.3},{:.3}", i, p[0], p[1]);
         }
-        let _ = writeln!(so, "# Centreline every 20 m and at key stations\nstation,easting,northing,bearing_deg_from_north,fg_elev,cross_slope_left,cross_slope_right");
+        let _ = writeln!(
+            so,
+            "# Centreline every 20 m and at key stations\nstation,easting,northing,bearing_deg_from_north,fg_elev,cross_slope_left,cross_slope_right"
+        );
         let mut st: Vec<f64> = (0..).map(|i| al.start_station() + 20.0 * i as f64).take_while(|x| *x < al.end_station()).collect();
         st.extend(al.key_stations());
         st.push(al.end_station());
@@ -312,7 +440,14 @@ pub fn write_all(s: &Session, stage: &str) -> crate::Result<Vec<(String, Vec<u8>
     if let Some(pd) = &s.pavement {
         let mut r = format!("# Pavement design report\n\nMethod: {}\n\nCitation: {}\n\nType: {}\n\n", pd.method, pd.citation, pd.kind);
         if let Some(t) = &s.traffic {
-            let _ = writeln!(r, "## Design traffic\n\n{} = {:.4e} ({})\n\nInputs: `{}`\n", t["unit"].as_str().unwrap_or(""), t["design_traffic"].as_f64().unwrap_or(0.0), t["formula"].as_str().unwrap_or(""), t["inputs"]);
+            let _ = writeln!(
+                r,
+                "## Design traffic\n\n{} = {:.4e} ({})\n\nInputs: `{}`\n",
+                t["unit"].as_str().unwrap_or(""),
+                t["design_traffic"].as_f64().unwrap_or(0.0),
+                t["formula"].as_str().unwrap_or(""),
+                t["inputs"]
+            );
         }
         let _ = writeln!(r, "## Inputs\n\n```json\n{}\n```\n\n## Calculation steps\n", serde_json::to_string_pretty(&pd.inputs).unwrap());
         for x in &pd.steps {
@@ -322,7 +457,13 @@ pub fn write_all(s: &Session, stage: &str) -> crate::Result<Vec<(String, Vec<u8>
         for l in &pd.layers {
             let _ = writeln!(r, "| {} | {:.0} | {} |", l.name, l.thickness_mm, l.note);
         }
-        let _ = writeln!(r, "\nTotal: {:.0} mm. SN required {:?}, provided {:?}.\n\n## Engineer inputs\n", pd.total_mm, pd.sn_required.map(|v| (v * 100.0).round() / 100.0), pd.sn_provided.map(|v| (v * 100.0).round() / 100.0));
+        let _ = writeln!(
+            r,
+            "\nTotal: {:.0} mm. SN required {:?}, provided {:?}.\n\n## Engineer inputs\n",
+            pd.total_mm,
+            pd.sn_required.map(|v| (v * 100.0).round() / 100.0),
+            pd.sn_provided.map(|v| (v * 100.0).round() / 100.0)
+        );
         for e in &pd.engineer_inputs {
             let _ = writeln!(r, "- {e}");
         }
@@ -334,13 +475,24 @@ pub fn write_all(s: &Session, stage: &str) -> crate::Result<Vec<(String, Vec<u8>
     // RSA brief
     let mut a = format!("# Road safety audit brief ({stage} design)\n\nPrepared for the independent road safety audit team (US: FHWA Road Safety Audit Guidelines; UK: DMRB GG 119; AU/NZ: Austroads AGRS Part 6 / NZTA RSA procedures). The audit itself is carried out by people independent of the design team.\n\n## Design basis\n\n{} at {} km/h, standards profile {}.\n\n## Items for the auditor\n\n", b.project, b.design_speed_kmh, b.standard.label());
     if let Some(p) = &s.protection {
-        let _ = writeln!(a, "- {} roadside hazards inside the {} m clear zone; {} barrier runs proposed (see barrier layout sheet).", p.hazards.len(), "engineer-entered", p.barriers.len());
+        let _ = writeln!(
+            a,
+            "- {} roadside hazards inside the engineer-entered m clear zone; {} barrier runs proposed (see barrier layout sheet).",
+            p.hazards.len(),
+            p.barriers.len()
+        );
         for n in p.notes.iter().take(20) {
             let _ = writeln!(a, "- {n}");
         }
     }
     for x in &s.intersections {
-        let _ = writeln!(a, "- Intersection {} at {:.0}: {} checks, sight triangles evaluated against the corridor surface.", x.name, x.main_station, x.checks.len());
+        let _ = writeln!(
+            a,
+            "- Intersection {} at {:.0}: {} checks, sight triangles evaluated against the corridor surface.",
+            x.name,
+            x.main_station,
+            x.checks.len()
+        );
     }
     let _ = writeln!(a, "- Departures / relaxations open: {} (departures-register.csv).", dep.len());
     out.push(("rsa-brief.md".into(), a.into_bytes()));
@@ -359,9 +511,27 @@ fn design_report(s: &Session, rs: &standards::Resolved, stage: &str, dep: &[[Str
         for a in rt["alternatives"].as_array().unwrap() {
             let e = &a["evaluation"];
             let g = |k: &str| e[k].as_f64().unwrap_or(f64::NAN);
-            let _ = writeln!(r, "| {} | {:.0} | {:.0} | {:.2} | {:.0} | {:.0} | {:.0} | {:.0} | {} | {:.0} |", a["name"].as_str().unwrap_or(""), g("length_m"), g("min_radius_m"), g("max_design_grade_pct"), g("cut_m3"), g("fill_m3"), g("imbalance_m3"), g("wall_concrete_m3"), e["geometry_mandatory_failures"], g("cost_proxy"));
+            let _ = writeln!(
+                r,
+                "| {} | {:.0} | {:.0} | {:.2} | {:.0} | {:.0} | {:.0} | {:.0} | {} | {:.0} |",
+                a["name"].as_str().unwrap_or(""),
+                g("length_m"),
+                g("min_radius_m"),
+                g("max_design_grade_pct"),
+                g("cut_m3"),
+                g("fill_m3"),
+                g("imbalance_m3"),
+                g("wall_concrete_m3"),
+                e["geometry_mandatory_failures"],
+                g("cost_proxy")
+            );
         }
-        let _ = writeln!(r, "\nRecommendation: **{}** ({}).\n", rt["recommendation"]["recommended"].as_str().unwrap_or(""), rt["recommendation"]["rule"].as_str().unwrap_or(""));
+        let _ = writeln!(
+            r,
+            "\nRecommendation: **{}** ({}).\n",
+            rt["recommendation"]["recommended"].as_str().unwrap_or(""),
+            rt["recommendation"]["rule"].as_str().unwrap_or("")
+        );
         for x in rt["recommendation"]["reasons"].as_array().unwrap() {
             let _ = writeln!(r, "- {}", x.as_str().unwrap_or(""));
         }
@@ -373,20 +543,37 @@ fn design_report(s: &Session, rs: &standards::Resolved, stage: &str, dep: &[[Str
     if let Some(al) = &s.alignment {
         let _ = writeln!(r, "Length {:.2} m.\n\n| Curve | R m | Ls in/out m | Δ° | start | end |\n|---|---:|---:|---:|---:|---:|", al.length);
         for c in al.curves() {
-            let _ = writeln!(r, "| {} | {:.1} | {:.1}/{:.1} | {:.2} | {:.2} | {:.2} |", c.index, c.radius, c.ls_in, c.ls_out, c.delta_deg, c.sta_start, c.sta_end);
+            let _ =
+                writeln!(r, "| {} | {:.1} | {:.1}/{:.1} | {:.2} | {:.2} | {:.2} |", c.index, c.radius, c.ls_in, c.ls_out, c.delta_deg, c.sta_start, c.sta_end);
         }
     }
     if let Some(pr) = &s.profile {
         let _ = writeln!(r, "\n| VPI | Station | Elevation | L m | K | type |\n|---|---:|---:|---:|---:|---|");
         for (i, v) in pr.input.vpis.iter().enumerate() {
             let c = pr.curves.iter().find(|c| c.vpi_index == i);
-            let _ = writeln!(r, "| {i} | {:.2} | {:.2} | {} | {} | {} |", v[0], v[1], c.map_or("".into(), |c| format!("{:.0}", c.length)), c.map_or("".into(), |c| format!("{:.1}", c.k)), c.map_or("", |c| if c.crest { "crest" } else { "sag" }));
+            let _ = writeln!(
+                r,
+                "| {i} | {:.2} | {:.2} | {} | {} | {} |",
+                v[0],
+                v[1],
+                c.map_or("".into(), |c| format!("{:.0}", c.length)),
+                c.map_or("".into(), |c| format!("{:.1}", c.k)),
+                c.map_or("", |c| if c.crest { "crest" } else { "sag" })
+            );
         }
         let _ = writeln!(r, "\nGrades %: {:?}", pr.grades_pct.iter().map(|g| (g * 100.0).round() / 100.0).collect::<Vec<_>>());
     }
     let _ = writeln!(r, "\n## 4. Typical section\n");
     if let Some(a) = &s.assembly {
-        let _ = writeln!(r, "Lanes {:?} m per side, shoulder {} m, cut slope 1V:{}H, fill slope 1V:{}H, pavement {:?}.", a.lanes_m, a.shoulder_m, a.cut_slope_h, a.fill_slope_h, a.pavement.iter().map(|l| format!("{} {:.0} mm", l.name, l.thickness_m * 1000.0)).collect::<Vec<_>>());
+        let _ = writeln!(
+            r,
+            "Lanes {:?} m per side, shoulder {} m, cut slope 1V:{}H, fill slope 1V:{}H, pavement {:?}.",
+            a.lanes_m,
+            a.shoulder_m,
+            a.cut_slope_h,
+            a.fill_slope_h,
+            a.pavement.iter().map(|l| format!("{} {:.0} mm", l.name, l.thickness_m * 1000.0)).collect::<Vec<_>>()
+        );
     }
     let _ = writeln!(r, "\n## 5. Earthwork\n");
     if let Some(o) = &s.optimisation {
@@ -397,7 +584,12 @@ fn design_report(s: &Session, rs: &standards::Resolved, stage: &str, dep: &[[Str
     }
     let _ = writeln!(r, "## 6. Pavement\n");
     if let Some(p) = &s.pavement {
-        let _ = writeln!(r, "{}: {}. See pavement-report.md.", p.method, p.layers.iter().map(|l| format!("{} {:.0} mm", l.name, l.thickness_mm)).collect::<Vec<_>>().join(", "));
+        let _ = writeln!(
+            r,
+            "{}: {}. See pavement-report.md.",
+            p.method,
+            p.layers.iter().map(|l| format!("{} {:.0} mm", l.name, l.thickness_mm)).collect::<Vec<_>>().join(", ")
+        );
     }
     let _ = writeln!(r, "\n## 7. Protection works\n");
     if let Some(p) = &s.protection {
@@ -405,7 +597,11 @@ fn design_report(s: &Session, rs: &standards::Resolved, stage: &str, dep: &[[Str
             let _ = writeln!(r, "- Barrier {} {:.0}–{:.0} ({:.0} m, LON {:.1} m): {}", x.side, x.from, x.to, x.length_m, x.length_of_need_m, x.reason);
         }
         for d in &p.ditches {
-            let _ = writeln!(r, "- Ditch {} {:.0}–{:.0}: Q {:.3} m³/s, d {:.3} m, τd {:.1} N/m² → {}", d.side, d.from, d.to, d.q_max_m3s, d.depth_m, d.tau_d, d.lining);
+            let _ = writeln!(
+                r,
+                "- Ditch {} {:.0}–{:.0}: Q {:.3} m³/s, d {:.3} m, τd {:.1} N/m² → {}",
+                d.side, d.from, d.to, d.q_max_m3s, d.depth_m, d.tau_d, d.lining
+            );
         }
         for a in &p.slope_protection {
             let _ = writeln!(r, "- {}: {:.0} m²", a.class, a.area_m2);
@@ -413,11 +609,25 @@ fn design_report(s: &Session, rs: &standards::Resolved, stage: &str, dep: &[[Str
     }
     let _ = writeln!(r, "\n## 8. Drainage\n\nSee drainage-report.md.\n\n## 9. Intersections\n");
     for x in &s.intersections {
-        let _ = writeln!(r, "- {} at station {:.1}: {} legs, {} checks ({} failing).", x.name, x.main_station, x.legs.len(), x.checks.len(), x.checks.iter().filter(|c| !c.pass).count());
+        let _ = writeln!(
+            r,
+            "- {} at station {:.1}: {} legs, {} checks ({} failing).",
+            x.name,
+            x.main_station,
+            x.legs.len(),
+            x.checks.len(),
+            x.checks.iter().filter(|c| !c.pass).count()
+        );
     }
     let _ = writeln!(r, "\n## 10. Departures / relaxations\n\n{} entries; see departures-register.csv.\n\n## 11. Checks\n", dep.len());
     let all = s.all_checks();
-    let _ = writeln!(r, "{} checks, {} mandatory failures, {} advisory not met.\n\n| Clause / source | checks |\n|---|---:|", all.len(), all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(), all.iter().filter(|c| !c.pass && c.severity != "mandatory").count());
+    let _ = writeln!(
+        r,
+        "{} checks, {} mandatory failures, {} advisory not met.\n\n| Clause / source | checks |\n|---|---:|",
+        all.len(),
+        all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(),
+        all.iter().filter(|c| !c.pass && c.severity != "mandatory").count()
+    );
     let mut by: std::collections::BTreeMap<String, usize> = Default::default();
     for c in &all {
         *by.entry(c.citation.clone()).or_default() += 1;
@@ -441,15 +651,41 @@ fn drainage_report(s: &Session) -> String {
     for n in &s.networks {
         let _ = writeln!(r, "## {}\n\nHGL method: {}\n\n| Pipe | From→To | L m | D mm | S % | Q design m³/s | Q full | V full m/s | h/D | PF | HGL up/dn |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|", n.name, n.hgl_method);
         for p in &n.pipes {
-            let _ = writeln!(r, "| {} | {}→{} | {:.1} | {:.0} | {:.2} | {:.4} | {:.4} | {:.2} | {:.2} | {:.2} | {:.2}/{:.2} |", p.id, p.from, p.to, p.length, p.diameter_m * 1000.0, p.slope * 100.0, p.q_design, p.q_full, p.v_full, p.depth_ratio, p.peak_factor, p.hgl_up, p.hgl_dn);
+            let _ = writeln!(
+                r,
+                "| {} | {}→{} | {:.1} | {:.0} | {:.2} | {:.4} | {:.4} | {:.2} | {:.2} | {:.2} | {:.2}/{:.2} |",
+                p.id,
+                p.from,
+                p.to,
+                p.length,
+                p.diameter_m * 1000.0,
+                p.slope * 100.0,
+                p.q_design,
+                p.q_full,
+                p.v_full,
+                p.depth_ratio,
+                p.peak_factor,
+                p.hgl_up,
+                p.hgl_dn
+            );
         }
         let f: Vec<_> = n.checks.iter().filter(|c| !c.pass && c.severity == "mandatory").collect();
-        let _ = writeln!(r, "\nChecks: {} total, {} mandatory failures. Citations: {}\n", n.checks.len(), f.len(), n.checks.iter().map(|c| c.citation.clone()).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>().join("; "));
+        let _ = writeln!(
+            r,
+            "\nChecks: {} total, {} mandatory failures. Citations: {}\n",
+            n.checks.len(),
+            f.len(),
+            n.checks.iter().map(|c| c.citation.clone()).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>().join("; ")
+        );
     }
     if let Some(p) = &s.protection {
         let _ = writeln!(r, "## Roadside ditches (HEC-15)\n\n| Side | From–To | Flow | Q m³/s | S | d m | V m/s | τd N/m² | Lining | τp N/m² |\n|---|---|---|---:|---:|---:|---:|---:|---|---:|");
         for d in &p.ditches {
-            let _ = writeln!(r, "| {} | {:.0}–{:.0} | {} | {:.3} | {:.4} | {:.3} | {:.2} | {:.1} | {} | {:.1} |", d.side, d.from, d.to, d.flow_dir, d.q_max_m3s, d.slope, d.depth_m, d.velocity_mps, d.tau_d, d.lining, d.tau_p);
+            let _ = writeln!(
+                r,
+                "| {} | {:.0}–{:.0} | {} | {:.3} | {:.4} | {:.3} | {:.2} | {:.1} | {} | {:.1} |",
+                d.side, d.from, d.to, d.flow_dir, d.q_max_m3s, d.slope, d.depth_m, d.velocity_mps, d.tau_d, d.lining, d.tau_p
+            );
         }
         for d in &p.ditches {
             for n in &d.notes {

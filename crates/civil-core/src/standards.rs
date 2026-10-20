@@ -166,7 +166,20 @@ pub fn cd109_grade(road_type: &str) -> Option<(f64, f64)> {
 /// AASHTO 2018 metric maximum relative gradient (%), by design speed. Transcribed from the
 /// Green Book (Table 3-15); copyrighted table, values must be verified by the engineer.
 pub fn aashto_max_rel_gradient_pct(v: f64) -> f64 {
-    let t = [(20.0, 0.80), (30.0, 0.75), (40.0, 0.70), (50.0, 0.65), (60.0, 0.60), (70.0, 0.55), (80.0, 0.50), (90.0, 0.47), (100.0, 0.44), (110.0, 0.41), (120.0, 0.38), (130.0, 0.35)];
+    let t = [
+        (20.0, 0.80),
+        (30.0, 0.75),
+        (40.0, 0.70),
+        (50.0, 0.65),
+        (60.0, 0.60),
+        (70.0, 0.55),
+        (80.0, 0.50),
+        (90.0, 0.47),
+        (100.0, 0.44),
+        (110.0, 0.41),
+        (120.0, 0.38),
+        (130.0, 0.35),
+    ];
     let mut best = t[0];
     for r in t {
         if (r.0 - v).abs() < (best.0 - v).abs() {
@@ -210,12 +223,40 @@ pub fn resolve(b: &DesignBasis) -> crate::Result<Resolved> {
             let t = if us { b.perception_reaction_s.unwrap_or(2.5) } else { need(b.perception_reaction_s, "perception_reaction_s", b.standard)? };
             let a = if us { b.deceleration_mps2.unwrap_or(3.4) } else { need(b.deceleration_mps2, "deceleration_mps2", b.standard)? };
             let ssd = 0.278 * v * t + 0.039 * v * v / a;
-            params.push(p("brake reaction time t", t, "s", if us && b.perception_reaction_s.is_none() { "verified" } else { "engineer" }, &format!("{src}, stopping sight distance (2.5 s; confirmed in state DOT manuals, e.g. IDOT BLR Ch. 28, MoDOT EPG 941)")));
-            params.push(p("deceleration rate a", a, "m/s²", if us && b.deceleration_mps2.is_none() { "verified" } else { "engineer" }, &format!("{src}, stopping sight distance (3.4 m/s²)")));
+            params.push(p(
+                "brake reaction time t",
+                t,
+                "s",
+                if us && b.perception_reaction_s.is_none() { "verified" } else { "engineer" },
+                &format!("{src}, stopping sight distance (2.5 s; confirmed in state DOT manuals, e.g. IDOT BLR Ch. 28, MoDOT EPG 941)"),
+            ));
+            params.push(p(
+                "deceleration rate a",
+                a,
+                "m/s²",
+                if us && b.deceleration_mps2.is_none() { "verified" } else { "engineer" },
+                &format!("{src}, stopping sight distance (3.4 m/s²)"),
+            ));
             params.push(p("SSD", ssd, "m", "formula", &format!("{src}: SSD = 0.278·V·t + 0.039·V²/a")));
-            let (h1, h2) = if us { (b.eye_height_m.unwrap_or(1.08), b.object_height_m.unwrap_or(0.60)) } else { (need(b.eye_height_m, "eye_height_m", b.standard)?, need(b.object_height_m, "object_height_m", b.standard)?) };
-            params.push(p("crest eye height", h1, "m", if us && b.eye_height_m.is_none() { "verified" } else { "engineer" }, &format!("{src}, crest vertical curves")));
-            params.push(p("crest object height", h2, "m", if us && b.object_height_m.is_none() { "verified" } else { "engineer" }, &format!("{src}, crest vertical curves")));
+            let (h1, h2) = if us {
+                (b.eye_height_m.unwrap_or(1.08), b.object_height_m.unwrap_or(0.60))
+            } else {
+                (need(b.eye_height_m, "eye_height_m", b.standard)?, need(b.object_height_m, "object_height_m", b.standard)?)
+            };
+            params.push(p(
+                "crest eye height",
+                h1,
+                "m",
+                if us && b.eye_height_m.is_none() { "verified" } else { "engineer" },
+                &format!("{src}, crest vertical curves"),
+            ));
+            params.push(p(
+                "crest object height",
+                h2,
+                "m",
+                if us && b.object_height_m.is_none() { "verified" } else { "engineer" },
+                &format!("{src}, crest vertical curves"),
+            ));
             let sag = if us { b.sag_k_min } else { Some(need(b.sag_k_min, "sag_k_min", b.standard)?) };
             if let Some(k) = sag {
                 params.push(p("sag K minimum", k, "m/%", "engineer", src));
@@ -227,9 +268,34 @@ pub fn resolve(b: &DesignBasis) -> crate::Result<Resolved> {
             params.push(p("R_min", rmin, "m", "formula", "R_min = V²/(127(e+f))"));
             let g = need(b.max_grade_pct, "max_grade_pct", b.standard)?;
             params.push(p("max grade", g, "%", "engineer", &format!("{src}, maximum grades by functional class and terrain")));
-            let rg = if us { b.max_relative_gradient_pct.unwrap_or(aashto_max_rel_gradient_pct(v)) } else { need(b.max_relative_gradient_pct, "max_relative_gradient_pct", b.standard)? };
-            params.push(p("max relative gradient", rg, "%", if us && b.max_relative_gradient_pct.is_none() { "engineer" } else { "engineer" }, &if us { format!("{AASHTO}, superelevation runoff (Table 3-15, transcribed; verify)") } else { format!("{TAC}, superelevation runoff") }));
-            Ok(Resolved { ssd, ssd_formula: format!("SSD = 0.278·V·t + 0.039·V²/a = 0.278·{v}·{t} + 0.039·{v}²/{a}"), ssd_source: src.into(), crest_k_one_step: None, crest_k_desirable: None, eye_object: Some((h1, h2)), sag_k_min: sag, r_min: rmin, r_desirable: None, r_formula: format!("V²/(127(e+f)) = {v}²/(127·({e}+{f}))"), g_max: g, g_desirable: None, rel_grad_pct: rg, params })
+            let rg = if us {
+                b.max_relative_gradient_pct.unwrap_or(aashto_max_rel_gradient_pct(v))
+            } else {
+                need(b.max_relative_gradient_pct, "max_relative_gradient_pct", b.standard)?
+            };
+            params.push(p(
+                "max relative gradient",
+                rg,
+                "%",
+                "engineer",
+                &if us { format!("{AASHTO}, superelevation runoff (Table 3-15, transcribed; verify)") } else { format!("{TAC}, superelevation runoff") },
+            ));
+            Ok(Resolved {
+                ssd,
+                ssd_formula: format!("SSD = 0.278·V·t + 0.039·V²/a = 0.278·{v}·{t} + 0.039·{v}²/{a}"),
+                ssd_source: src.into(),
+                crest_k_one_step: None,
+                crest_k_desirable: None,
+                eye_object: Some((h1, h2)),
+                sag_k_min: sag,
+                r_min: rmin,
+                r_desirable: None,
+                r_formula: format!("V²/(127(e+f)) = {v}²/(127·({e}+{f}))"),
+                g_max: g,
+                g_desirable: None,
+                rel_grad_pct: rg,
+                params,
+            })
         }
         Standard::Uk => {
             let r = cd109_row(v).ok_or("UK_DMRB: design speed must be one of 120, 100, 85, 70, 60, 50 km/h (CD 109 Table 2.10)")?;
@@ -251,14 +317,35 @@ pub fn resolve(b: &DesignBasis) -> crate::Result<Resolved> {
             params.push(p("max relative gradient", rg, "%", "engineer", "not taken from CD 109 in this tool; engineer enters"));
             let q = b.transition_q.unwrap_or(0.3);
             params.push(p("transition q", q, "m/s³", "verified", &format!("{CD109} §4.13–4.15 (q ≤ 0.3 desirable, ≤ 0.6 max)")));
-            Ok(Resolved { ssd: r[1], ssd_formula: format!("CD 109 Table 2.10, V = {v} kph"), ssd_source: CD109.into(), crest_k_one_step: Some(r[10]), crest_k_desirable: Some(r[9]), eye_object: None, sag_k_min: Some(r[11]), r_min: r[8], r_desirable: Some(r[6]), r_formula: format!("CD 109 Table 2.10, V = {v} kph"), g_max: g, g_desirable: Some(gd), rel_grad_pct: rg, params })
+            Ok(Resolved {
+                ssd: r[1],
+                ssd_formula: format!("CD 109 Table 2.10, V = {v} kph"),
+                ssd_source: CD109.into(),
+                crest_k_one_step: Some(r[10]),
+                crest_k_desirable: Some(r[9]),
+                eye_object: None,
+                sag_k_min: Some(r[11]),
+                r_min: r[8],
+                r_desirable: Some(r[6]),
+                r_formula: format!("CD 109 Table 2.10, V = {v} kph"),
+                g_max: g,
+                g_desirable: Some(gd),
+                rel_grad_pct: rg,
+                params,
+            })
         }
         Standard::Au | Standard::Nz => {
             let src = if b.standard == Standard::Au { AGRD3.to_string() } else { format!("{AGRD3} (adopted by {NZTA})") };
             let rt = need(b.perception_reaction_s, "perception_reaction_s", b.standard)?;
             let d = need(b.deceleration_coeff, "deceleration_coeff", b.standard)?;
             let ssd = rt * v / 3.6 + v * v / (254.0 * d);
-            params.push(p("reaction time RT", rt, "s", "engineer", &format!("{src}, sight distance (2.0–2.5 s; e.g. MRWA supplement mandates 2.5 s desirable)")));
+            params.push(p(
+                "reaction time RT",
+                rt,
+                "s",
+                "engineer",
+                &format!("{src}, sight distance (2.0–2.5 s; e.g. MRWA supplement mandates 2.5 s desirable)"),
+            ));
             params.push(p("coefficient of deceleration d", d, "", "engineer", &format!("{src} (0.36 for cars, e.g. MRWA supplement §5.1)")));
             params.push(p("SSD", ssd, "m", "formula", &format!("{src}: SSD = RT·V/3.6 + V²/(254(d + 0.01a)), a = 0 here")));
             let (h1, h2) = (b.eye_height_m.unwrap_or(1.1), b.object_height_m.unwrap_or(0.2));
@@ -275,7 +362,22 @@ pub fn resolve(b: &DesignBasis) -> crate::Result<Resolved> {
             params.push(p("max grade", g, "%", "engineer", &src));
             let rg = need(b.max_relative_gradient_pct, "max_relative_gradient_pct", b.standard)?;
             params.push(p("max relative gradient", rg, "%", "engineer", &src));
-            Ok(Resolved { ssd, ssd_formula: format!("SSD = RT·V/3.6 + V²/(254·d) = {rt}·{v}/3.6 + {v}²/(254·{d})"), ssd_source: src.clone(), crest_k_one_step: None, crest_k_desirable: None, eye_object: Some((h1, h2)), sag_k_min: Some(sag), r_min: rmin, r_desirable: None, r_formula: format!("V²/(127(e+f)) = {v}²/(127·({e}+{f}))"), g_max: g, g_desirable: None, rel_grad_pct: rg, params })
+            Ok(Resolved {
+                ssd,
+                ssd_formula: format!("SSD = RT·V/3.6 + V²/(254·d) = {rt}·{v}/3.6 + {v}²/(254·{d})"),
+                ssd_source: src.clone(),
+                crest_k_one_step: None,
+                crest_k_desirable: None,
+                eye_object: Some((h1, h2)),
+                sag_k_min: Some(sag),
+                r_min: rmin,
+                r_desirable: None,
+                r_formula: format!("V²/(127(e+f)) = {v}²/(127·({e}+{f}))"),
+                g_max: g,
+                g_desirable: None,
+                rel_grad_pct: rg,
+                params,
+            })
         }
     }
 }
@@ -359,9 +461,35 @@ pub fn run_checks(b: &DesignBasis, al: &Alignment, pr: Option<&Profile>) -> Vec<
     let src = r.ssd_source.clone();
     for c in &curves {
         let el = format!("curve {}", c.index);
-        out.push(chk("H-RMIN", "Horizontal curve radius (minimum)", el.clone(), c.radius, r.r_min, "m", "min", "mandatory", format!("R_min = {} = {:.1} m", r.r_formula, r.r_min), if b.standard == Standard::Uk { format!("{CD109} Table 2.10 (two steps below desirable; beyond this a departure is required)") } else { format!("{src}, minimum radius") }));
+        out.push(chk(
+            "H-RMIN",
+            "Horizontal curve radius (minimum)",
+            el.clone(),
+            c.radius,
+            r.r_min,
+            "m",
+            "min",
+            "mandatory",
+            format!("R_min = {} = {:.1} m", r.r_formula, r.r_min),
+            if b.standard == Standard::Uk {
+                format!("{CD109} Table 2.10 (two steps below desirable; beyond this a departure is required)")
+            } else {
+                format!("{src}, minimum radius")
+            },
+        ));
         if let Some(rd) = r.r_desirable {
-            out.push(chk("H-RDES", "Horizontal curve radius (desirable minimum; below = relaxation)", el.clone(), c.radius, rd, "m", "min", "advisory", format!("CD 109 Table 2.10 desirable minimum R (e 5 %) = {rd} m"), format!("{CD109} Table 2.10, §4.5 relaxations (Table 4.5)")));
+            out.push(chk(
+                "H-RDES",
+                "Horizontal curve radius (desirable minimum; below = relaxation)",
+                el.clone(),
+                c.radius,
+                rd,
+                "m",
+                "min",
+                "advisory",
+                format!("CD 109 Table 2.10 desirable minimum R (e 5 %) = {rd} m"),
+                format!("{CD109} Table 2.10, §4.5 relaxations (Table 4.5)"),
+            ));
         }
         for (side, ls) in [("entry", c.ls_in), ("exit", c.ls_out)] {
             if ls <= 0.0 {
@@ -372,13 +500,46 @@ pub fn run_checks(b: &DesignBasis, al: &Alignment, pr: Option<&Profile>) -> Vec<
                     let q = b.transition_q.unwrap_or(0.3);
                     let basic = v.powi(3) / (46.7 * q * c.radius);
                     let lreq = basic.min((24.0 * c.radius).sqrt());
-                    out.push(chk("H-LS-MIN", "Transition length (basic transition, CD 109 Eq 4.13)", format!("{el} {side}"), ls, lreq, "m", "min", "advisory", format!("L = V³/(46.7·q·R) = {basic:.1} m (q = {q}); capped at √(24R) = {:.1} m (§4.15)", (24.0 * c.radius).sqrt()), format!("{CD109} §4.13–4.15")));
+                    out.push(chk(
+                        "H-LS-MIN",
+                        "Transition length (basic transition, CD 109 Eq 4.13)",
+                        format!("{el} {side}"),
+                        ls,
+                        lreq,
+                        "m",
+                        "min",
+                        "advisory",
+                        format!("L = V³/(46.7·q·R) = {basic:.1} m (q = {q}); capped at √(24R) = {:.1} m (§4.15)", (24.0 * c.radius).sqrt()),
+                        format!("{CD109} §4.13–4.15"),
+                    ));
                 }
                 Standard::Us | Standard::Ca => {
                     let lmin = (24.0 * 0.20 * c.radius).sqrt();
                     let lmax = (24.0 * 1.0 * c.radius).sqrt();
-                    out.push(chk("H-LS-MIN", "Spiral length (minimum, lateral shift 0.20 m)", format!("{el} {side}"), ls, lmin, "m", "min", "advisory", format!("Ls,min = √(24·p_min·R), p_min = 0.20 m → {lmin:.1} m"), format!("{src}, spiral curve transitions")));
-                    out.push(chk("H-LS-MAX", "Spiral length (maximum, lateral shift 1.0 m)", format!("{el} {side}"), ls, lmax, "m", "max", "advisory", format!("Ls,max = √(24·p_max·R), p_max = 1.0 m → {lmax:.1} m"), format!("{src}, spiral curve transitions")));
+                    out.push(chk(
+                        "H-LS-MIN",
+                        "Spiral length (minimum, lateral shift 0.20 m)",
+                        format!("{el} {side}"),
+                        ls,
+                        lmin,
+                        "m",
+                        "min",
+                        "advisory",
+                        format!("Ls,min = √(24·p_min·R), p_min = 0.20 m → {lmin:.1} m"),
+                        format!("{src}, spiral curve transitions"),
+                    ));
+                    out.push(chk(
+                        "H-LS-MAX",
+                        "Spiral length (maximum, lateral shift 1.0 m)",
+                        format!("{el} {side}"),
+                        ls,
+                        lmax,
+                        "m",
+                        "max",
+                        "advisory",
+                        format!("Ls,max = √(24·p_max·R), p_max = 1.0 m → {lmax:.1} m"),
+                        format!("{src}, spiral curve transitions"),
+                    ));
                 }
                 _ => {}
             }
@@ -387,10 +548,32 @@ pub fn run_checks(b: &DesignBasis, al: &Alignment, pr: Option<&Profile>) -> Vec<
     if let Ok(se) = &se {
         for sc in &se.curves {
             if sc.e > 0.0 {
-                out.push(chk("SE-REL", "Superelevation relative gradient", format!("curve {}", sc.curve), sc.relative_gradient * 100.0, r.rel_grad_pct, "%", "max", "mandatory", format!("Δ = w·(e+nc)/L = {:.2}·({:.4}+{:.3})/L", se.rotation_width, sc.e, se.nc), format!("{src}, superelevation development (limit from design basis parameter register)")));
+                out.push(chk(
+                    "SE-REL",
+                    "Superelevation relative gradient",
+                    format!("curve {}", sc.curve),
+                    sc.relative_gradient * 100.0,
+                    r.rel_grad_pct,
+                    "%",
+                    "max",
+                    "mandatory",
+                    format!("Δ = w·(e+nc)/L = {:.2}·({:.4}+{:.3})/L", se.rotation_width, sc.e, se.nc),
+                    format!("{src}, superelevation development (limit from design basis parameter register)"),
+                ));
                 let c = curves.iter().find(|c| c.index == sc.curve).unwrap();
                 if c.ls_in > 0.0 {
-                    out.push(chk("SE-IN-LS", "Superelevation development fits within the transition", format!("curve {}", sc.curve), c.ls_in.min(c.ls_out), sc.required_length, "m", "min", "mandatory", format!("required L = w·(e+nc)/Δmax = {:.1} m ≤ spiral length", sc.required_length), format!("{src}, superelevation development on transitions")));
+                    out.push(chk(
+                        "SE-IN-LS",
+                        "Superelevation development fits within the transition",
+                        format!("curve {}", sc.curve),
+                        c.ls_in.min(c.ls_out),
+                        sc.required_length,
+                        "m",
+                        "min",
+                        "mandatory",
+                        format!("required L = w·(e+nc)/Δmax = {:.1} m ≤ spiral length", sc.required_length),
+                        format!("{src}, superelevation development on transitions"),
+                    ));
                 }
             }
         }
@@ -398,18 +581,62 @@ pub fn run_checks(b: &DesignBasis, al: &Alignment, pr: Option<&Profile>) -> Vec<
     if let Some(pr) = pr {
         for (i, g) in pr.grades_pct.iter().enumerate() {
             let el = format!("segment VPI{i}->VPI{}", i + 1);
-            out.push(chk("V-GMAX", "Grade (maximum)", el.clone(), g.abs(), r.g_max, "%", "max", "mandatory", format!("|g| ≤ {}%", r.g_max), if b.standard == Standard::Uk { format!("{CD109} Table 5.1 permitted relaxation") } else { format!("{src}, maximum grade (engineer-entered)") }));
+            out.push(chk(
+                "V-GMAX",
+                "Grade (maximum)",
+                el.clone(),
+                g.abs(),
+                r.g_max,
+                "%",
+                "max",
+                "mandatory",
+                format!("|g| ≤ {}%", r.g_max),
+                if b.standard == Standard::Uk { format!("{CD109} Table 5.1 permitted relaxation") } else { format!("{src}, maximum grade (engineer-entered)") },
+            ));
             if let Some(gd) = r.g_desirable {
-                out.push(chk("V-GDES", "Grade (desirable maximum; above = relaxation)", el, g.abs(), gd, "%", "max", "advisory", format!("|g| ≤ {gd}%"), format!("{CD109} Table 5.1 desirable maximum, §5.1.1")));
+                out.push(chk(
+                    "V-GDES",
+                    "Grade (desirable maximum; above = relaxation)",
+                    el,
+                    g.abs(),
+                    gd,
+                    "%",
+                    "max",
+                    "advisory",
+                    format!("|g| ≤ {gd}%"),
+                    format!("{CD109} Table 5.1 desirable maximum, §5.1.1"),
+                ));
             }
         }
         for c in &pr.curves {
             let (lmin, f) = vc_len_min(b, &r, c.a_pct);
             let el = format!("VPI {} (A={:.2}%)", c.vpi_index, c.a_pct);
-            out.push(chk("V-LVC", if c.crest { "Crest curve length for stopping sight distance" } else { "Sag curve length" }, el.clone(), c.length, lmin, "m", "min", if b.standard == Standard::Uk { "advisory" } else { "mandatory" }, f, if b.standard == Standard::Uk { format!("{CD109} §5.4–5.5 and Table 2.10 (desirable)") } else { format!("{src}, vertical curves") }));
+            out.push(chk(
+                "V-LVC",
+                if c.crest { "Crest curve length for stopping sight distance" } else { "Sag curve length" },
+                el.clone(),
+                c.length,
+                lmin,
+                "m",
+                "min",
+                if b.standard == Standard::Uk { "advisory" } else { "mandatory" },
+                f,
+                if b.standard == Standard::Uk { format!("{CD109} §5.4–5.5 and Table 2.10 (desirable)") } else { format!("{src}, vertical curves") },
+            ));
             if b.standard == Standard::Uk && c.crest {
                 let k1 = r.crest_k_one_step.unwrap();
-                out.push(chk("V-LVC-RLX", "Crest curve length, one step below desirable", el, c.length, k1 * c.a_pct.abs(), "m", "min", "mandatory", format!("L = K·A, K = {k1}"), format!("{CD109} Table 2.10 one step below desirable crest K; Table 3.5 permitted relaxations")));
+                out.push(chk(
+                    "V-LVC-RLX",
+                    "Crest curve length, one step below desirable",
+                    el,
+                    c.length,
+                    k1 * c.a_pct.abs(),
+                    "m",
+                    "min",
+                    "mandatory",
+                    format!("L = K·A, K = {k1}"),
+                    format!("{CD109} Table 2.10 one step below desirable crest K; Table 3.5 permitted relaxations"),
+                ));
             }
         }
     }
@@ -418,14 +645,36 @@ pub fn run_checks(b: &DesignBasis, al: &Alignment, pr: Option<&Profile>) -> Vec<
     } else if let Ok(se) = &se {
         for w in se.curves.windows(2) {
             let ok = w[1].a_in >= w[0].a_out - 1e-6 || w[0].e == 0.0 || w[1].e == 0.0;
-            let mut c = chk("SE-OVERLAP", "Superelevation transitions do not overlap", format!("curves {}-{}", w[0].curve, w[1].curve), w[1].a_in - w[0].a_out, 0.0, "m gap", "min", "mandatory", format!("next transition start {:.2} ≥ previous end {:.2}", w[1].a_in, w[0].a_out), "geometric consistency (tool rule)".into());
+            let mut c = chk(
+                "SE-OVERLAP",
+                "Superelevation transitions do not overlap",
+                format!("curves {}-{}", w[0].curve, w[1].curve),
+                w[1].a_in - w[0].a_out,
+                0.0,
+                "m gap",
+                "min",
+                "mandatory",
+                format!("next transition start {:.2} ≥ previous end {:.2}", w[1].a_in, w[0].a_out),
+                "geometric consistency (tool rule)".into(),
+            );
             c.pass = ok;
             out.push(c);
         }
     }
     if let Some(p) = pr {
         let cover = p.start() <= al.start_station() + 1e-6 && p.end() >= al.end_station() - 1e-6;
-        out.push(chk("G-COVER", "Profile covers alignment", "profile".into(), if cover { 1.0 } else { 0.0 }, 1.0, "bool", "min", "mandatory", format!("profile {:.2}-{:.2} vs alignment {:.2}-{:.2}", p.start(), p.end(), al.start_station(), al.end_station()), "geometric consistency (tool rule)".into()));
+        out.push(chk(
+            "G-COVER",
+            "Profile covers alignment",
+            "profile".into(),
+            if cover { 1.0 } else { 0.0 },
+            1.0,
+            "bool",
+            "min",
+            "mandatory",
+            format!("profile {:.2}-{:.2} vs alignment {:.2}-{:.2}", p.start(), p.end(), al.start_station(), al.end_station()),
+            "geometric consistency (tool rule)".into(),
+        ));
     }
     out
 }

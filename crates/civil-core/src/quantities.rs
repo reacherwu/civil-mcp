@@ -39,7 +39,15 @@ pub fn mass_haul(c: &Corridor, cut_factor: f64, free_haul_m: f64) -> MassHaul {
         let (a, b, l) = (w[0][1], w[1][1], w[1][0] - w[0][0]);
         hm += if (a >= 0.0) == (b >= 0.0) { (a.abs() + b.abs()) / 2.0 * l } else { (a * a + b * b) / (2.0 * (a.abs() + b.abs())) * l };
     }
-    MassHaul { cut_factor, final_ordinate: m, ordinates: ord, balance_stations: bal, haul_moment_m3m: hm, free_haul_m, overhaul_note: "overhaul not computed; use the mass ordinates with the contract's free-haul rule".into() }
+    MassHaul {
+        cut_factor,
+        final_ordinate: m,
+        ordinates: ord,
+        balance_stations: bal,
+        haul_moment_m3m: hm,
+        free_haul_m,
+        overhaul_note: "overhaul not computed; use the mass ordinates with the contract's free-haul rule".into(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,7 +66,7 @@ pub fn material_table(c: &Corridor, step: f64) -> Vec<MaterialRow> {
         let l = w[1].station - w[0].station;
         let k = (w[0].station / step).floor();
         let (from, to) = (k * step, (k + 1.0) * step);
-        if rows.last().map_or(true, |r| r.from != from) {
+        if rows.last().is_none_or(|r| r.from != from) {
             rows.push(MaterialRow { from, to, cut_m3: 0.0, fill_m3: 0.0, layers_m3: vec![0.0; c.assembly.pavement.len()] });
         }
         let r = rows.last_mut().unwrap();

@@ -213,7 +213,22 @@ pub fn design(std: Standard, p: &PavementInput) -> crate::Result<PavementDesign>
                     }
                 }
                 let total = layers.iter().map(|l| l.thickness_mm).sum();
-                return Ok(PavementDesign { method: "AASHTO 1993 rigid (JPCP) design equation".into(), citation: format!("{AASHTO93} (rigid design equation){}", if std == Standard::Ca { "; TAC Pavement Asset Design and Management Guide (2013) accepts AASHTO 1993" } else { "" }), kind: p.kind.clone(), inputs, layers, total_mm: total, sn_required: None, sn_provided: None, steps, engineer_inputs: eng, warnings: warn });
+                return Ok(PavementDesign {
+                    method: "AASHTO 1993 rigid (JPCP) design equation".into(),
+                    citation: format!(
+                        "{AASHTO93} (rigid design equation){}",
+                        if std == Standard::Ca { "; TAC Pavement Asset Design and Management Guide (2013) accepts AASHTO 1993" } else { "" }
+                    ),
+                    kind: p.kind.clone(),
+                    inputs,
+                    layers,
+                    total_mm: total,
+                    sn_required: None,
+                    sn_provided: None,
+                    steps,
+                    engineer_inputs: eng,
+                    warnings: warn,
+                });
             }
             let mr_sg = p.subgrade_mr_mpa.map(|v| v * PSI_PER_MPA).unwrap_or_else(|| {
                 warn.push("subgrade Mr from Mr(psi) = 1500·CBR (AASHTO 1993 correlation); confirm with tests".into());
@@ -241,7 +256,22 @@ pub fn design(std: Standard, p: &PavementInput) -> crate::Result<PavementDesign>
                 layers.push(Layer { name: l.name.clone(), thickness_mm: t, note: format!("a = {}, m = {}", l.a, l.m) });
             }
             let total = layers.iter().map(|l| l.thickness_mm).sum();
-            Ok(PavementDesign { method: "AASHTO 1993 flexible: structural number with layered analysis".into(), citation: format!("{AASHTO93} (flexible design equation, layered design analysis){}", if std == Standard::Ca { "; TAC Pavement Asset Design and Management Guide (2013) accepts AASHTO 1993" } else { "" }), kind: p.kind.clone(), inputs, layers, total_mm: total, sn_required: Some(sn_total), sn_provided: Some(provided), steps, engineer_inputs: eng, warnings: warn })
+            Ok(PavementDesign {
+                method: "AASHTO 1993 flexible: structural number with layered analysis".into(),
+                citation: format!(
+                    "{AASHTO93} (flexible design equation, layered design analysis){}",
+                    if std == Standard::Ca { "; TAC Pavement Asset Design and Management Guide (2013) accepts AASHTO 1993" } else { "" }
+                ),
+                kind: p.kind.clone(),
+                inputs,
+                layers,
+                total_mm: total,
+                sn_required: Some(sn_total),
+                sn_provided: Some(provided),
+                steps,
+                engineer_inputs: eng,
+                warnings: warn,
+            })
         }
         Standard::Au | Standard::Nz => {
             if p.kind == "rigid" {
@@ -251,20 +281,45 @@ pub fn design(std: Standard, p: &PavementInput) -> crate::Result<PavementDesign>
             let base = req(p.base_mm, "base_mm")?;
             eng.extend(["surfacing thickness", "base thickness (agency minimum)", "design subgrade CBR", "DESA"].map(String::from));
             let t = agpt02_granular_mm(p.subgrade_cbr, p.design_traffic);
-            steps.push(format!("t = [219 − 211·log10(CBR) + 58·log10(CBR)²]·log10(DESA/120) = [219 − 211·log10({0}) + 58·log10({0})²]·log10({1:.3e}/120) = {t:.1} mm", p.subgrade_cbr, p.design_traffic));
+            steps.push(format!(
+                "t = [219 − 211·log10(CBR) + 58·log10(CBR)²]·log10(DESA/120) = [219 − 211·log10({0}) + 58·log10({0})²]·log10({1:.3e}/120) = {t:.1} mm",
+                p.subgrade_cbr, p.design_traffic
+            ));
             if !(2.0..=30.0).contains(&p.subgrade_cbr) {
                 warn.push("CBR outside the chart range; engineer to confirm".into());
             }
             let tot = up(t, 10.0);
             let sub = (tot - surf - base).max(0.0);
-            layers.push(Layer { name: "Bituminous surfacing".into(), thickness_mm: surf, note: "engineer-specified (thin surfacing; not structural in the chart method)".into() });
+            layers.push(Layer {
+                name: "Bituminous surfacing".into(),
+                thickness_mm: surf,
+                note: "engineer-specified (thin surfacing; not structural in the chart method)".into(),
+            });
             layers.push(Layer { name: "Granular base".into(), thickness_mm: base, note: "engineer-specified".into() });
             if sub > 0.0 {
-                layers.push(Layer { name: "Granular subbase".into(), thickness_mm: sub, note: format!("total granular {tot:.0} mm − base").into() });
+                layers.push(Layer { name: "Granular subbase".into(), thickness_mm: sub, note: format!("total granular {tot:.0} mm − base") });
             }
-            steps.push(format!("total granular thickness rounded up to 10 mm: {tot:.0} mm; subbase = {tot:.0} − {surf:.0} − {base:.0} (surfacing counted in the cover)"));
+            steps.push(format!(
+                "total granular thickness rounded up to 10 mm: {tot:.0} mm; subbase = {tot:.0} − {surf:.0} − {base:.0} (surfacing counted in the cover)"
+            ));
             let total = layers.iter().map(|l| l.thickness_mm).sum();
-            Ok(PavementDesign { method: "Austroads empirical design chart for granular pavements with thin bituminous surfacing".into(), citation: if std == Standard::Nz { format!("{AGPT02}; NZTA Waka Kotahi pavement design supplement applies (engineer to confirm NZ-specific inputs)") } else { AGPT02.into() }, kind: p.kind.clone(), inputs, layers, total_mm: total, sn_required: None, sn_provided: None, steps, engineer_inputs: eng, warnings: warn })
+            Ok(PavementDesign {
+                method: "Austroads empirical design chart for granular pavements with thin bituminous surfacing".into(),
+                citation: if std == Standard::Nz {
+                    format!("{AGPT02}; NZTA Waka Kotahi pavement design supplement applies (engineer to confirm NZ-specific inputs)")
+                } else {
+                    AGPT02.into()
+                },
+                kind: p.kind.clone(),
+                inputs,
+                layers,
+                total_mm: total,
+                sn_required: None,
+                sn_provided: None,
+                steps,
+                engineer_inputs: eng,
+                warnings: warn,
+            })
         }
         Standard::Uk => {
             let t = p.design_traffic;
@@ -288,7 +343,11 @@ pub fn design(std: Standard, p: &PavementInput) -> crate::Result<PavementDesign>
                     let h = up(h, 5.0);
                     steps.push(format!("Figure 2.20 asphalt-base design thickness (engineer read) = {h:.0} mm (rounded up to 5 mm, Note 3)"));
                     layers.push(Layer { name: "Surface course".into(), thickness_mm: 40.0, note: "typical; included in total (Fig 2.20 Note 4)".into() });
-                    layers.push(Layer { name: "Binder course + asphalt base".into(), thickness_mm: h - 40.0, note: "same material for base and binder (CD 226 §2.20.1)".into() });
+                    layers.push(Layer {
+                        name: "Binder course + asphalt base".into(),
+                        thickness_mm: h - 40.0,
+                        note: "same material for base and binder (CD 226 §2.20.1)".into(),
+                    });
                 }
                 "hbgm" => {
                     let h = up(cd226_hbgm_asphalt_mm(t), 5.0);
@@ -306,14 +365,29 @@ pub fn design(std: Standard, p: &PavementInput) -> crate::Result<PavementDesign>
                     let e = if fc == 3 { 200.0 } else { 400.0 };
                     let h1 = cd226_urc_mm(t, rc, e, false);
                     let h = cd226_urc_mm(t, rc, e, p.uk_tied_shoulder).max(150.0);
-                    steps.push(format!("CD 226 Eq 2.43a: Ln(H1) = (Ln T − 3.466·Ln Rc − 0.484·Ln E + 40.483)/5.094 → H1 = {h1:.1} mm{}", if p.uk_tied_shoulder { format!("; Eq 2.43b H2 = 0.934·H1 − 12.5 = {:.1} mm", 0.934 * h1 - 12.5) } else { String::new() }));
+                    steps.push(format!(
+                        "CD 226 Eq 2.43a: Ln(H1) = (Ln T − 3.466·Ln Rc − 0.484·Ln E + 40.483)/5.094 → H1 = {h1:.1} mm{}",
+                        if p.uk_tied_shoulder { format!("; Eq 2.43b H2 = 0.934·H1 − 12.5 = {:.1} mm", 0.934 * h1 - 12.5) } else { String::new() }
+                    ));
                     layers.push(Layer { name: "URC slab".into(), thickness_mm: up(h, 5.0), note: "min 150 mm, rounded up to 5 mm".into() });
                 }
                 o => return Err(format!("uk_type {o}: asphalt | hbgm | urc")),
             }
             layers.push(Layer { name: format!("Foundation class {fc}"), thickness_mm: 0.0, note: "designed to CD 225 (thickness by engineer)".into() });
             let total = layers.iter().map(|l| l.thickness_mm).sum();
-            Ok(PavementDesign { method: format!("DMRB CD 226 standard design ({ty})"), citation: CD226.into(), kind: p.kind.clone(), inputs, layers, total_mm: total, sn_required: None, sn_provided: None, steps, engineer_inputs: eng, warnings: warn })
+            Ok(PavementDesign {
+                method: format!("DMRB CD 226 standard design ({ty})"),
+                citation: CD226.into(),
+                kind: p.kind.clone(),
+                inputs,
+                layers,
+                total_mm: total,
+                sn_required: None,
+                sn_provided: None,
+                steps,
+                engineer_inputs: eng,
+                warnings: warn,
+            })
         }
     }
 }

@@ -30,7 +30,9 @@ fn main() {
         let id = req.get("id").cloned();
         let method = req["method"].as_str().unwrap_or("");
         let result = match method {
-            "initialize" => Some(Ok(json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"civil-mcp","version":env!("CARGO_PKG_VERSION")}}))),
+            "initialize" => Some(Ok(
+                json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"civil-mcp","version":env!("CARGO_PKG_VERSION")}}),
+            )),
             "tools/list" => Some(Ok(json!({"tools": tool_list()}))),
             "tools/call" => {
                 let name = req["params"]["name"].as_str().unwrap_or("");

@@ -76,7 +76,14 @@ pub fn ear_clip(pts: &[[f64; 3]], idx: &[usize]) -> crate::Result<Vec<[usize; 3]
             if cross(pts[a], pts[b], pts[c]) <= 1e-12 {
                 continue;
             }
-            let inside = v.iter().any(|&k| k != a && k != b && k != c && cross(pts[a], pts[b], pts[k]) >= 0.0 && cross(pts[b], pts[c], pts[k]) >= 0.0 && cross(pts[c], pts[a], pts[k]) >= 0.0);
+            let inside = v.iter().any(|&k| {
+                k != a
+                    && k != b
+                    && k != c
+                    && cross(pts[a], pts[b], pts[k]) >= 0.0
+                    && cross(pts[b], pts[c], pts[k]) >= 0.0
+                    && cross(pts[c], pts[a], pts[k]) >= 0.0
+            });
             if !inside {
                 out.push([a, b, c]);
                 v.remove(i);
@@ -120,7 +127,11 @@ pub fn grade(tin: &Tin, g: &GradingInput, cell: f64) -> crate::Result<Grading> {
         let (a, b) = (v[i], v[(i + 1) % n]);
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
         let l = (dx * dx + dy * dy).sqrt();
-        if outward_right { [dy / l, -dx / l] } else { [-dy / l, dx / l] }
+        if outward_right {
+            [dy / l, -dx / l]
+        } else {
+            [-dy / l, dx / l]
+        }
     };
     // footprint samples with their projection direction (miter at vertices)
     let mut fp: Vec<([f64; 3], [f64; 2])> = Vec::new();
@@ -128,7 +139,13 @@ pub fn grade(tin: &Tin, g: &GradingInput, cell: f64) -> crate::Result<Grading> {
         let (a, b) = (v[i], v[(i + 1) % n]);
         let nn = normal(i);
         // vertex direction: miter between previous and this edge
-        let prev = if i > 0 { Some(normal(i - 1)) } else if g.closed { Some(normal(seg - 1)) } else { None };
+        let prev = if i > 0 {
+            Some(normal(i - 1))
+        } else if g.closed {
+            Some(normal(seg - 1))
+        } else {
+            None
+        };
         let dir = match prev {
             Some(p) => {
                 let m = [p[0] + nn[0], p[1] + nn[1]];
@@ -203,15 +220,28 @@ pub fn grade(tin: &Tin, g: &GradingInput, cell: f64) -> crate::Result<Grading> {
     }
     if g.closed {
         // pad top: ear clipping of the footprint (collinear samples skipped)
-        let idx: Vec<usize> = (0..m).filter(|&i| {
-            let (p, c, n) = (pts[(i + m - 1) % m], pts[i], pts[(i + 1) % m]);
-            ((c[0] - p[0]) * (n[1] - p[1]) - (n[0] - p[0]) * (c[1] - p[1])).abs() > 1e-9
-        }).collect();
+        let idx: Vec<usize> = (0..m)
+            .filter(|&i| {
+                let (p, c, n) = (pts[(i + m - 1) % m], pts[i], pts[(i + 1) % m]);
+                ((c[0] - p[0]) * (n[1] - p[1]) - (n[0] - p[0]) * (c[1] - p[1])).abs() > 1e-9
+            })
+            .collect();
         faces.extend(ear_clip(&pts, &idx)?);
     }
     let (surf, stats) = Tin::from_faces(&pts, &faces)?;
     let (cut, fill, cells) = composite_volume(&surf, tin, cell);
-    Ok(Grading { name: g.name.clone(), footprint: fp.iter().map(|f| f.0).collect(), daylight: day, cut_m3: cut, fill_m3: fill, cells, cell_m: cell, warnings, surface_stats: stats, surface: Some(surf) })
+    Ok(Grading {
+        name: g.name.clone(),
+        footprint: fp.iter().map(|f| f.0).collect(),
+        daylight: day,
+        cut_m3: cut,
+        fill_m3: fill,
+        cells,
+        cell_m: cell,
+        warnings,
+        surface_stats: stats,
+        surface: Some(surf),
+    })
 }
 
 #[cfg(test)]
@@ -227,7 +257,15 @@ mod tests {
         }
         let (tin, _) = Tin::build(&pts, None).unwrap();
         let (a, h, s) = (20.0, 2.0, 2.0);
-        let g = GradingInput { name: "pad".into(), vertices: vec![[-10.0, -10.0, 52.0], [10.0, -10.0, 52.0], [10.0, 10.0, 52.0], [-10.0, 10.0, 52.0]], closed: true, side: None, cut_slope_h: s, fill_slope_h: s, spacing_m: 1.0 };
+        let g = GradingInput {
+            name: "pad".into(),
+            vertices: vec![[-10.0, -10.0, 52.0], [10.0, -10.0, 52.0], [10.0, 10.0, 52.0], [-10.0, 10.0, 52.0]],
+            closed: true,
+            side: None,
+            cut_slope_h: s,
+            fill_slope_h: s,
+            spacing_m: 1.0,
+        };
         let r = grade(&tin, &g, 0.1).unwrap();
         let exact = a * a * h + 2.0 * a * s * h * h + 4.0 / 3.0 * s * s * h * h * h;
         assert!(r.cut_m3 < 1e-6);

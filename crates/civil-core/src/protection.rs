@@ -201,10 +201,23 @@ pub fn design(std: Standard, c: &Corridor, profile_grade_at: &dyn Fn(f64) -> f64
     }
     let mut hazards = Vec::new();
     let mut slope_area = [0.0f64; 3];
-    let mut notes = vec![format!("Clear zone {} m ({}); recoverable ≤ 1V:{}H, traversable ≤ 1V:{}H, embankment warrant height {} m: engineer inputs.", inp.clear_zone_m, if inp.clear_zone_source.is_empty() { "source not given" } else { &inp.clear_zone_source }, inp.recoverable_h, inp.traversable_h, inp.embankment_warrant_height_m)];
+    let mut notes = vec![format!(
+        "Clear zone {} m ({}); recoverable ≤ 1V:{}H, traversable ≤ 1V:{}H, embankment warrant height {} m: engineer inputs.",
+        inp.clear_zone_m,
+        if inp.clear_zone_source.is_empty() { "source not given" } else { &inp.clear_zone_source },
+        inp.recoverable_h,
+        inp.traversable_h,
+        inp.embankment_warrant_height_m
+    )];
     let secs = &c.sections;
     for (k, s) in secs.iter().enumerate() {
-        let dl = if k == 0 { (secs[1].station - s.station) / 2.0 } else if k + 1 == secs.len() { (s.station - secs[k - 1].station) / 2.0 } else { (secs[k + 1].station - secs[k - 1].station) / 2.0 };
+        let dl = if k == 0 {
+            (secs[1].station - s.station) / 2.0
+        } else if k + 1 == secs.len() {
+            (s.station - secs[k - 1].station) / 2.0
+        } else {
+            (secs[k + 1].station - secs[k - 1].station) / 2.0
+        };
         for (side, sd) in [("left", &s.left), ("right", &s.right)] {
             let e = etw(sd);
             // slope = segment from the hinge (or ditch out) to daylight
@@ -212,28 +225,53 @@ pub fn design(std: Standard, c: &Corridor, profile_grade_at: &dyn Fn(f64) -> f64
             if n < 2 {
                 continue;
             }
-            let hinge_i = sd.codes.iter().rposition(|c| c.starts_with("ETW") || c == "SHLD" || c.contains("CURB") || c == "BACK-WALK" || c.starts_with("DITCH")).unwrap_or(0);
+            let hinge_i = sd
+                .codes
+                .iter()
+                .rposition(|c| c.starts_with("ETW") || c == "SHLD" || c.contains("CURB") || c == "BACK-WALK" || c.starts_with("DITCH"))
+                .unwrap_or(0);
             let hp = sd.fg[hinge_i];
             let dp = sd.fg[n - 1];
             let (run, rise) = (dp[0] - hp[0], (dp[1] - hp[1]).abs());
             let slope_len = (run * run + rise * rise).sqrt();
             if rise > 0.05 {
                 let h = run / rise;
-                let cls = if h >= inp.seed_flatter_than_h { 0 } else if h >= inp.blanket_flatter_than_h { 1 } else { 2 };
+                let cls = if h >= inp.seed_flatter_than_h {
+                    0
+                } else if h >= inp.blanket_flatter_than_h {
+                    1
+                } else {
+                    2
+                };
                 slope_area[cls] += slope_len * dl;
             }
             if let Some(w) = &sd.wall {
                 if w.offset - e < inp.clear_zone_m {
-                    hazards.push(Hazard { station: s.station, side: side.into(), kind: if w.cut { "retaining wall face (cut)".into() } else { "retaining wall drop-off (fill)".into() }, offset_from_etw_m: w.offset - e, height_m: w.top_z - w.bottom_z });
+                    hazards.push(Hazard {
+                        station: s.station,
+                        side: side.into(),
+                        kind: if w.cut { "retaining wall face (cut)".into() } else { "retaining wall drop-off (fill)".into() },
+                        offset_from_etw_m: w.offset - e,
+                        height_m: w.top_z - w.bottom_z,
+                    });
                     continue;
                 }
             }
             if !sd.cut && rise > 0.05 && hp[0] - e < inp.clear_zone_m {
                 let h = run / rise;
                 if h < inp.traversable_h && rise > inp.embankment_warrant_height_m {
-                    hazards.push(Hazard { station: s.station, side: side.into(), kind: format!("critical fill slope 1V:{h:.1}H"), offset_from_etw_m: hp[0] - e, height_m: rise });
+                    hazards.push(Hazard {
+                        station: s.station,
+                        side: side.into(),
+                        kind: format!("critical fill slope 1V:{h:.1}H"),
+                        offset_from_etw_m: hp[0] - e,
+                        height_m: rise,
+                    });
                 } else if h < inp.recoverable_h && hp[0] - e + run < inp.clear_zone_m {
-                    notes.push(format!("{side} {:.0}: non-recoverable fill slope 1V:{h:.1}H inside the clear zone; clear run-out area needed at the toe", s.station));
+                    notes.push(format!(
+                        "{side} {:.0}: non-recoverable fill slope 1V:{h:.1}H inside the clear zone; clear run-out area needed at the toe",
+                        s.station
+                    ));
                 }
             }
             if sd.cut && sd.codes.iter().any(|c| c == "DITCH-IN") {
@@ -267,8 +305,22 @@ pub fn design(std: Standard, c: &Corridor, profile_grade_at: &dyn Fn(f64) -> f64
             let (h0, h1) = (st[a], st[k]);
             let from = (h0 - x).max(st[0]);
             let to = (h1 + x).min(*st.last().unwrap());
-            let kinds: std::collections::BTreeSet<String> = hazards.iter().filter(|h| h.side == side && h.station >= h0 && h.station <= h1).map(|h| h.kind.split(' ').take(3).collect::<Vec<_>>().join(" ")).collect();
-            barriers.push(BarrierRun { side: side.into(), hazard_from: h0, hazard_to: h1, from, to, length_of_need_m: x, length_m: to - from, barrier_type: inp.barrier_type.clone(), reason: kinds.into_iter().collect::<Vec<_>>().join("; ") });
+            let kinds: std::collections::BTreeSet<String> = hazards
+                .iter()
+                .filter(|h| h.side == side && h.station >= h0 && h.station <= h1)
+                .map(|h| h.kind.split(' ').take(3).collect::<Vec<_>>().join(" "))
+                .collect();
+            barriers.push(BarrierRun {
+                side: side.into(),
+                hazard_from: h0,
+                hazard_to: h1,
+                from,
+                to,
+                length_of_need_m: x,
+                length_m: to - from,
+                barrier_type: inp.barrier_type.clone(),
+                reason: kinds.into_iter().collect::<Vec<_>>().join("; "),
+            });
             k += 1;
         }
     }
@@ -292,12 +344,23 @@ pub fn design(std: Standard, c: &Corridor, profile_grade_at: &dyn Fn(f64) -> f64
     // ditches
     let mut ditches = Vec::new();
     let mut checks = Vec::new();
-    let mut linings: Vec<Lining> = vec![Lining { name: format!("bare soil ({})", if inp.soil_name.is_empty() { "site soil" } else { &inp.soil_name }), n: 0.020, tau_p: inp.soil_tau_p, citation: format!("{HEC15} Table 2.3 (engineer-selected soil); n typical Table 2.1") }];
+    let mut linings: Vec<Lining> = vec![Lining {
+        name: format!("bare soil ({})", if inp.soil_name.is_empty() { "site soil" } else { &inp.soil_name }),
+        n: 0.020,
+        tau_p: inp.soil_tau_p,
+        citation: format!("{HEC15} Table 2.3 (engineer-selected soil); n typical Table 2.1"),
+    }];
     linings.extend(inp.extra_linings.iter().cloned());
     linings.push(Lining { name: "gravel mulch D50 25 mm".into(), n: f64::NAN, tau_p: 19.0, citation: format!("{HEC15} Table 2.3") });
     linings.push(Lining { name: "gravel mulch D50 50 mm".into(), n: f64::NAN, tau_p: 38.0, citation: format!("{HEC15} Table 2.3") });
     for side in ["left", "right"] {
-        let has: Vec<bool> = secs.iter().map(|s| { let sd = if side == "left" { &s.left } else { &s.right }; sd.cut && sd.codes.iter().any(|c| c == "DITCH-IN") }).collect();
+        let has: Vec<bool> = secs
+            .iter()
+            .map(|s| {
+                let sd = if side == "left" { &s.left } else { &s.right };
+                sd.cut && sd.codes.iter().any(|c| c == "DITCH-IN")
+            })
+            .collect();
         let mut k = 0;
         while k < has.len() {
             if !has[k] {
@@ -329,7 +392,7 @@ pub fn design(std: Standard, c: &Corridor, profile_grade_at: &dyn Fn(f64) -> f64
                 let sl = profile_grade_at(s.station).abs().max(0.001);
                 let (d, _, v) = trap_normal_depth(q, bw, fs, bs, sl, &|_| 0.020);
                 let tau = 9810.0 * d * sl;
-                if worst.map_or(true, |w| tau > w.5) {
+                if worst.is_none_or(|w| tau > w.5) {
                     worst = Some((s.station, q, d, v, sl, tau));
                 }
             }
@@ -365,15 +428,36 @@ pub fn design(std: Standard, c: &Corridor, profile_grade_at: &dyn Fn(f64) -> f64
                     let re = (9.81 * d * sl).sqrt() * d50r / 1.131e-6;
                     let (f, sf) = shields(re);
                     let taup = f * (inp.riprap_sg - 1.0) * 9810.0 * d50r / sf;
-                    chosen = Some((format!("rock riprap D50 {:.0} mm", d50r * 1000.0), taup, Some(d50r), blodgett_n(d, d50r), d, v, 9810.0 * d * sl, format!("{HEC15} Eq 6.7/6.8 with Table 6.1 (F* = {f:.3}, SF = {sf:.2}; τp shown divided by SF), Eq 6.1 n")));
+                    chosen = Some((
+                        format!("rock riprap D50 {:.0} mm", d50r * 1000.0),
+                        taup,
+                        Some(d50r),
+                        blodgett_n(d, d50r),
+                        d,
+                        v,
+                        9810.0 * d * sl,
+                        format!("{HEC15} Eq 6.7/6.8 with Table 6.1 (F* = {f:.3}, SF = {sf:.2}; τp shown divided by SF), Eq 6.1 n"),
+                    ));
                 } else {
                     let _ = (d, v, tau);
                     let (d, _, v) = trap_normal_depth(q, bw, fs, bs, sl, &|_| 0.013);
-                    chosen = Some(("concrete (rigid) lining".into(), f64::INFINITY, None, 0.013, d, v, 9810.0 * d * sl, format!("{HEC15} Ch. 3: rigid lining; n from Table 2.1")));
+                    chosen = Some((
+                        "concrete (rigid) lining".into(),
+                        f64::INFINITY,
+                        None,
+                        0.013,
+                        d,
+                        v,
+                        9810.0 * d * sl,
+                        format!("{HEC15} Ch. 3: rigid lining; n from Table 2.1"),
+                    ));
                 }
             }
             let (name, taup, d50, n, d, v, tau, cite) = chosen.unwrap();
-            let mut notes = vec![format!("Q = C·i·A/3.6e6 with A = {} m × flow length; normal depth by Manning in a trapezoid b = {bw:.2} m, z = {fs:.1}/{bs:.1}", inp.catchment_width_m)];
+            let mut notes = vec![format!(
+                "Q = C·i·A/3.6e6 with A = {} m × flow length; normal depth by Manning in a trapezoid b = {bw:.2} m, z = {fs:.1}/{bs:.1}",
+                inp.catchment_width_m
+            )];
             if let Some(dd) = d50 {
                 if d / dd < 1.5 {
                     notes.push("da/D50 < 1.5: HEC-15 Eq 6.2 (Bathurst) governs n; Eq 6.1 at da/D50 = 1.5 used as an approximation; engineer to confirm".into());
@@ -381,19 +465,66 @@ pub fn design(std: Standard, c: &Corridor, profile_grade_at: &dyn Fn(f64) -> f64
             }
             let el = format!("{side} ditch {s0:.0}–{s1:.0}");
             if taup.is_finite() {
-                checks.push(chk("D-SHEAR", "Ditch lining: design shear ≤ permissible shear", el.clone(), tau, taup, "N/m²", "max", "mandatory", format!("τd = γ·d·S = 9810·{d:.3}·{sl:.4} = {tau:.1} N/m²; lining {name}"), cite.clone()));
+                checks.push(chk(
+                    "D-SHEAR",
+                    "Ditch lining: design shear ≤ permissible shear",
+                    el.clone(),
+                    tau,
+                    taup,
+                    "N/m²",
+                    "max",
+                    "mandatory",
+                    format!("τd = γ·d·S = 9810·{d:.3}·{sl:.4} = {tau:.1} N/m²; lining {name}"),
+                    cite.clone(),
+                ));
             }
             let freeboard_ok = d <= sd0.fg[i - 1][1] - sd0.fg[i][1];
-            checks.push(chk("D-DEPTH", "Ditch flow depth within ditch depth", el, d, sd0.fg[i - 1][1] - sd0.fg[i][1], "m", "max", "mandatory", format!("normal depth {d:.3} m (freeboard ok: {freeboard_ok})"), format!("{HEC15} Ch. 2 (channel capacity)")));
-            ditches.push(DitchReach { side: side.into(), from: s0, to: s1, flow_dir: if down { "up-station".into() } else { "down-station".into() }, q_max_m3s: q, worst_station: wst, depth_m: d, velocity_mps: v, slope: sl, tau_d: tau, lining: name, tau_p: taup, riprap_d50_m: d50, n_used: n, notes });
+            checks.push(chk(
+                "D-DEPTH",
+                "Ditch flow depth within ditch depth",
+                el,
+                d,
+                sd0.fg[i - 1][1] - sd0.fg[i][1],
+                "m",
+                "max",
+                "mandatory",
+                format!("normal depth {d:.3} m (freeboard ok: {freeboard_ok})"),
+                format!("{HEC15} Ch. 2 (channel capacity)"),
+            ));
+            ditches.push(DitchReach {
+                side: side.into(),
+                from: s0,
+                to: s1,
+                flow_dir: if down { "up-station".into() } else { "down-station".into() },
+                q_max_m3s: q,
+                worst_station: wst,
+                depth_m: d,
+                velocity_mps: v,
+                slope: sl,
+                tau_d: tau,
+                lining: name,
+                tau_p: taup,
+                riprap_d50_m: d50,
+                n_used: n,
+                notes,
+            });
         }
     }
     let slope_protection = vec![
         SlopeArea { class: format!("topsoil and seed (flatter than 1V:{}H)", inp.seed_flatter_than_h), area_m2: slope_area[0] },
-        SlopeArea { class: format!("rolled erosion control blanket (1V:{}H to 1V:{}H)", inp.blanket_flatter_than_h, inp.seed_flatter_than_h), area_m2: slope_area[1] },
-        SlopeArea { class: format!("turf reinforcement mat / rock slope protection (steeper than 1V:{}H)", inp.blanket_flatter_than_h), area_m2: slope_area[2] },
+        SlopeArea {
+            class: format!("rolled erosion control blanket (1V:{}H to 1V:{}H)", inp.blanket_flatter_than_h, inp.seed_flatter_than_h),
+            area_m2: slope_area[1],
+        },
+        SlopeArea {
+            class: format!("turf reinforcement mat / rock slope protection (steeper than 1V:{}H)", inp.blanket_flatter_than_h),
+            area_m2: slope_area[2],
+        },
     ];
-    notes.push(format!("Slope protection classes are engineer-set thresholds (agency practice), not values from a standard. Barrier need: {}", barrier_cite(std)));
+    notes.push(format!(
+        "Slope protection classes are engineer-set thresholds (agency practice), not values from a standard. Barrier need: {}",
+        barrier_cite(std)
+    ));
     Ok(Protection { hazards, barriers: merged, ditches, slope_protection, checks, notes })
 }
 

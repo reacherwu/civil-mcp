@@ -3,7 +3,7 @@
 //! usage: cargo run --release -p civil-core --example c3d_pipes -- <file.xml>...
 use civil_core::landxml;
 
-fn stats(v: &mut Vec<f64>) -> String {
+fn stats(v: &mut [f64]) -> String {
     if v.is_empty() {
         return "n=0".into();
     }
@@ -59,13 +59,30 @@ fn main() {
                 }
             }
             let flows: Vec<f64> = n.pipes.iter().filter_map(|p| p.flow_in).collect();
-            println!("   network '{}' type {}: {} structures, {} pipes, {} with both end inverts ({} curved)", n.name, n.net_type, n.structs.len(), n.pipes.len(), used, curved);
+            println!(
+                "   network '{}' type {}: {} structures, {} pipes, {} with both end inverts ({} curved)",
+                n.name,
+                n.net_type,
+                n.structs.len(),
+                n.pipes.len(),
+                used,
+                curved
+            );
             println!("   length: ours 2D centre-centre − C3D length: {}", stats(&mut d2));
             println!("   length: ours 3D centre-centre − C3D length: {}", stats(&mut d3));
             println!("   slope : ours |Δinv|/L2D − C3D |slope|:      {}", stats(&mut ds));
             println!("   HGL   : C3D (hglUp−invUp) − (hglDn−invDn):   {}", stats(&mut dh));
             hgl_rel.dedup();
-            println!("   flowIn values in file: {:?}; distinct (hglUp−invUp)/D (first 8): {:?}", { let mut f = flows.clone(); f.dedup(); f.truncate(5); f }, &hgl_rel[..hgl_rel.len().min(8)]);
+            println!(
+                "   flowIn values in file: {:?}; distinct (hglUp−invUp)/D (first 8): {:?}",
+                {
+                    let mut f = flows.clone();
+                    f.dedup();
+                    f.truncate(5);
+                    f
+                },
+                &hgl_rel[..hgl_rel.len().min(8)]
+            );
         }
     }
 }

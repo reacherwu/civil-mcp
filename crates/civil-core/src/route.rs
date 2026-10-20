@@ -43,7 +43,8 @@ pub struct PathResult {
     pub nodes_expanded: usize,
 }
 
-const DIRS: [(i32, i32); 16] = [(1, 0), (2, 1), (1, 1), (1, 2), (0, 1), (-1, 2), (-1, 1), (-2, 1), (-1, 0), (-2, -1), (-1, -1), (-1, -2), (0, -1), (1, -2), (1, -1), (2, -1)];
+const DIRS: [(i32, i32); 16] =
+    [(1, 0), (2, 1), (1, 1), (1, 2), (0, 1), (-1, 2), (-1, 1), (-2, 1), (-1, 0), (-2, -1), (-1, -1), (-1, -2), (0, -1), (1, -2), (1, -1), (2, -1)];
 
 #[derive(PartialEq)]
 struct Node(f64, usize);
@@ -84,7 +85,10 @@ impl Grid {
         [self.x0 + i as f64 * self.cell, self.y0 + j as f64 * self.cell]
     }
     fn ij(&self, p: [f64; 2]) -> (usize, usize) {
-        (((p[0] - self.x0) / self.cell).round().clamp(0.0, (self.nx - 1) as f64) as usize, ((p[1] - self.y0) / self.cell).round().clamp(0.0, (self.ny - 1) as f64) as usize)
+        (
+            ((p[0] - self.x0) / self.cell).round().clamp(0.0, (self.nx - 1) as f64) as usize,
+            ((p[1] - self.y0) / self.cell).round().clamp(0.0, (self.ny - 1) as f64) as usize,
+        )
     }
 }
 
@@ -101,7 +105,14 @@ fn dist_to_poly(p: [f64; 2], poly: &[[f64; 2]]) -> f64 {
 }
 
 /// Least-cost path from start to end (heading-constrained Dijkstra).
-pub fn least_cost(g: &Grid, start: [f64; 2], end: [f64; 2], gmax_pct: f64, spec: &AltSpec, avoid: &[Vec<[f64; 2]>]) -> crate::Result<(Vec<[f64; 2]>, f64, usize)> {
+pub fn least_cost(
+    g: &Grid,
+    start: [f64; 2],
+    end: [f64; 2],
+    gmax_pct: f64,
+    spec: &AltSpec,
+    avoid: &[Vec<[f64; 2]>],
+) -> crate::Result<(Vec<[f64; 2]>, f64, usize)> {
     let (si, sj) = g.ij(start);
     let (ei, ej) = g.ij(end);
     let n = g.nx * g.ny * 16;
@@ -158,7 +169,8 @@ pub fn least_cost(g: &Grid, start: [f64; 2], end: [f64; 2], gmax_pct: f64, spec:
             let gr = if di.abs() == 2 || dj.abs() == 2 {
                 let (ai, aj) = (i as i32 + di / 2, j as i32 + dj / 2);
                 let (bi, bj) = (i as i32 + (di + di.signum()) / 2, j as i32 + (dj + dj.signum()) / 2);
-                let at = |x: i32, y: i32| if x >= 0 && y >= 0 && (x as usize) < g.nx && (y as usize) < g.ny { g.z[y as usize * g.nx + x as usize] } else { None };
+                let at =
+                    |x: i32, y: i32| if x >= 0 && y >= 0 && (x as usize) < g.nx && (y as usize) < g.ny { g.z[y as usize * g.nx + x as usize] } else { None };
                 match (at(ai, aj), at(bi, bj)) {
                     (Some(za), Some(zb)) => {
                         let zm = (za + zb) / 2.0;

@@ -26,13 +26,9 @@ pub fn parse_csv(text: &str) -> crate::Result<(Vec<SurveyPoint>, Vec<String>)> {
         }
         let p = (f[1].parse::<f64>(), f[2].parse::<f64>(), f[3].parse::<f64>());
         match p {
-            (Ok(e), Ok(n), Ok(z)) if e.is_finite() && n.is_finite() && z.is_finite() => pts.push(SurveyPoint {
-                id: f[0].to_string(),
-                e,
-                n,
-                z,
-                desc: f.get(4).unwrap_or(&"").to_string(),
-            }),
+            (Ok(e), Ok(n), Ok(z)) if e.is_finite() && n.is_finite() && z.is_finite() => {
+                pts.push(SurveyPoint { id: f[0].to_string(), e, n, z, desc: f.get(4).unwrap_or(&"").to_string() })
+            }
             _ => rejected.push(format!("line {}: non-numeric coordinate", i + 1)),
         }
     }

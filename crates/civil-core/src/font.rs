@@ -67,7 +67,15 @@ pub fn subset(used: &BTreeSet<u16>) -> Vec<u8> {
                     stack.push(comp);
                 }
                 p += 4 + if flags & 1 != 0 { 4 } else { 2 };
-                p += if flags & 8 != 0 { 2 } else if flags & 0x40 != 0 { 4 } else if flags & 0x80 != 0 { 8 } else { 0 };
+                p += if flags & 8 != 0 {
+                    2
+                } else if flags & 0x40 != 0 {
+                    4
+                } else if flags & 0x80 != 0 {
+                    8
+                } else {
+                    0
+                };
                 if flags & 0x20 == 0 {
                     break;
                 }

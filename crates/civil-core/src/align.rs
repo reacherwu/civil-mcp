@@ -169,7 +169,10 @@ impl Alignment {
             if tl[i] + tl[i + 1] > avail + 1e-9 {
                 return Err(format!(
                     "curves overlap on segment PI{i}->PI{}: tangents {:.2}+{:.2} m > {:.2} m available; reduce radius/spiral or move PIs",
-                    i + 1, tl[i], tl[i + 1], avail
+                    i + 1,
+                    tl[i],
+                    tl[i + 1],
+                    avail
                 ));
             }
         }
@@ -329,7 +332,14 @@ mod tests {
     use super::*;
     #[test]
     fn right_angle_curve_geometry() {
-        let a = Alignment::build(AlignmentInput { name: "t".into(), pis: vec![[0.0, 0.0], [200.0, 0.0], [200.0, 200.0]], radii: vec![100.0], spirals: vec![], start_station: 0.0 }).unwrap();
+        let a = Alignment::build(AlignmentInput {
+            name: "t".into(),
+            pis: vec![[0.0, 0.0], [200.0, 0.0], [200.0, 200.0]],
+            radii: vec![100.0],
+            spirals: vec![],
+            start_station: 0.0,
+        })
+        .unwrap();
         assert!((a.length - (200.0 + PI * 50.0)).abs() < 1e-9);
         let (x, y, h) = a.point_at(a.end_station()).unwrap();
         assert!((x - 200.0).abs() < 1e-9 && (y - 200.0).abs() < 1e-9);
@@ -339,7 +349,13 @@ mod tests {
     }
     #[test]
     fn overlap_is_rejected() {
-        let r = Alignment::build(AlignmentInput { name: "t".into(), pis: vec![[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]], radii: vec![100.0], spirals: vec![], start_station: 0.0 });
+        let r = Alignment::build(AlignmentInput {
+            name: "t".into(),
+            pis: vec![[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]],
+            radii: vec![100.0],
+            spirals: vec![],
+            start_station: 0.0,
+        });
         assert!(r.unwrap_err().contains("overlap"));
     }
     #[test]
@@ -355,7 +371,14 @@ mod tests {
     #[test]
     fn spiral_curve_spiral_closes_on_outgoing_tangent() {
         for &(dx, dy) in &[(300.0, 260.0), (300.0, -150.0)] {
-            let a = Alignment::build(AlignmentInput { name: "t".into(), pis: vec![[0.0, 0.0], [400.0, 0.0], [400.0 + dx, dy]], radii: vec![250.0], spirals: vec![60.0], start_station: 1000.0 }).unwrap();
+            let a = Alignment::build(AlignmentInput {
+                name: "t".into(),
+                pis: vec![[0.0, 0.0], [400.0, 0.0], [400.0 + dx, dy]],
+                radii: vec![250.0],
+                spirals: vec![60.0],
+                start_station: 1000.0,
+            })
+            .unwrap();
             assert!(a.closure_error < 1e-6, "closure {}", a.closure_error);
             let (x, y, _) = a.point_at(a.end_station()).unwrap();
             assert!((x - 400.0 - dx).abs() < 1e-6 && (y - dy).abs() < 1e-6);

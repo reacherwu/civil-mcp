@@ -153,10 +153,44 @@ pub fn analyse(kind: &WallKind, h: f64, b: f64, soil: &Soil, cr: &Criteria) -> W
     let fs_s = soil.base_friction * v / pa;
     let fs_o = mr / m_over;
     let e = b / 2.0 - (mr - m_over) / v;
-    let q_max = if e <= b / 6.0 { v / b * (1.0 + 6.0 * e / b) } else if e < b / 2.0 { 2.0 * v / (3.0 * (b / 2.0 - e)) } else { f64::INFINITY };
+    let q_max = if e <= b / 6.0 {
+        v / b * (1.0 + 6.0 * e / b)
+    } else if e < b / 2.0 {
+        2.0 * v / (3.0 * (b / 2.0 - e))
+    } else {
+        f64::INFINITY
+    };
     let q_avg = v / b;
-    let pass = fs_s >= cr.fs_sliding && fs_o >= cr.fs_overturning && e.abs() <= cr.e_frac * b + 1e-12 && q_max <= cr.qmax_factor * soil.bearing_kpa && q_avg <= soil.bearing_kpa && heel >= -1e-9;
-    WallDesign { kind: kind.clone(), h, exposed_h: 0.0, base_b: b, toe, heel, base_t: t, stem_top: st, stem_bot: sb, ka, pa_kn: pa, sum_v_kn: v, m_resist: mr, m_over, fs_sliding: fs_s, fs_overturning: fs_o, eccentricity: e, q_max_kpa: q_max, q_avg_kpa: q_avg, concrete_m2: area, pass, iterations: 0 }
+    let pass = fs_s >= cr.fs_sliding
+        && fs_o >= cr.fs_overturning
+        && e.abs() <= cr.e_frac * b + 1e-12
+        && q_max <= cr.qmax_factor * soil.bearing_kpa
+        && q_avg <= soil.bearing_kpa
+        && heel >= -1e-9;
+    WallDesign {
+        kind: kind.clone(),
+        h,
+        exposed_h: 0.0,
+        base_b: b,
+        toe,
+        heel,
+        base_t: t,
+        stem_top: st,
+        stem_bot: sb,
+        ka,
+        pa_kn: pa,
+        sum_v_kn: v,
+        m_resist: mr,
+        m_over,
+        fs_sliding: fs_s,
+        fs_overturning: fs_o,
+        eccentricity: e,
+        q_max_kpa: q_max,
+        q_avg_kpa: q_avg,
+        concrete_m2: area,
+        pass,
+        iterations: 0,
+    }
 }
 
 /// Smallest base width (0.05 m steps from 0.4H / 0.5H up to 2H) passing all checks.

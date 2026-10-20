@@ -4,7 +4,8 @@
 //! Coefficients K, M, c, Y transcribed from HDS-5 Appendix A Table A.1 (verify).
 use serde::{Deserialize, Serialize};
 
-pub const HDS5: &str = "FHWA HDS-5 Hydraulic Design of Highway Culverts, 3rd ed. (2012), Ch. 3 (inlet control Eq 3.1–3.3, outlet control Eq 3.4–3.8), App. A Table A.1";
+pub const HDS5: &str =
+    "FHWA HDS-5 Hydraulic Design of Highway Culverts, 3rd ed. (2012), Ch. 3 (inlet control Eq 3.1–3.3, outlet control Eq 3.4–3.8), App. A Table A.1";
 const G: f64 = 9.80665;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -66,7 +67,11 @@ pub fn critical_depth(d: f64, q: f64) -> f64 {
     for _ in 0..100 {
         let m = 0.5 * (lo + hi);
         let (a, t, _) = circ(d, m);
-        if a * a * a / t < q * q / G { lo = m } else { hi = m }
+        if a * a * a / t < q * q / G {
+            lo = m
+        } else {
+            hi = m
+        }
     }
     0.5 * (lo + hi)
 }
@@ -82,7 +87,13 @@ pub fn hw_inlet(inlet: Inlet, d: f64, q: f64, s: f64) -> (f64, String) {
     let hc = dc + (q / ac).powi(2) / (2.0 * G);
     let un = hc / d + k * x.powf(m) + ks * s;
     let sub = c * x * x + y + ks * s;
-    let r = if x <= 3.5 { un } else if x >= 4.0 { sub } else { un + (sub - un) * (x - 3.5) / 0.5 };
+    let r = if x <= 3.5 {
+        un
+    } else if x >= 4.0 {
+        sub
+    } else {
+        un + (sub - un) * (x - 3.5) / 0.5
+    };
     (r * d, format!("Ku·Q/(A·D^0.5) = {x:.3}; unsubmerged HW/D = Hc/D + K·x^M + Ks·S = {un:.3}; submerged HW/D = c·x² + Y + Ks·S = {sub:.3}; used {r:.3}"))
 }
 
@@ -106,12 +117,33 @@ pub fn analyse(inlet: Inlet, d: f64, q: f64, n: f64, l: f64, s: f64, tw: f64) ->
     // outlet velocity: normal depth (Manning) if not flowing full, else full
     let a = std::f64::consts::PI * d * d / 4.0;
     let qf = a * (d / 4.0f64).powf(2.0 / 3.0) * s.max(1e-5).sqrt() / n;
-    let v = if q >= qf { q / a } else {
+    let v = if q >= qf {
+        q / a
+    } else {
         let (mut lo, mut hi2) = (1e-6 * d, 0.938 * d);
-        for _ in 0..100 { let m = 0.5 * (lo + hi2); let (am, _, pm) = circ(d, m); if am * (am / pm).powf(2.0 / 3.0) * s.max(1e-5).sqrt() / n < q { lo = m } else { hi2 = m } }
-        let (am, _, _) = circ(d, 0.5 * (lo + hi2)); q / am
+        for _ in 0..100 {
+            let m = 0.5 * (lo + hi2);
+            let (am, _, pm) = circ(d, m);
+            if am * (am / pm).powf(2.0 / 3.0) * s.max(1e-5).sqrt() / n < q {
+                lo = m
+            } else {
+                hi2 = m
+            }
+        }
+        let (am, _, _) = circ(d, 0.5 * (lo + hi2));
+        q / am
     };
-    CulvertHyd { d_m: d, q_m3s: q, hw_inlet_m: hi, hw_outlet_m: ho, hw_m: hi.max(ho), control: if hi >= ho { "inlet".into() } else { "outlet".into() }, v_out_ms: v, dc_m: dc, steps: vec![si, so] }
+    CulvertHyd {
+        d_m: d,
+        q_m3s: q,
+        hw_inlet_m: hi,
+        hw_outlet_m: ho,
+        hw_m: hi.max(ho),
+        control: if hi >= ho { "inlet".into() } else { "outlet".into() },
+        v_out_ms: v,
+        dc_m: dc,
+        steps: vec![si, so],
+    }
 }
 
 #[cfg(test)]

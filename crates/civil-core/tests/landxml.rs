@@ -18,8 +18,14 @@ fn sample_alignment() -> Alignment {
 #[test]
 fn roundtrip_alignment_profile_surface_points() {
     let al = sample_alignment();
-    let prof = Profile::build(ProfileInput { name: "FG".into(), vpis: vec![[0.0, 100.0], [300.0, 106.0], [al.length, 98.0]], curve_lengths: vec![120.0] }).unwrap();
-    let pts: Vec<[f64; 3]> = (0..60).map(|i| { let (x, y) = ((i * 37 % 100) as f64, (i * 61 % 90) as f64); [x, y, 50.0 + 0.1 * x - 0.05 * y] }).collect();
+    let prof =
+        Profile::build(ProfileInput { name: "FG".into(), vpis: vec![[0.0, 100.0], [300.0, 106.0], [al.length, 98.0]], curve_lengths: vec![120.0] }).unwrap();
+    let pts: Vec<[f64; 3]> = (0..60)
+        .map(|i| {
+            let (x, y) = ((i * 37 % 100) as f64, (i * 61 % 90) as f64);
+            [x, y, 50.0 + 0.1 * x - 0.05 * y]
+        })
+        .collect();
     let (tin, st) = Tin::build(&pts, None).unwrap();
     let sp = vec![SurveyPoint { id: "1".into(), e: 1.5, n: 2.5, z: 3.25, desc: "road & <edge> é".into() }];
     let x = write(&Export { points: &sp, surfaces: vec![("EG", &tin)], alignment: Some(&al), profiles: vec![&prof], networks: vec![] });

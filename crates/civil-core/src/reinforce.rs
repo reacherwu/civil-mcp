@@ -25,11 +25,28 @@ pub struct RebarInput {
     #[serde(default = "d_one")]
     pub bars_per_bundle: f64,
 }
-fn d_phi() -> f64 { 0.9 }
-fn d_one() -> f64 { 1.0 }
+fn d_phi() -> f64 {
+    0.9
+}
+fn d_one() -> f64 {
+    1.0
+}
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RebarResult { pub station: f64, pub side: String, pub stem_h_m: f64, pub t_m: f64, pub mu_knm: f64, pub d_m: f64, pub as_req_mm2: f64, pub as_min_mm2: f64, pub as_mm2: f64, pub spacing_mm: f64, pub ok: bool, pub note: String }
+pub struct RebarResult {
+    pub station: f64,
+    pub side: String,
+    pub stem_h_m: f64,
+    pub t_m: f64,
+    pub mu_knm: f64,
+    pub d_m: f64,
+    pub as_req_mm2: f64,
+    pub as_min_mm2: f64,
+    pub as_mm2: f64,
+    pub spacing_mm: f64,
+    pub ok: bool,
+    pub note: String,
+}
 
 pub fn stem(inp: &RebarInput, hs: f64, t: f64) -> (f64, f64, f64, f64, f64, f64, bool) {
     let ka = (std::f64::consts::FRAC_PI_4 - inp.phi_soil_deg.to_radians() / 2.0).tan().powi(2);

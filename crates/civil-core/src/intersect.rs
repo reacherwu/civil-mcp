@@ -133,7 +133,8 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
     let s0 = input.main_station;
     let (x0, y0, h0) = main_al.point_at(s0).ok_or("main station off alignment")?;
     let z0 = main_pr.elevation_at(s0).ok_or("main station off profile")?;
-    let sec = main_cor.sections.iter().min_by(|a, b| (a.station - s0).abs().partial_cmp(&(b.station - s0).abs()).unwrap()).ok_or("main corridor has no sections")?;
+    let sec =
+        main_cor.sections.iter().min_by(|a, b| (a.station - s0).abs().partial_cmp(&(b.station - s0).abs()).unwrap()).ok_or("main corridor has no sections")?;
     let ground = |x: f64, y: f64| main_fg.elevation_at(x, y).or_else(|| eg.elevation_at(x, y));
     let mut legs = Vec::new();
     let mut checks = Vec::new();
@@ -164,12 +165,27 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
         for (k, (lsg, w2)) in [(1.0, w2l), (-1.0, w2r)].into_iter().enumerate() {
             let up_station = (lsg > 0.0) == (sg < 0.0);
             let r = if up_station { leg.return_radii_m[0] } else { leg.return_radii_m[1] };
-            checks.push(chk("I-RETURN", "Curb return radius ≥ design-vehicle minimum", format!("{} {} corner", leg.name, if up_station { "up-station" } else { "down-station" }), r, input.min_return_radius_m, "m", "min", "mandatory", "fillet tangent to main-road edge and leg edge".into(), "design basis (engineer-set for the design vehicle); AASHTO 2018 §9.6".into()));
+            checks.push(chk(
+                "I-RETURN",
+                "Curb return radius ≥ design-vehicle minimum",
+                format!("{} {} corner", leg.name, if up_station { "up-station" } else { "down-station" }),
+                r,
+                input.min_return_radius_m,
+                "m",
+                "min",
+                "mandatory",
+                "fillet tangent to main-road edge and leg edge".into(),
+                "design basis (engineer-set for the design vehicle); AASHTO 2018 §9.6".into(),
+            ));
             let mo: Vec<[f64; 2]> = edge(main_al, s0, sg * (w1 + r), 80.0 + r).iter().map(|p| p.0).collect();
             let lp = add(p0, nrm, lsg * (w2 + r));
             let (c, _, _) = line_poly(lp, dir, &mo).ok_or("return radius too large for the edges")?;
             // tangent point on the main edge: closest main-edge point to c
-            let tm = me_xy.iter().copied().min_by(|a, b| ((a[0] - c[0]).powi(2) + (a[1] - c[1]).powi(2)).partial_cmp(&((b[0] - c[0]).powi(2) + (b[1] - c[1]).powi(2))).unwrap()).unwrap();
+            let tm = me_xy
+                .iter()
+                .copied()
+                .min_by(|a, b| ((a[0] - c[0]).powi(2) + (a[1] - c[1]).powi(2)).partial_cmp(&((b[0] - c[0]).powi(2) + (b[1] - c[1]).powi(2))).unwrap())
+                .unwrap();
             // tangent on the leg edge: foot of perpendicular from c
             let t_leg = (c[0] - p0[0]) * dir[0] + (c[1] - p0[1]) * dir[1];
             let tl = add(add(p0, nrm, lsg * w2), dir, t_leg);
@@ -183,11 +199,13 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
                 a1 += 2.0 * std::f64::consts::PI
             }
             let n = 16;
-            let arc: Vec<[f64; 3]> = (0..=n).map(|i| {
-                let a = a0 + (a1 - a0) * i as f64 / n as f64;
-                let p = [c[0] + r * a.cos(), c[1] + r * a.sin()];
-                [p[0], p[1], 0.0]
-            }).collect();
+            let arc: Vec<[f64; 3]> = (0..=n)
+                .map(|i| {
+                    let a = a0 + (a1 - a0) * i as f64 / n as f64;
+                    let p = [c[0] + r * a.cos(), c[1] + r * a.sin()];
+                    [p[0], p[1], 0.0]
+                })
+                .collect();
             let _ = k;
             returns.push(Return { radius: r, center: c, arc, corner: if up_station { "up-station".into() } else { "down-station".into() } });
         }
@@ -200,12 +218,30 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
         }
         let lal = Alignment::build(AlignmentInput { name: leg.name.clone(), pis: vec![pa, pb], radii: vec![], spirals: vec![], start_station: s_start })?;
         let g = leg.grade_pct / 100.0;
-        let lpr = Profile::build(ProfileInput { name: format!("{} FG", leg.name), vpis: vec![[s_edge, tie_z], [leg.length_m, tie_z + g * (leg.length_m - s_edge)]], curve_lengths: vec![] })?;
+        let lpr = Profile::build(ProfileInput {
+            name: format!("{} FG", leg.name),
+            vpis: vec![[s_edge, tie_z], [leg.length_m, tie_z + g * (leg.length_m - s_edge)]],
+            curve_lengths: vec![],
+        })?;
         let lc = corridor::build(eg, &lal, &lpr, None, &leg.assembly, 10.0)?;
-        checks.push(chk("I-GRADE", "Approach grade ≤ limit", format!("leg {}", leg.name), leg.grade_pct.abs(), input.max_approach_grade_pct, "%", "max", "mandatory", "|grade| of the leg profile from the tie-in".into(), "design basis (engineer-set); AASHTO 2018 §9.5".into()));
+        checks.push(chk(
+            "I-GRADE",
+            "Approach grade ≤ limit",
+            format!("leg {}", leg.name),
+            leg.grade_pct.abs(),
+            input.max_approach_grade_pct,
+            "%",
+            "max",
+            "mandatory",
+            "|grade| of the leg profile from the tie-in".into(),
+            "design basis (engineer-set); AASHTO 2018 §9.5".into(),
+        ));
         // returns: elevations interpolated main edge → leg start section edge
         let first = &lc.sections[0];
-        let zl = |left: bool| { let sd = if left { &first.left } else { &first.right }; corridor::interp(&sd.fg, sd.paved_width) };
+        let zl = |left: bool| {
+            let sd = if left { &first.left } else { &first.right };
+            corridor::interp(&sd.fg, sd.paved_width)
+        };
         let mut rets = returns;
         for (ri, rt) in rets.iter_mut().enumerate() {
             let lsg = if ri == 0 { 1.0 } else { -1.0 };
@@ -239,8 +275,13 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
         a0.reverse();
         poly.extend(a0.into_iter().skip(1));
         poly.pop(); // last equals the first main-edge point
-        // orientation for ear clipping: counter-clockwise
-        let area: f64 = (0..poly.len()).map(|i| { let (a, b) = (poly[i], poly[(i + 1) % poly.len()]); a[0] * b[1] - b[0] * a[1] }).sum();
+                    // orientation for ear clipping: counter-clockwise
+        let area: f64 = (0..poly.len())
+            .map(|i| {
+                let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum();
         if area < 0.0 {
             poly.reverse();
         }
@@ -261,7 +302,14 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
                     }
                     c
                 };
-                t.tris.iter().copied().filter(|f| { let (a, b, c) = (t.pts[f[0]], t.pts[f[1]], t.pts[f[2]]); inside((a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0) }).collect()
+                t.tris
+                    .iter()
+                    .copied()
+                    .filter(|f| {
+                        let (a, b, c) = (t.pts[f[0]], t.pts[f[1]], t.pts[f[2]]);
+                        inside((a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0)
+                    })
+                    .collect()
             }
         };
         let (ptin, _) = Tin::from_faces(&poly, &faces)?;
@@ -293,10 +341,48 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
                 }
             }
             let clear = worst.0 <= 0.0;
-            checks.push(chk("I-ISD", "Intersection sight triangle clear (stop control, case B1)", format!("{} looking {}", leg.name, name), worst.0.max(-9.99), 0.0, "m above sight line", "max", "mandatory", format!("ISD = 0.278·V·t_g = 0.278·{}·{} = {:.1} m; eye 1.08 m at 4.4 m from edge, object 1.08 m", input.major_speed_kmh, input.time_gap_s, isd), "AASHTO 2018 §9.5.3 Case B1 (stop control on the minor road)".into()));
-            sight.push(SightLine { direction: name.into(), eye: [lane_c[0], lane_c[1], ez], target: [tp[0], tp[1], tz], leg_m: eye_t, along_major_m: (st - s0).abs(), max_obstruction_m: worst.0, obstruction_at: worst.1, triangle: [lane_c, pe, tp], clear });
+            checks.push(chk(
+                "I-ISD",
+                "Intersection sight triangle clear (stop control, case B1)",
+                format!("{} looking {}", leg.name, name),
+                worst.0.max(-9.99),
+                0.0,
+                "m above sight line",
+                "max",
+                "mandatory",
+                format!(
+                    "ISD = 0.278·V·t_g = 0.278·{}·{} = {:.1} m; eye 1.08 m at 4.4 m from edge, object 1.08 m",
+                    input.major_speed_kmh, input.time_gap_s, isd
+                ),
+                "AASHTO 2018 §9.5.3 Case B1 (stop control on the minor road)".into(),
+            ));
+            sight.push(SightLine {
+                direction: name.into(),
+                eye: [lane_c[0], lane_c[1], ez],
+                target: [tp[0], tp[1], tz],
+                leg_m: eye_t,
+                along_major_m: (st - s0).abs(),
+                max_obstruction_m: worst.0,
+                obstruction_at: worst.1,
+                triangle: [lane_c, pe, tp],
+                clear,
+            });
         }
-        legs.push(LegResult { name: leg.name.clone(), cl: [p0, pb], edge_left: [add(p0, nrm, w2l), add(pb, nrm, w2l)], edge_right: [add(p0, nrm, -w2r), add(pb, nrm, -w2r)], returns: rets, sight, corridor: lc, patch: poly, patch_faces: faces, patch_cut_m3: pc, patch_fill_m3: pf, tie_in_elev: tie_z, tie_in_station: s_edge });
+        legs.push(LegResult {
+            name: leg.name.clone(),
+            cl: [p0, pb],
+            edge_left: [add(p0, nrm, w2l), add(pb, nrm, w2l)],
+            edge_right: [add(p0, nrm, -w2r), add(pb, nrm, -w2r)],
+            returns: rets,
+            sight,
+            corridor: lc,
+            patch: poly,
+            patch_faces: faces,
+            patch_cut_m3: pc,
+            patch_fill_m3: pf,
+            tie_in_elev: tie_z,
+            tie_in_station: s_edge,
+        });
     }
     Ok(Intersection { name: input.name.clone(), main_station: s0, point: [x0, y0, z0], legs, checks, method: "Returns: circle tangent to the main-road edge (offset w1) and the leg edge (offset w2), centre at offsets w1+R and w2+R. Leg profile ties to the main-road finished grade at the edge. Patch: ear-clipped polygon (main edge, returns, leg start section) as a TIN, composite volume vs existing ground (no pavement datum). Sight: AASHTO Case B1, ISD = 0.278·V·t_g, line of sight 1.08→1.08 m over corridor FG else existing ground.".into() })
 }

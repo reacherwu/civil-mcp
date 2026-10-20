@@ -30,8 +30,12 @@ pub struct SubInput {
     #[serde(default)]
     pub source: String,
 }
-fn d_ic() -> f64 { 0.223 }
-fn d_n() -> f64 { 0.012 }
+fn d_ic() -> f64 {
+    0.223
+}
+fn d_n() -> f64 {
+    0.012
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubResult {
@@ -63,9 +67,26 @@ pub fn design(inp: &SubInput, width: f64, nl: usize, sx: f64, g: f64) -> SubResu
     let a = std::f64::consts::PI * inp.pipe_d_m.powi(2) / 4.0;
     let qp = a * (inp.pipe_d_m / 4.0).powf(2.0 / 3.0) * g.abs().max(0.002).sqrt() / inp.pipe_n;
     let spacing = (qp * 86400.0 / qin).min(inp.max_outlet_spacing_m);
-    SubResult { width_m: width, n_cracks: nc, qi_m3_day_m2: qi, inflow_m3_day_per_m: qin, layer_capacity_m3_day_per_m: cap, resultant_slope: sr, flow_path_m: lr, t50_hours: t50, pipe_capacity_m3s: qp, outlet_spacing_m: spacing, m_coefficient: inp.m_coefficient,
-        steps: vec![format!("qi = Ic(Nc/W + Wc/(W·Cs)) + kp = {:.3}({nc:.0}/{width:.2} + {width:.2}/({width:.2}·{:.1})) + {:.4} = {qi:.4} m³/day/m²", inp.ic_m3_day_m, inp.crack_spacing_m, inp.kp_m_day),
+    SubResult {
+        width_m: width,
+        n_cracks: nc,
+        qi_m3_day_m2: qi,
+        inflow_m3_day_per_m: qin,
+        layer_capacity_m3_day_per_m: cap,
+        resultant_slope: sr,
+        flow_path_m: lr,
+        t50_hours: t50,
+        pipe_capacity_m3s: qp,
+        outlet_spacing_m: spacing,
+        m_coefficient: inp.m_coefficient,
+        steps: vec![
+            format!(
+                "qi = Ic(Nc/W + Wc/(W·Cs)) + kp = {:.3}({nc:.0}/{width:.2} + {width:.2}/({width:.2}·{:.1})) + {:.4} = {qi:.4} m³/day/m²",
+                inp.ic_m3_day_m, inp.crack_spacing_m, inp.kp_m_day
+            ),
             format!("inflow per m = qi·W = {qin:.4} m³/day/m; layer capacity k·S_R·H = {cap:.4} m³/day/m"),
             format!("resultant slope S_R = {sr:.4}, flow path L_R = {lr:.2} m, t50 = ne·L_R²/(2k(H+L_R·S_R)) = {t50:.2} h (approximation)"),
-            format!("edge drain D{:.0} mm full capacity {qp:.5} m³/s; outlet spacing = min(Qp/inflow, max) = {spacing:.0} m", inp.pipe_d_m * 1000.0)] }
+            format!("edge drain D{:.0} mm full capacity {qp:.5} m³/s; outlet spacing = min(Qp/inflow, max) = {spacing:.0} m", inp.pipe_d_m * 1000.0),
+        ],
+    }
 }

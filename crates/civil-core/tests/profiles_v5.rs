@@ -13,14 +13,23 @@ fn session(std: &str) -> (Session, std::path::PathBuf) {
     (s, d)
 }
 
-fn idf() -> Value { json!({"label": "test", "points": [[5.0, 120.0], [60.0, 30.0]], "source": "test"}) }
+fn idf() -> Value {
+    json!({"label": "test", "points": [[5.0, 120.0], [60.0, 30.0]], "source": "test"})
+}
 
 #[test]
 fn uk_needs_feh_peak_and_engineer_tapers() {
     let (mut s, _) = session("UK_DMRB");
-    let e = s.call("design_hydrology", &json!({"idf": idf(), "catchments": [{"id": "C1", "area_ha": 3.0, "c": 0.4, "length_m": 300.0, "slope": 0.02}]})).unwrap_err();
+    let e = s
+        .call("design_hydrology", &json!({"idf": idf(), "catchments": [{"id": "C1", "area_ha": 3.0, "c": 0.4, "length_m": 300.0, "slope": 0.02}]}))
+        .unwrap_err();
     assert!(e.contains("feh_peak_m3s"), "{e}");
-    let r = s.call("design_hydrology", &json!({"idf": idf(), "catchments": [{"id": "C1", "area_ha": 3.0, "c": 0.4, "length_m": 300.0, "slope": 0.02, "feh_peak_m3s": 0.35}]})).unwrap();
+    let r = s
+        .call(
+            "design_hydrology",
+            &json!({"idf": idf(), "catchments": [{"id": "C1", "area_ha": 3.0, "c": 0.4, "length_m": 300.0, "slope": 0.02, "feh_peak_m3s": 0.35}]}),
+        )
+        .unwrap();
     assert_eq!(r["result"]["catchments"][0]["q_m3s"].as_f64().unwrap(), 0.35);
     assert_eq!(r["result"]["catchments"][0]["method"], "uk_check");
     // no taper formula is shipped for the UK: tapers stay blank until the engineer enters them
@@ -36,7 +45,9 @@ fn uk_needs_feh_peak_and_engineer_tapers() {
 #[test]
 fn au_uses_arr_rational_and_sisd_formula() {
     let (mut s, _) = session("AU_AUSTROADS");
-    let r = s.call("design_hydrology", &json!({"idf": idf(), "c": 0.5, "catchments": [{"id": "C1", "area_ha": 10.0, "c": 0.5, "length_m": 1000.0, "slope": 0.01}]})).unwrap();
+    let r = s
+        .call("design_hydrology", &json!({"idf": idf(), "c": 0.5, "catchments": [{"id": "C1", "area_ha": 10.0, "c": 0.5, "length_m": 1000.0, "slope": 0.01}]}))
+        .unwrap();
     let c = &r["result"]["catchments"][0];
     assert_eq!(c["method"], "arr_rational");
     // Bransby-Williams tc = 58 L / (A^0.1 S^0.2), L km, A km2, S m/km

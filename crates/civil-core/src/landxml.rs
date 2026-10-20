@@ -109,20 +109,30 @@ pub fn read(text: &str) -> crate::Result<LandXmlData> {
         return Err("root element is not LandXML".into());
     }
     let mut out = LandXmlData::default();
-    out.application = root.descendants().find(|n| n.tag_name().name() == "Application").map(|a| format!("{} {}", a.attribute("name").unwrap_or(""), a.attribute("version").unwrap_or("")));
+    out.application = root
+        .descendants()
+        .find(|n| n.tag_name().name() == "Application")
+        .map(|a| format!("{} {}", a.attribute("name").unwrap_or(""), a.attribute("version").unwrap_or("")));
     for p in root.descendants().filter(|n| n.tag_name().name() == "CgPoint") {
         let v = nums(p.text().unwrap_or(""));
         if v.len() >= 3 {
-            out.points.push(SurveyPoint { id: p.attribute("name").unwrap_or("").into(), n: v[0], e: v[1], z: v[2], desc: p.attribute("desc").unwrap_or("").into() });
+            out.points.push(SurveyPoint {
+                id: p.attribute("name").unwrap_or("").into(),
+                n: v[0],
+                e: v[1],
+                z: v[2],
+                desc: p.attribute("desc").unwrap_or("").into(),
+            });
         }
     }
-    let dia_scale = match root.descendants().find(|n| n.tag_name().name() == "Metric" || n.tag_name().name() == "Imperial").and_then(|u| u.attribute("diameterUnit")) {
-        Some("millimeter") => 0.001,
-        Some("centimeter") => 0.01,
-        Some("inch") => 0.0254,
-        Some("foot") => 0.3048,
-        _ => 1.0,
-    };
+    let dia_scale =
+        match root.descendants().find(|n| n.tag_name().name() == "Metric" || n.tag_name().name() == "Imperial").and_then(|u| u.attribute("diameterUnit")) {
+            Some("millimeter") => 0.001,
+            Some("centimeter") => 0.01,
+            Some("inch") => 0.0254,
+            Some("foot") => 0.3048,
+            _ => 1.0,
+        };
     for pn in root.descendants().filter(|n| n.tag_name().name() == "PipeNetwork") {
         let mut structs = Vec::new();
         let mut pipes = Vec::new();
@@ -131,8 +141,19 @@ pub fn read(text: &str) -> crate::Result<LandXmlData> {
             if c.len() < 2 {
                 continue;
             }
-            let inverts = st.children().filter(|c| c.tag_name().name() == "Invert").filter_map(|i| Some((attr_f(i, "elev")?, i.attribute("flowDir").unwrap_or("").to_string(), i.attribute("refPipe").unwrap_or("").to_string()))).collect();
-            structs.push(StructData { name: st.attribute("name").unwrap_or("").into(), x: c[1], y: c[0], rim: attr_f(st, "elevRim"), sump: attr_f(st, "elevSump"), inverts });
+            let inverts = st
+                .children()
+                .filter(|c| c.tag_name().name() == "Invert")
+                .filter_map(|i| Some((attr_f(i, "elev")?, i.attribute("flowDir").unwrap_or("").to_string(), i.attribute("refPipe").unwrap_or("").to_string())))
+                .collect();
+            structs.push(StructData {
+                name: st.attribute("name").unwrap_or("").into(),
+                x: c[1],
+                y: c[0],
+                rim: attr_f(st, "elevRim"),
+                sump: attr_f(st, "elevSump"),
+                inverts,
+            });
         }
         for p in pn.descendants().filter(|n| n.tag_name().name() == "Pipe") {
             let circ = child(p, "CircPipe");
@@ -150,11 +171,16 @@ pub fn read(text: &str) -> crate::Result<LandXmlData> {
                 arc_center: ne(child(p, "Center")),
             });
         }
-        out.pipe_networks.push(PipeNetworkData { name: pn.attribute("name").unwrap_or("").into(), net_type: pn.attribute("pipeNetType").unwrap_or("").into(), structs, pipes });
+        out.pipe_networks.push(PipeNetworkData {
+            name: pn.attribute("name").unwrap_or("").into(),
+            net_type: pn.attribute("pipeNetType").unwrap_or("").into(),
+            structs,
+            pipes,
+        });
     }
     for s in root.descendants().filter(|n| n.tag_name().name() == "Surface") {
         let Some(def) = child(s, "Definition") else { continue };
-        if def.attribute("surfType").map_or(false, |t| t != "TIN") {
+        if def.attribute("surfType").is_some_and(|t| t != "TIN") {
             continue;
         }
         let mut idx = std::collections::HashMap::new();
@@ -355,7 +381,13 @@ pub fn write(x: &Export) -> String {
         let _ = writeln!(o, "  </Surfaces>");
     }
     if let Some(al) = x.alignment {
-        let _ = writeln!(o, "  <Alignments>\n    <Alignment name=\"{}\" length=\"{:.6}\" staStart=\"{:.6}\">\n      <CoordGeom>", esc(&al.name), al.length, al.start_station);
+        let _ = writeln!(
+            o,
+            "  <Alignments>\n    <Alignment name=\"{}\" length=\"{:.6}\" staStart=\"{:.6}\">\n      <CoordGeom>",
+            esc(&al.name),
+            al.length,
+            al.start_station
+        );
         for e in &al.elements {
             let st = e.start;
             let en = e.point(e.len);

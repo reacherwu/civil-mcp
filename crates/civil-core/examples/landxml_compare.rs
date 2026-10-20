@@ -12,7 +12,9 @@ fn main() {
         for s in &d.surfaces {
             let (t, st) = Tin::from_faces(&s.points, &s.faces).unwrap();
             let _ = t;
-            let pct = |a: f64, b: Option<f64>| b.map(|b| format!("{:.6} (file {:.6}, diff {:+.2e} m², {:+.2e}%)", a, b, a - b, (a - b) / b * 100.0)).unwrap_or(format!("{a:.6} (file: none)"));
+            let pct = |a: f64, b: Option<f64>| {
+                b.map(|b| format!("{:.6} (file {:.6}, diff {:+.2e} m², {:+.2e}%)", a, b, a - b, (a - b) / b * 100.0)).unwrap_or(format!("{a:.6} (file: none)"))
+            };
             println!("surface {}: {} pts, {} faces ({} invisible skipped)", s.name, st.points, st.triangles, s.invisible_faces);
             println!("  area2d {}", pct(st.area_m2, s.reported_area2d));
             println!("  area3d {}", pct(st.area3d_m2, s.reported_area3d));
@@ -21,7 +23,16 @@ fn main() {
         for a in &d.alignments {
             match to_alignment(a) {
                 Ok(al) => {
-                    println!("alignment {}: {} elements, length {:.6} (file {:?}, diff {:+.2e} m), max element-end deviation {:.2e} m, closure {:.2e} m", a.name, al.elements.len(), al.length, a.reported_length, al.length - a.reported_length.unwrap_or(f64::NAN), a.max_end_deviation, al.closure_error);
+                    println!(
+                        "alignment {}: {} elements, length {:.6} (file {:?}, diff {:+.2e} m), max element-end deviation {:.2e} m, closure {:.2e} m",
+                        a.name,
+                        al.elements.len(),
+                        al.length,
+                        a.reported_length,
+                        al.length - a.reported_length.unwrap_or(f64::NAN),
+                        a.max_end_deviation,
+                        al.closure_error
+                    );
                     for w in a.warnings.iter().take(5) {
                         println!("  warn: {w}");
                     }
@@ -30,7 +41,12 @@ fn main() {
             }
             for p in &a.profiles {
                 match Profile::build(p.clone()) {
-                    Ok(pr) => println!("  profile {}: {} VPIs, grades {:?}", p.name, p.vpis.len(), pr.grades_pct.iter().map(|g| (g * 1000.0).round() / 1000.0).collect::<Vec<_>>()),
+                    Ok(pr) => println!(
+                        "  profile {}: {} VPIs, grades {:?}",
+                        p.name,
+                        p.vpis.len(),
+                        pr.grades_pct.iter().map(|g| (g * 1000.0).round() / 1000.0).collect::<Vec<_>>()
+                    ),
                     Err(e) => println!("  profile {}: {e}", p.name),
                 }
             }

@@ -66,7 +66,20 @@ pub fn design(b: &DesignBasis, al: &Alignment) -> crate::Result<Superelevation> 
             (e, String::new())
         };
         if e == 0.0 {
-            out.push(SuperCurve { curve: c.index, radius: r, dir: c.dir, e, method, required_length: 0.0, a_in: c.sta_start, b_in: c.sta_start, b_out: c.sta_end, a_out: c.sta_end, relative_gradient: 0.0, note });
+            out.push(SuperCurve {
+                curve: c.index,
+                radius: r,
+                dir: c.dir,
+                e,
+                method,
+                required_length: 0.0,
+                a_in: c.sta_start,
+                b_in: c.sta_start,
+                b_out: c.sta_end,
+                a_out: c.sta_end,
+                relative_gradient: 0.0,
+                note,
+            });
             continue;
         }
         // required development length (edge rise / allowed relative gradient)
@@ -76,7 +89,12 @@ pub fn design(b: &DesignBasis, al: &Alignment) -> crate::Result<Superelevation> 
         // where full superelevation is reached (B): on a spiral at the SC/CS; on a simple curve
         // two-thirds of the development lies on the tangent (AASHTO practice; engineer may vary).
         let (b_in, b_out) = if spiral { (c.sta_cs_start, c.sta_cs_end) } else { (c.sta_start + lin / 3.0, c.sta_end - lout / 3.0) };
-        let (b_in, b_out) = if b_in > b_out { let m = (c.sta_start + c.sta_end) / 2.0; (m, m) } else { (b_in, b_out) };
+        let (b_in, b_out) = if b_in > b_out {
+            let m = (c.sta_start + c.sta_end) / 2.0;
+            (m, m)
+        } else {
+            (b_in, b_out)
+        };
         let a_in = b_in - lin;
         let a_out = b_out + lout;
         let rel = w * (e + nc) / lin.min(lout);

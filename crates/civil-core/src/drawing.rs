@@ -65,10 +65,36 @@ impl Drawing {
         let mut g = |c: i32, v: &str| {
             let _ = writeln!(o, "{c}\n{v}");
         };
-        for (c, v) in [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1009"), (9, "$DWGCODEPAGE"), (3, "ANSI_1252"), (9, "$INSUNITS"), (70, if self.units_mm { "4" } else { "6" }), (9, "$TEXTSTYLE"), (7, "SANS"), (0, "ENDSEC")] {
+        for (c, v) in [
+            (0, "SECTION"),
+            (2, "HEADER"),
+            (9, "$ACADVER"),
+            (1, "AC1009"),
+            (9, "$DWGCODEPAGE"),
+            (3, "ANSI_1252"),
+            (9, "$INSUNITS"),
+            (70, if self.units_mm { "4" } else { "6" }),
+            (9, "$TEXTSTYLE"),
+            (7, "SANS"),
+            (0, "ENDSEC"),
+        ] {
             g(c, v);
         }
-        for (c, v) in [(0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "LTYPE"), (70, "1"), (0, "LTYPE"), (2, "CONTINUOUS"), (70, "0"), (3, "Solid line"), (72, "65"), (73, "0"), (40, "0.0"), (0, "ENDTAB")] {
+        for (c, v) in [
+            (0, "SECTION"),
+            (2, "TABLES"),
+            (0, "TABLE"),
+            (2, "LTYPE"),
+            (70, "1"),
+            (0, "LTYPE"),
+            (2, "CONTINUOUS"),
+            (70, "0"),
+            (3, "Solid line"),
+            (72, "65"),
+            (73, "0"),
+            (40, "0.0"),
+            (0, "ENDTAB"),
+        ] {
             g(c, v);
         }
         g(0, "TABLE");
@@ -249,7 +275,15 @@ pub fn to_pdf(pages: &[(&Drawing, f64, f64)]) -> Vec<u8> {
     cm += "endcmap CMapName currentdict /CMap defineresource pop end end";
     objs.push(format!("<< /Length {} >>\nstream\n{}\nendstream", cm.len(), cm).into_bytes());
     for (i, ((_, wmm, hmm), c)) in pages.iter().zip(contents).enumerate() {
-        objs.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.2} {:.2}] /Contents {} 0 R /Resources << /Font << /F1 3 0 R >> >> >>", wmm * k, hmm * k, 9 + 2 * i).into_bytes());
+        objs.push(
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.2} {:.2}] /Contents {} 0 R /Resources << /Font << /F1 3 0 R >> >> >>",
+                wmm * k,
+                hmm * k,
+                9 + 2 * i
+            )
+            .into_bytes(),
+        );
         let z = deflate(c.as_bytes());
         let mut s = format!("<< /Length {} /Filter /FlateDecode >>\nstream\n", z.len()).into_bytes();
         s.extend_from_slice(&z);
@@ -267,7 +301,7 @@ pub fn to_pdf(pages: &[(&Drawing, f64, f64)]) -> Vec<u8> {
     let xref = out.len();
     let mut t = format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1);
     for o in offs {
-        let _ = write!(t, "{o:010} 00000 n \n");
+        let _ = writeln!(t, "{o:010} 00000 n ");
     }
     let _ = write!(t, "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n", objs.len() + 1, xref);
     out.extend_from_slice(t.as_bytes());

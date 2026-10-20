@@ -6,7 +6,15 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-pub fn html(basis: &Value, checks: &[Check], blocks: &[(String, String)], audit: &[Value], verified: &str, files: &[(String, String)], approved: bool) -> String {
+pub fn html(
+    basis: &Value,
+    checks: &[Check],
+    blocks: &[(String, String)],
+    audit: &[Value],
+    verified: &str,
+    files: &[(String, String)],
+    approved: bool,
+) -> String {
     let fails = checks.iter().filter(|c| !c.pass && c.severity == "mandatory").count();
     let adv = checks.iter().filter(|c| !c.pass && c.severity != "mandatory").count();
     let mut h = String::new();
@@ -21,8 +29,25 @@ pub fn html(basis: &Value, checks: &[Check], blocks: &[(String, String)], audit:
     h += &esc(&serde_json::to_string_pretty(basis).unwrap_or_default());
     h += "</pre><h2>2. Standards checks</h2><table><tr><th>#</th><th>Result</th><th>Item</th><th>Element</th><th>Value</th><th>Limit</th><th>Formula / lookup</th><th>Citation</th></tr>";
     for (i, c) in checks.iter().enumerate() {
-        let (cls, txt) = if c.pass { ("pass", "PASS") } else if c.severity == "mandatory" { ("fail", "FAIL") } else { ("adv", "ADVISORY") };
-        h += &format!("<tr><td>{}</td><td class={cls}>{txt}</td><td>{}</td><td>{}</td><td>{:.3} {}</td><td>{} {:.3}</td><td><code>{}</code></td><td>{}</td></tr>", i + 1, esc(&c.item), esc(&c.element), c.value, c.unit, c.kind, c.limit, esc(&c.formula), esc(&c.citation));
+        let (cls, txt) = if c.pass {
+            ("pass", "PASS")
+        } else if c.severity == "mandatory" {
+            ("fail", "FAIL")
+        } else {
+            ("adv", "ADVISORY")
+        };
+        h += &format!(
+            "<tr><td>{}</td><td class={cls}>{txt}</td><td>{}</td><td>{}</td><td>{:.3} {}</td><td>{} {:.3}</td><td><code>{}</code></td><td>{}</td></tr>",
+            i + 1,
+            esc(&c.item),
+            esc(&c.element),
+            c.value,
+            c.unit,
+            c.kind,
+            c.limit,
+            esc(&c.formula),
+            esc(&c.citation)
+        );
     }
     h += "</table>";
     for (i, (t, b)) in blocks.iter().enumerate() {
@@ -36,7 +61,15 @@ pub fn html(basis: &Value, checks: &[Check], blocks: &[(String, String)], audit:
     for e in audit {
         let inp = e["inputs"].to_string();
         let inp = if inp.len() > 300 { format!("{}…", &inp[..inp.char_indices().take_while(|(i, _)| *i < 300).last().map_or(0, |x| x.0)]) } else { inp };
-        h += &format!("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td><code>{}</code></td><td><code>{}</code></td></tr>", e["seq"], esc(e["actor"].as_str().unwrap_or("")), esc(e["tool"].as_str().unwrap_or("")), esc(&e["rules"].as_array().map(|a| a.iter().filter_map(|r| r.as_str()).collect::<Vec<_>>().join("; ")).unwrap_or_default()), esc(&inp), &e["hash"].as_str().unwrap_or("")[..16]);
+        h += &format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td><code>{}</code></td><td><code>{}</code></td></tr>",
+            e["seq"],
+            esc(e["actor"].as_str().unwrap_or("")),
+            esc(e["tool"].as_str().unwrap_or("")),
+            esc(&e["rules"].as_array().map(|a| a.iter().filter_map(|r| r.as_str()).collect::<Vec<_>>().join("; ")).unwrap_or_default()),
+            esc(&inp),
+            &e["hash"].as_str().unwrap_or("")[..16]
+        );
     }
     h += "</table><h2>6. Limits of this report</h2><ul><li>This software does not practise engineering. Only the engineer in responsible charge may approve and seal; reviewing after the fact may not satisfy responsible-charge rules (see NSPE BER guidance).</li><li>Table values were transcribed from the cited standards and must be verified against the edition in force.</li><li>Not checked: sight distance on horizontal curves, intersections, pavement structural design, structures, hydrology beyond the rational method with a fixed intensity, local agency standards.</li><li>Earthwork uses average end area without curvature correction; a composite (grid) volume is reported as a cross-check. Ground accuracy is limited by the survey/TIN.</li></ul>";
     h += "<p>Engineer review: ______________________ &nbsp; Date: __________ &nbsp; Seal: </p></body></html>";

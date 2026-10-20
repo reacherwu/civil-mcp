@@ -42,7 +42,7 @@ impl Tin {
         let mut dropped = 0;
         for c in t.triangles.chunks(3) {
             let tri = [c[0], c[1], c[2]];
-            let long = max_edge.map_or(false, |m| {
+            let long = max_edge.is_some_and(|m| {
                 (0..3).any(|k| {
                     let a = points[tri[k]];
                     let b = points[tri[(k + 1) % 3]];
