@@ -21,6 +21,7 @@ pub struct TinStats {
     pub min_z: f64,
     pub max_z: f64,
     pub area_m2: f64,
+    pub area3d_m2: f64,
     pub bbox: [f64; 4],
 }
 
@@ -54,14 +55,36 @@ impl Tin {
                 tris.push(tri)
             }
         }
+        Ok(Tin::index(points, tris, dropped, origin))
+    }
+
+    /// From explicit faces (e.g. LandXML). Degenerate faces are dropped and counted.
+    pub fn from_faces(points: &[[f64; 3]], faces: &[[usize; 3]]) -> crate::Result<(Tin, TinStats)> {
+        if points.is_empty() || faces.is_empty() {
+            return Err("surface has no points or faces".into());
+        }
+        let mut tris = Vec::new();
+        let mut dropped = 0;
+        for f in faces {
+            if f.iter().any(|&i| i >= points.len()) || tri_area(points[f[0]], points[f[1]], points[f[2]]) < 1e-12 {
+                dropped += 1;
+            } else {
+                tris.push(*f);
+            }
+        }
+        Ok(Tin::index(points, tris, dropped, [points[0][0], points[0][1]]))
+    }
+
+    fn index(points: &[[f64; 3]], tris: Vec<[usize; 3]>, dropped: usize, origin: [f64; 2]) -> (Tin, TinStats) {
         let (mut mn, mut mx) = ([f64::MAX; 3], [f64::MIN; 3]);
-        for p in points {
+        for p in tris.iter().flat_map(|t| t.iter()).map(|&i| &points[i]) {
             for k in 0..3 {
                 mn[k] = mn[k].min(p[k]);
                 mx[k] = mx[k].max(p[k]);
             }
         }
         let area: f64 = tris.iter().map(|t| tri_area(points[t[0]], points[t[1]], points[t[2]])).sum();
+        let area3d: f64 = tris.iter().map(|t| tri_area3d(points[t[0]], points[t[1]], points[t[2]])).sum();
         let cell = ((mx[0] - mn[0]) * (mx[1] - mn[1]) / tris.len().max(1) as f64).sqrt().max(1e-6) * 2.0;
         let nx = (((mx[0] - mn[0]) / cell).ceil() as usize).max(1);
         let ny = (((mx[1] - mn[1]) / cell).ceil() as usize).max(1);
@@ -86,9 +109,10 @@ impl Tin {
             min_z: mn[2],
             max_z: mx[2],
             area_m2: area,
+            area3d_m2: area3d,
             bbox: [mn[0], mn[1], mx[0], mx[1]],
         };
-        Ok((Tin { pts: points.to_vec(), tris, origin, cell, nx, ny, min: [mn[0], mn[1]], buckets }, stats))
+        (Tin { pts: points.to_vec(), tris, origin, cell, nx, ny, min: [mn[0], mn[1]], buckets }, stats)
     }
 
     /// Linear (planar-facet) interpolation; None outside the TIN.
@@ -142,6 +166,13 @@ impl Tin {
         }
         out
     }
+}
+
+pub fn tri_area3d(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
+    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let x = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    (x[0] * x[0] + x[1] * x[1] + x[2] * x[2]).sqrt() / 2.0
 }
 
 pub fn tri_area(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {

@@ -24,19 +24,22 @@ fn mcp_stdio_roundtrip() {
     let call = |rpc: &mut dyn FnMut(&str, Value) -> Value, n: &str, a: Value| rpc("tools/call", json!({"name":n,"arguments":a}))["result"].clone();
     assert_eq!(call(&mut rpc, "open_project", json!({"dir": dir}))["isError"], false);
     // agent may not set the design basis
-    let r = call(&mut rpc, "set_design_basis", json!({"actor":"agent","basis":{"project":"p","engineer_of_record":"E","standard":"JTG_D20_2017","design_speed_kmh":60.0}}));
+    let r = call(&mut rpc, "set_design_basis", json!({"actor":"agent","basis":{"project":"p","engineer_of_record":"E","standard":"JTG_D20_2017","design_speed_kmh":60.0,"e_max":0.08,"f_max":0.15}}));
     assert_eq!(r["isError"], true);
     // design tools refuse to run before the engineer sets a basis
     let r = call(&mut rpc, "create_alignment", json!({"name":"a","pis":[[0,0],[100,0]],"radii":[]}));
     assert_eq!(r["isError"], true);
-    let r = call(&mut rpc, "set_design_basis", json!({"actor":"engineer:E","basis":{"project":"p","engineer_of_record":"E","standard":"JTG_D20_2017","design_speed_kmh":60.0}}));
+    let r = call(&mut rpc, "set_design_basis", json!({"actor":"engineer:E","basis":{"project":"p","engineer_of_record":"E","standard":"JTG_D20_2017","design_speed_kmh":60.0,"e_max":0.08,"f_max":0.15}}));
     assert_eq!(r["isError"], false);
     assert_eq!(r["structuredContent"]["provenance"]["audit_seq"], 1);
     let r = call(&mut rpc, "create_alignment", json!({"name":"a","pis":[[0,0],[300,0],[300,300]],"radii":[100.0]}));
     assert_eq!(r["isError"], false);
     let r = call(&mut rpc, "check_standards", json!({}));
     // R=100 < 125 m (JTG 60 km/h limit) must fail
-    assert_eq!(r["structuredContent"]["result"]["mandatory_failures"], 1);
+    let checks = r["structuredContent"]["result"]["checks"].as_array().unwrap().clone();
+    assert!(checks.iter().any(|c| c["id"] == "H-RMIN-LIM" && c["pass"] == false));
+    // no spiral on a curve needing superelevation → JTG spiral checks fail too
+    assert!(checks.iter().any(|c| c["id"] == "H-LS-MIN" && c["pass"] == false));
     let r = call(&mut rpc, "record_review", json!({"actor":"engineer:E","decision":"approve","note":"x"}));
     assert_eq!(r["isError"], true, "approval must be refused while checks fail");
     let r = call(&mut rpc, "verify_audit_log", json!({}));
