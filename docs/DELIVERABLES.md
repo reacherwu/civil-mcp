@@ -76,7 +76,7 @@ TxDOT standard sheet sequence [1]: title, index, project layout, roadway typical
 
 ## 3. civil-mcp v5 coverage (generated from `deliverables-status.csv`, written by `generate_deliverables`)
 
-Totals: 45 implemented, 8 partial, 2 interface (licensed-specialist hand-off only), 0 gap (of 55 items). "Implemented" means the software produces the item for the preliminary / concept design stage; every item still needs review and sealing by the engineer in responsible charge. "Interface" means the software writes a data hand-off template and a deliverables checklist for a licensed specialist and does not produce the item itself.
+Totals: 52 implemented, 1 partial, 2 interface (licensed-specialist hand-off only), 0 gap (of 55 items). "Implemented" means the software produces the item for the preliminary / concept design stage; every item still needs review and sealing by the engineer in responsible charge. "Interface" means the software writes a data hand-off template and a deliverables checklist for a licensed specialist and does not produce the item itself.
 
 ### 3a. Calculations
 
@@ -89,19 +89,19 @@ Totals: 45 implemented, 8 partial, 2 interface (licensed-specialist hand-off onl
 | Lane widening on curves | implemented | AASHTO off-tracking formula or engineer table |
 | Earthwork volumes, mass haul, free haul/overhaul, borrow/waste, shrink/bulk | implemented | quantities.json, design-report.md §5, mass-haul sheet |
 | Profile optimisation for earthwork balance under standards | implemented | profile-optimisation.json |
-| Pavement thickness design | partial | US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer; mechanistic screening (Odemark-Boussinesq + AGPT02 transfer functions). Gaps: AASHTOWare ME, full CIRCLY layered-elastic analysis, AU/NZ rigid |
-| Subgrade / foundation design (CD 225, subgrade improvement) | partial | design CBR/Mr inputs and subgrade sheet; foundation design itself is a gap |
+| Pavement thickness design | implemented | US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer; mechanistic-empirical design by multilayer linear-elastic analysis (Burmister, dual wheels; verified vs Boussinesq, the published KENPAVE table and PyMastic) with AGPT02 / Asphalt Institute transfer functions and thickness stepping; AU/NZ rigid base thickness in the AGPT02 Ch. 9 structure (Westergaard + PCA relations replace the copyrighted tables: confirm with AGPT02). Limits: isotropic linear layers, no AASHTOWare ME climate/damage models, no CIRCLY load-spectrum summation |
+| Subgrade / foundation design (CD 225, subgrade improvement) | implemented | design_foundation: performance foundation by layered elastic surface modulus under a plate (E0 = 2(1-ν²)qa/w0), subgrade E from CBR (E = 17.6 CBR^0.64, verify), first layer stepped to the CD 225 class (UK) or engineer target; foundation-design.csv. Subgrade improvement (stabilisation) mix design is by the geotechnical/materials engineer |
 | Storm drainage network hydraulics with HGL/EGL | implemented | drainage-report.md, pipe profile sheets |
 | Hydrology (IFD/IDF, ARR 2019, FEH/ReFH, peak flow methods) | implemented | design_hydrology: TIN catchments (priority-flood + D8), rational (US/CA), NRCS TR-55 Type II, ARR 2019 rational-type with Bransby-Williams tc (AU/NZ); UK FEH/ReFH2 peak entered by the engineer with rational sense check. IFD tables are engineer inputs. hydrology.csv, drainage area map sheet |
 | Roadside ditch / channel lining (HEC-15 shear) | implemented | protection.json, drainage-report.md |
 | Culvert hydraulics (HDS-5) and structural design | implemented | design_culverts: HDS-5 inlet and outlet control, size selection by HW/D, freeboard, cover; culverts.csv and culvert sheet. Structural class by agency standard drawings; large culverts go to the structures hand-off |
 | Sanitary sewer design (peaking, depth ratio, velocity) | implemented | drainage-report.md |
-| Retaining wall external stability | partial | US global factors; other profiles need engineer criteria; stem flexural reinforcement (design_wall_reinforcement). Gaps: shear, crack control, footing structural design, detailing |
+| Retaining wall external stability | implemented | US global factors; other profiles need engineer criteria; wall type selection (gravity / cantilever / profile reshape / MSE external stability per GEC 11 / soil nail; BS 8006, AS 4678, CSA S6 cited); cantilever stem flexure, stem shear (LRFD simplified), crack-control spacing (LRFD 5.6.7) and footing heel/toe flexure. Limits: MSE internal/supplier design, global stability and detailing by the structures/geotechnical specialist |
 | Barrier need and length of need, clear zone | implemented | geometric hazard screening with engineer clear zone, length of need; UK: rrrap-inputs.csv for the National Highways RRRAP tool (the risk assessment is run in RRRAP) |
 | Intersection geometry, returns, sight triangles | implemented | US Case B1 / CA time gap / AU-NZ Austroads SISD / UK CD 123 y-distance (check_intersection_sight); intersection layout sheet |
-| Slope stability / geotechnical design | implemented | check_slope_stability: Bishop simplified + Spencer, critical circle search, parameters from the geotechnical report; slope-sections.csv for the geotechnical designer. Homogeneous soil only |
+| Slope stability / geotechnical design | implemented | check_slope_stability: Bishop simplified + Spencer, critical circle search, horizontal strata (multi-layer, absolute or relative to the toe), parameters from the geotechnical report; slope-sections.csv for the geotechnical designer. Limits: no sloping strata, piezometric surfaces or non-circular surfaces |
 | Subsurface (pavement) drainage | implemented | design_subsurface_drainage: Cedergren infiltration, layer capacity, t50, edge drain capacity and outlet spacing; AASHTO m by engineer |
-| Traffic capacity / LOS, signals, signing, markings, lighting | partial | concept signing and marking (no-passing zones vertical + horizontal), lighting by the lumen method. Gaps: capacity / LOS, signal design, photometric lighting design |
+| Traffic capacity / LOS, signals, signing, markings, lighting | implemented | concept signing and marking (no-passing zones vertical + horizontal), lighting by the lumen method, signal warrants (MUTCD Warrant 1 A/B/combination, TAC points, engineer tables UK/AU/NZ), Webster timing with HCM delay/LOS and ITE intergreen, link v/c and density LOS, priority-junction gap-acceptance capacity (HCM), RFC/DOS limits. Limits: concept depth; photometric lighting design and detailed signal design (HCS/Synchro/SIDRA/LINSIG) by the specialist |
 | Noise, air, environmental assessment | interface | LICENSED SPECIALIST: handoff-environmental.json + checklist by profile (specialist_handoffs); assessment not produced by this software |
 | Utilities conflicts, right-of-way / land requirements | implemented | register_utilities (utility-register.csv), land_requirements (footprint, parcel takes) |
 | Bridges and major structures | interface | LICENSED SPECIALIST: handoff-bridge-structures.json + checklist by profile; design not produced by this software |
@@ -121,14 +121,14 @@ Totals: 45 implemented, 8 partial, 2 interface (licensed-specialist hand-off onl
 | Cost estimate | implemented | cost-plan.csv structure: base, contingency, risk P50/P90, optimism bias (UK); rates blank by design (no market prices shipped) |
 | Setting-out / alignment report | implemented | setting-out.csv |
 | Checks / design review report with audit trail | implemented | review.html |
-| Environmental, constructability, utilities reports | partial | utility conflict register; environmental hand-off (licensed specialist). Gap: constructability report |
+| Environmental, constructability, utilities reports | implemented | utility conflict register; constructability.md (sequence, staging, walls by type, drainage first, risks and hold points generated from the design); environmental hand-off (licensed specialist, interface only) |
 
 ### 3c. Drawings
 
 | Item | Status | Output / note |
 |---|---|---|
 | Title sheet, sheet index, general notes and legend | implemented | sheets.pdf / sheet-NN.dxf |
-| Key plan / location plan | implemented | locality plan sheet (UTM grid, lat/long); no base mapping shipped |
+| Key plan / location plan | implemented | locality plan sheet (UTM grid, lat/long) on an offline OpenStreetMap basemap (ODbL, attributed, cached in data/basemap) |
 | Route alternatives plan | implemented | sheets.pdf |
 | Typical sections | implemented | sheets.pdf |
 | Plan and profile | implemented | sheets.pdf |
@@ -142,11 +142,11 @@ Totals: 45 implemented, 8 partial, 2 interface (licensed-specialist hand-off onl
 | Quantity summary sheet | implemented | mass haul and quantities sheet; full BoQ in boq.csv |
 | Standard details atlas (curb, gutter, barrier, trench bedding, manhole) | implemented | sheets.pdf (schematic details with the agency standard drawing / specification reference per profile; CA/AU/NZ references are engineer-to-cite) |
 | Intersection layout | implemented | intersection layout and sight distance sheet |
-| Signing, pavement marking, lighting, signals | partial | concept signing/marking and lighting sheets; signals gap |
+| Signing, pavement marking, lighting, signals | implemented | concept signing/marking and lighting sheets; signal sheet with phasing diagrams, timing and warrant tables |
 | Traffic management / staging plans | implemented | concept staging sheet |
 | Utilities, right-of-way / land plans | implemented | utility plan + register sheet, land requirement plan sheet |
-| Erosion and sediment control plan, landscaping | partial | concept ESC plan sheet (sediment fence, check dams at L = h/S, culvert protection, entrances) and slope protection areas; landscaping plan is a gap |
-| Structures (bridges, culverts, wall structural) | partial | culvert layout/section sheet, wall stem reinforcement sheet; bridges by licensed specialist (hand-off) |
+| Erosion and sediment control plan, landscaping | implemented | concept ESC plan sheet (sediment fence, check dams at L = h/S, culvert protection, entrances); landscape concept sheet (slope planting classes, street trees outside clear zone / sight triangles / poles, quantities) |
+| Structures (bridges, culverts, wall structural) | partial | culvert layout/section sheet, wall type selection sheet with typical MSE section, cantilever stem reinforcement sheet; bridges by licensed specialist (hand-off); wall structural detailing by the structures engineer |
 
 ### 3d. Remaining gaps, interfaces and partial items
 
@@ -161,14 +161,7 @@ Licensed-specialist interfaces (hand-off template + checklist only):
 
 Partial items and what is missing:
 
-- Pavement thickness design: US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer; mechanistic screening (Odemark-Boussinesq + AGPT02 transfer functions). Gaps: AASHTOWare ME, full CIRCLY layered-elastic analysis, AU/NZ rigid
-- Subgrade / foundation design (CD 225, subgrade improvement): design CBR/Mr inputs and subgrade sheet; foundation design itself is a gap
-- Retaining wall external stability: US global factors; other profiles need engineer criteria; stem flexural reinforcement (design_wall_reinforcement). Gaps: shear, crack control, footing structural design, detailing
-- Traffic capacity / LOS, signals, signing, markings, lighting: concept signing and marking (no-passing zones vertical + horizontal), lighting by the lumen method. Gaps: capacity / LOS, signal design, photometric lighting design
-- Environmental, constructability, utilities reports: utility conflict register; environmental hand-off (licensed specialist). Gap: constructability report
-- Signing, pavement marking, lighting, signals: concept signing/marking and lighting sheets; signals gap
-- Erosion and sediment control plan, landscaping: concept ESC plan sheet (sediment fence, check dams at L = h/S, culvert protection, entrances) and slope protection areas; landscaping plan is a gap
-- Structures (bridges, culverts, wall structural): culvert layout/section sheet, wall stem reinforcement sheet; bridges by licensed specialist (hand-off)
+- Structures (bridges, culverts, wall structural): culvert layout/section sheet, wall type selection sheet with typical MSE section, cantilever stem reinforcement sheet; bridges by licensed specialist (hand-off); wall structural detailing by the structures engineer
 
 ### 3e. Standards: verified vs engineer input
 
