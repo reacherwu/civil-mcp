@@ -4,6 +4,7 @@ use crate::align::Alignment;
 use crate::corridor::{Corridor, Section};
 use crate::drawing::Drawing;
 use crate::grading::Grading;
+use crate::intersect::Intersection;
 use crate::pipes::Network;
 use crate::profile::Profile;
 use crate::quantities::{MassHaul, MaterialRow};
@@ -49,10 +50,11 @@ pub struct Design<'a> {
     pub corridor: Option<&'a Corridor>,
     pub networks: &'a [Network],
     pub gradings: &'a [Grading],
+    pub intersections: &'a [Intersection],
 }
 
 fn base(d: &mut Drawing) {
-    for (l, c) in [("BORDER", 7), ("GRID", 9), ("CONTOUR-MINOR", 8), ("CONTOUR-MAJOR", 30), ("ALIGNMENT", 1), ("DAYLIGHT", 3), ("PROFILE-GROUND", 30), ("PROFILE-DESIGN", 1), ("XS-GROUND", 30), ("XS-DESIGN", 1), ("XS-DATUM", 3), ("PIPE", 5), ("STRUCTURE", 5), ("GRADING", 6), ("TEXT", 7), ("TITLE", 7), ("STAMP", 1)] {
+    for (l, c) in [("BORDER", 7), ("GRID", 9), ("CONTOUR-MINOR", 8), ("CONTOUR-MAJOR", 30), ("ALIGNMENT", 1), ("DAYLIGHT", 3), ("PROFILE-GROUND", 30), ("PROFILE-DESIGN", 1), ("XS-GROUND", 30), ("XS-DESIGN", 1), ("XS-DATUM", 3), ("PIPE", 5), ("STRUCTURE", 5), ("GRADING", 6), ("WALL", 4), ("CURB", 2), ("INTERSECTION", 6), ("SIGHT", 140), ("HGL", 4), ("EGL", 1), ("TEXT", 7), ("TITLE", 7), ("STAMP", 1)] {
         d.layer(l, c);
     }
     d.rect("BORDER", 10.0, 10.0, SHEET_W - 10.0, SHEET_H - 10.0);
@@ -157,9 +159,12 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         };
         d.poly("DAYLIGHT", c.sections.iter().map(|s| edge(s, true, s.left.daylight)).collect());
         d.poly("DAYLIGHT", c.sections.iter().map(|s| edge(s, false, s.right.daylight)).collect());
-        let pw = c.assembly.lane_width();
-        d.poly("TEXT", c.sections.iter().map(|s| edge(s, true, pw)).collect());
-        d.poly("TEXT", c.sections.iter().map(|s| edge(s, false, pw)).collect());
+        d.poly("CURB", c.sections.iter().map(|s| edge(s, true, s.left.paved_width)).collect());
+        d.poly("CURB", c.sections.iter().map(|s| edge(s, false, s.right.paved_width)).collect());
+        wall_runs(&mut d, c, &tp);
+    }
+    for x in ds.intersections {
+        plan_intersection(&mut d, x, &tp, true);
     }
     for g in ds.gradings {
         let mut f: Vec<[f64; 2]> = g.footprint.iter().map(|p| tp(p[0], p[1])).collect();
@@ -260,6 +265,151 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
     d
 }
 
+/// Wall face polylines (continuous runs of sections that carry a wall on one side).
+fn wall_runs(d: &mut Drawing, c: &Corridor, tp: &dyn Fn(f64, f64) -> [f64; 2]) {
+    for left in [true, false] {
+        let mut run: Vec<[f64; 2]> = Vec::new();
+        let flush = |d: &mut Drawing, run: &mut Vec<[f64; 2]>| {
+            if run.len() == 1 {
+                let p = run[0];
+                d.rect("WALL", p[0] - 0.6, p[1] - 0.6, p[0] + 0.6, p[1] + 0.6);
+            } else if run.len() > 1 {
+                d.poly("WALL", run.clone());
+            }
+            run.clear();
+        };
+        for s in &c.sections {
+            let sd = if left { &s.left } else { &s.right };
+            match &sd.wall {
+                Some(w) => {
+                    let o = if left { w.offset } else { -w.offset };
+                    run.push(tp(s.x - s.heading.sin() * o, s.y + s.heading.cos() * o));
+                }
+                None => flush(d, &mut run),
+            }
+        }
+        flush(d, &mut run);
+    }
+}
+
+fn plan_intersection(d: &mut Drawing, x: &Intersection, tp: &dyn Fn(f64, f64) -> [f64; 2], label: bool) {
+    for l in &x.legs {
+        d.line("INTERSECTION", tp(l.edge_left[0][0], l.edge_left[0][1]), tp(l.edge_left[1][0], l.edge_left[1][1]));
+        d.line("INTERSECTION", tp(l.edge_right[0][0], l.edge_right[0][1]), tp(l.edge_right[1][0], l.edge_right[1][1]));
+        d.line("ALIGNMENT", tp(l.cl[0][0], l.cl[0][1]), tp(l.cl[1][0], l.cl[1][1]));
+        for r in &l.returns {
+            d.poly("INTERSECTION", r.arc.iter().map(|p| tp(p[0], p[1])).collect());
+        }
+        for s in &l.sight {
+            let t = &s.triangle;
+            d.poly("SIGHT", vec![tp(t[0][0], t[0][1]), tp(t[1][0], t[1][1]), tp(t[2][0], t[2][1]), tp(t[0][0], t[0][1])]);
+        }
+        if label {
+            let e = l.cl[1];
+            d.text("TEXT", tp(e[0], e[1]), 2.0, &format!("{} R={}", l.name, l.returns.iter().map(|r| format!("{:.0}", r.radius)).collect::<Vec<_>>().join("/")));
+        }
+    }
+    if label {
+        let p = tp(x.point[0], x.point[1]);
+        d.text("TEXT", [p[0] + 3.0, p[1] + 3.0], 2.2, &format!("{} {} 平交 at-grade", x.name, sta_label(x.main_station)));
+    }
+}
+
+/// Pipe profile: longest upstream→outfall path per network, rim, pipe crown/invert, HGL, EGL.
+pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) -> Drawing {
+    let mut d = Drawing::default();
+    base(&mut d);
+    // longest path by pipe count, following from → to
+    let down = |id: &str| net.pipes.iter().find(|p| p.from == id);
+    let mut best: Vec<&crate::pipes::PipeResult> = vec![];
+    for s in &net.structures {
+        if net.pipes.iter().any(|p| p.to == s.0) {
+            continue;
+        }
+        let mut path = vec![];
+        let mut cur = s.0.clone();
+        while let Some(p) = down(&cur) {
+            path.push(p);
+            cur = p.to.clone();
+            if path.len() > net.pipes.len() {
+                break;
+            }
+        }
+        let len = |v: &Vec<&crate::pipes::PipeResult>| v.iter().map(|p| p.length).sum::<f64>();
+        if len(&path) > len(&best) {
+            best = path;
+        }
+    }
+    let (x0, y0, x1, y1) = (20.0, 60.0, SHEET_W - 160.0, SHEET_H - 20.0);
+    d.rect("BORDER", x0, y0, x1, y1);
+    let hyd = |id: &str| net.hydraulics.iter().find(|h| h.id == id);
+    let mut ch = vec![0.0];
+    for p in &best {
+        ch.push(ch.last().unwrap() + p.length);
+    }
+    let total = ch.last().cloned().unwrap_or(1.0).max(1.0);
+    let mut zs: Vec<f64> = vec![];
+    for p in &best {
+        zs.extend([p.invert_up, p.invert_dn, p.hgl_up, p.egl_up, p.hgl_dn]);
+        for id in [&p.from, &p.to] {
+            if let Some(h) = hyd(id) {
+                zs.extend([h.rim, h.egl]);
+            }
+        }
+    }
+    let zlo = (zs.iter().cloned().fold(f64::MAX, f64::min) - 1.0).floor();
+    let zhi = (zs.iter().cloned().fold(f64::MIN, f64::max) + 1.0).ceil();
+    let hs = (x1 - x0 - 50.0) / total;
+    let vs = (y1 - y0 - 50.0) / (zhi - zlo);
+    let tp = |c: f64, z: f64| [x0 + 35.0 + c * hs, y0 + 30.0 + (z - zlo) * vs];
+    let zstep = if zhi - zlo > 20.0 { 5.0 } else { 1.0 };
+    let mut z = zlo;
+    while z <= zhi + 1e-9 {
+        d.line("GRID", tp(0.0, z), tp(total, z));
+        d.text("TEXT", [x0 + 3.0, tp(0.0, z)[1] - 1.0], 2.0, &format!("{z:.0}"));
+        z += zstep;
+    }
+    let mut rim = vec![];
+    for (i, p) in best.iter().enumerate() {
+        let (ca, cb) = (ch[i], ch[i + 1]);
+        d.poly("PIPE", vec![tp(ca, p.invert_up), tp(cb, p.invert_dn), tp(cb, p.invert_dn + p.diameter_m), tp(ca, p.invert_up + p.diameter_m), tp(ca, p.invert_up)]);
+        d.line("HGL", tp(ca, p.hgl_up), tp(cb, p.hgl_dn));
+        d.line("EGL", tp(ca, p.egl_up), tp(cb, p.egl_dn));
+        let m = tp((ca + cb) / 2.0, p.invert_up.min(p.invert_dn));
+        d.text("PIPE", [m[0] - 12.0, m[1] - 6.0], 1.8, &format!("{} DN{:.0} i={:.2}% L={:.1}", p.id, p.diameter_m * 1000.0, p.slope * 100.0, p.length));
+        d.text("PIPE", [m[0] - 12.0, m[1] - 9.5], 1.6, &format!("Q={:.1} L/s v={:.2} m/s {}", p.q_design * 1000.0, p.v_design, p.regime));
+        for (c, id) in [(ca, &p.from), (cb, &p.to)] {
+            if let Some(h) = hyd(id) {
+                rim.push(tp(c, h.rim));
+                d.line("STRUCTURE", tp(c, h.rim), tp(c, p.invert_up.min(p.invert_dn) - 0.3));
+                d.line("HGL", [tp(c, h.hgl)[0] - 1.5, tp(c, h.hgl)[1]], [tp(c, h.hgl)[0] + 1.5, tp(c, h.hgl)[1]]);
+                if c == ca {
+                    d.text("STRUCTURE", [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} 井顶 {:.2} HGL {:.2} K={:.2}", id, h.rim, h.hgl, h.k));
+                }
+            }
+        }
+    }
+    if let Some(p) = best.last() {
+        if let Some(h) = hyd(&p.to) {
+            let c = total;
+            d.text("STRUCTURE", [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} 出口 outfall HGL {:.2}", p.to, h.hgl));
+        }
+    }
+    d.poly("PROFILE-GROUND", rim);
+    d.text("TEXT", [x0 + 4.0, y1 - 7.0], 4.0, &format!("管道纵断面 PIPE PROFILE — {}  H 1:{:.0} V 1:{:.0}", net.name, 1000.0 / hs, 1000.0 / vs));
+    d.text("TEXT", [x0 + 4.0, y1 - 13.0], 2.2, &format!("青=水力坡降线 HGL，红=能量线 EGL，棕=井顶 rim；方法 {}", net.hgl_method));
+    let mut y = y0 - 8.0;
+    for c in net.checks.iter().filter(|c| !c.pass) {
+        d.text("TEXT", [x0, y], 2.0, &format!("{} {} {} {}: {:.3} vs {} {:.3} {}", c.id, if c.severity == "mandatory" { "强制" } else { "提示 advisory" }, c.element, c.item, c.value, c.kind, c.limit, c.unit));
+        y -= 4.0;
+        if y < 14.0 {
+            break;
+        }
+    }
+    title_block(&mut d, info, &format!("管道纵断面 Pipe profile {}", net.name), page, pages);
+    d
+}
+
 /// Cross-section sheets: 4 columns × 3 rows per sheet, uniform scale.
 pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: usize) -> Vec<Drawing> {
     let per = 12;
@@ -308,6 +458,19 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
             d.poly("XS-DESIGN", fg);
             let dt: Vec<[f64; 2]> = s.right.datum.iter().rev().map(|p| tp(-p[0], p[1])).chain(s.left.datum.iter().skip(1).map(|p| tp(p[0], p[1]))).collect();
             d.poly("XS-DATUM", dt);
+            for (sg, sd) in [(1.0, &s.left), (-1.0, &s.right)] {
+                if let Some(w) = &sd.wall {
+                    // stem (face at offset, back toward road for fill / away for cut) and base slab
+                    let wd = &w.design;
+                    let back = if w.cut { 1.0 } else { -1.0 } * sg;
+                    let (o, zt, zb) = (w.offset * sg, w.top_z, w.bottom_z);
+                    let zbt = zb + wd.base_t;
+                    d.fill("WALL", vec![tp(o, zt), tp(o, zbt), tp(o + back * wd.stem_bot, zbt), tp(o + back * wd.stem_top, zt)], [0.7, 0.7, 0.75]);
+                    let (a, b) = (o - back * wd.toe, o - back * wd.toe + back * wd.base_b);
+                    d.fill("WALL", vec![tp(a, zb), tp(b, zb), tp(b, zbt), tp(a, zbt)], [0.7, 0.7, 0.75]);
+                    d.text("TEXT", [tp(o, zt)[0] - 6.0, tp(o, zt)[1] + 2.0], 1.5, &format!("挡墙 H={:.1} B={:.2}", wd.h, wd.base_b));
+                }
+            }
             d.line("GRID", tp(0.0, zlo), tp(0.0, zlo + hmax - 2.0));
             d.text("TEXT", [x0 + 4.0, y1 - 7.0], 2.5, &format!("桩号 {}", sta_label(s.station)));
             d.text("TEXT", [x0 + 4.0, y0 + 7.0], 1.8, &format!("设计 {:.2} 地面 {:.2}  挖 {:.1} m² 填 {:.1} m²", s.cl_elev, s.ground_cl, s.cut_area, s.fill_area));
@@ -421,6 +584,12 @@ pub fn model(ds: &Design, contour_interval: f64) -> Drawing {
                 [s.x - s.heading.sin() * o, s.y + s.heading.cos() * o]
             }).collect());
         }
+    }
+    if let Some(c) = ds.corridor {
+        wall_runs(&mut d, c, &|x, y| [x, y]);
+    }
+    for x in ds.intersections {
+        plan_intersection(&mut d, x, &|x, y| [x, y], false);
     }
     for n in ds.networks {
         for p in &n.pipes {

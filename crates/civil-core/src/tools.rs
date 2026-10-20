@@ -496,13 +496,19 @@ impl Session {
                 let head = self.log.as_ref().map(|l| l.head.clone()).unwrap_or_default();
                 let all = self.all_checks();
                 let info = SheetInfo { project: b.project.clone(), engineer: b.engineer_of_record.clone(), standard: format!("{:?}", b.standard), design_speed: b.design_speed_kmh, audit_head: head.clone(), checks_failed: all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(), checks_total: all.len(), approved_seq: self.approved_seq };
-                let ds = Design { tin: t, al, pr, corridor: self.corridor.as_ref(), networks: &self.networks, gradings: &self.gradings };
+                let ds = Design { tin: t, al, pr, corridor: self.corridor.as_ref(), networks: &self.networks, gradings: &self.gradings, intersections: &self.intersections };
                 let nxs = self.corridor.as_ref().map_or(0, sheet::n_xs_pages);
                 let has_q = self.mass_haul.is_some();
-                let pages = 1 + nxs + has_q as usize;
+                let npp = self.networks.len();
+                let pages = 1 + nxs + npp + has_q as usize;
                 let mut sheets = vec![sheet::plan_profile(&ds, &info, 1, pages)];
                 if let Some(c) = &self.corridor {
                     sheets.extend(sheet::cross_sections(c, &info, 2, pages));
+                }
+                for (i, n) in self.networks.iter().enumerate() {
+                    sheets.push(sheet::pipe_profile(n, &info, 2 + nxs + i, pages));
+                }
+                if let Some(c) = &self.corridor {
                     if let Some(mh) = &self.mass_haul {
                         sheets.push(sheet::mass_haul_sheet(mh, &self.materials, c, &self.networks, &self.gradings, &info, pages, pages));
                     }
