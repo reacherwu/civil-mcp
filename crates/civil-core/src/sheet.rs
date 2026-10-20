@@ -54,6 +54,7 @@ pub struct Design<'a> {
 }
 
 fn base(d: &mut Drawing) {
+    d.units_mm = true;
     for (l, c) in [("BORDER", 7), ("GRID", 9), ("CONTOUR-MINOR", 8), ("CONTOUR-MAJOR", 30), ("ALIGNMENT", 1), ("DAYLIGHT", 3), ("PROFILE-GROUND", 30), ("PROFILE-DESIGN", 1), ("XS-GROUND", 30), ("XS-DESIGN", 1), ("XS-DATUM", 3), ("PIPE", 5), ("STRUCTURE", 5), ("GRADING", 6), ("WALL", 4), ("CURB", 2), ("INTERSECTION", 6), ("SIGHT", 140), ("HGL", 4), ("EGL", 1), ("TEXT", 7), ("TITLE", 7), ("STAMP", 1)] {
         d.layer(l, c);
     }
@@ -563,6 +564,7 @@ pub fn model(ds: &Design, contour_interval: f64) -> Drawing {
     let mut d = Drawing::default();
     base(&mut d);
     d.ents.clear();
+    d.units_mm = false;
     for (lv, a, b) in ds.tin.contours(contour_interval) {
         let major = ((lv / (contour_interval * 5.0)).round() * contour_interval * 5.0 - lv).abs() < 1e-6;
         d.line(if major { "CONTOUR-MAJOR" } else { "CONTOUR-MINOR" }, a, b);

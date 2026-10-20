@@ -298,6 +298,9 @@ for f in sorted(glob.glob(f"{out}/*.dxf")):
     doc, aud = recover.readfile(f)
     a = doc.audit(); dxf_err += len(a.errors) + len(aud.fixes)
     assert "CJK" in doc.styles, f
+    want = 6 if f.endswith("model.dxf") else 4  # model in metres, sheets in millimetres
+    if doc.header.get("$INSUNITS") != want:
+        dxf_err += 1; print("BAD $INSUNITS", f, doc.header.get("$INSUNITS"))
 report("DXF audit errors+fixes (all files)", dxf_err, 0, 0, "", rel=False)
 r = pypdf.PdfReader(f"{out}/sheets.pdf")
 txt = "".join(p.extract_text() for p in r.pages)

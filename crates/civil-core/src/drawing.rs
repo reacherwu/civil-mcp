@@ -18,6 +18,8 @@ pub enum Ent {
 pub struct Drawing {
     pub ents: Vec<Ent>,
     pub layers: Vec<(String, u8)>,
+    /// sheet drawings are in millimetres ($INSUNITS 4); world models in metres (6)
+    pub units_mm: bool,
 }
 
 pub fn layer_rgb(l: &str) -> [f64; 3] {
@@ -63,7 +65,7 @@ impl Drawing {
         let mut g = |c: i32, v: &str| {
             let _ = writeln!(o, "{c}\n{v}");
         };
-        for (c, v) in [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1009"), (9, "$DWGCODEPAGE"), (3, "ANSI_936"), (9, "$INSUNITS"), (70, "6"), (9, "$TEXTSTYLE"), (7, "CJK"), (0, "ENDSEC")] {
+        for (c, v) in [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1009"), (9, "$DWGCODEPAGE"), (3, "ANSI_936"), (9, "$INSUNITS"), (70, if self.units_mm { "4" } else { "6" }), (9, "$TEXTSTYLE"), (7, "CJK"), (0, "ENDSEC")] {
             g(c, v);
         }
         for (c, v) in [(0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "LTYPE"), (70, "1"), (0, "LTYPE"), (2, "CONTINUOUS"), (70, "0"), (3, "Solid line"), (72, "65"), (73, "0"), (40, "0.0"), (0, "ENDTAB")] {
