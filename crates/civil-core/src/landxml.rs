@@ -35,8 +35,42 @@ pub struct AlignmentData {
     pub profiles: Vec<ProfileInput>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct StructData {
+    pub name: String,
+    pub x: f64,
+    pub y: f64,
+    pub rim: Option<f64>,
+    pub sump: Option<f64>,
+    /// (invert elevation, flowDir "in"/"out", refPipe)
+    pub inverts: Vec<(f64, String, String)>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PipeData {
+    pub name: String,
+    pub from: String,
+    pub to: String,
+    /// metres (converted from diameterUnit)
+    pub diameter_m: Option<f64>,
+    pub reported_length: Option<f64>,
+    pub reported_slope: Option<f64>,
+    pub hgl_up: Option<f64>,
+    pub hgl_down: Option<f64>,
+    pub flow_in: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PipeNetworkData {
+    pub name: String,
+    pub net_type: String,
+    pub structs: Vec<StructData>,
+    pub pipes: Vec<PipeData>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct LandXmlData {
+    pub pipe_networks: Vec<PipeNetworkData>,
     pub application: Option<String>,
     pub points: Vec<SurveyPoint>,
     pub surfaces: Vec<SurfaceData>,
@@ -78,6 +112,41 @@ pub fn read(text: &str) -> crate::Result<LandXmlData> {
         if v.len() >= 3 {
             out.points.push(SurveyPoint { id: p.attribute("name").unwrap_or("").into(), n: v[0], e: v[1], z: v[2], desc: p.attribute("desc").unwrap_or("").into() });
         }
+    }
+    let dia_scale = match root.descendants().find(|n| n.tag_name().name() == "Metric" || n.tag_name().name() == "Imperial").and_then(|u| u.attribute("diameterUnit")) {
+        Some("millimeter") => 0.001,
+        Some("centimeter") => 0.01,
+        Some("inch") => 0.0254,
+        Some("foot") => 0.3048,
+        _ => 1.0,
+    };
+    for pn in root.descendants().filter(|n| n.tag_name().name() == "PipeNetwork") {
+        let mut structs = Vec::new();
+        let mut pipes = Vec::new();
+        for st in pn.descendants().filter(|n| n.tag_name().name() == "Struct") {
+            let c = nums(child(st, "Center").and_then(|c| c.text()).unwrap_or(""));
+            if c.len() < 2 {
+                continue;
+            }
+            let inverts = st.children().filter(|c| c.tag_name().name() == "Invert").filter_map(|i| Some((attr_f(i, "elev")?, i.attribute("flowDir").unwrap_or("").to_string(), i.attribute("refPipe").unwrap_or("").to_string()))).collect();
+            structs.push(StructData { name: st.attribute("name").unwrap_or("").into(), x: c[1], y: c[0], rim: attr_f(st, "elevRim"), sump: attr_f(st, "elevSump"), inverts });
+        }
+        for p in pn.descendants().filter(|n| n.tag_name().name() == "Pipe") {
+            let circ = child(p, "CircPipe");
+            let flow = child(p, "PipeFlow");
+            pipes.push(PipeData {
+                name: p.attribute("name").unwrap_or("").into(),
+                from: p.attribute("refStart").unwrap_or("").into(),
+                to: p.attribute("refEnd").unwrap_or("").into(),
+                diameter_m: circ.and_then(|c| attr_f(c, "diameter")).map(|d| d * dia_scale),
+                reported_length: attr_f(p, "length"),
+                reported_slope: attr_f(p, "slope"),
+                hgl_up: flow.and_then(|f| attr_f(f, "hglUp")),
+                hgl_down: flow.and_then(|f| attr_f(f, "hglDown")),
+                flow_in: flow.and_then(|f| attr_f(f, "flowIn")),
+            });
+        }
+        out.pipe_networks.push(PipeNetworkData { name: pn.attribute("name").unwrap_or("").into(), net_type: pn.attribute("pipeNetType").unwrap_or("").into(), structs, pipes });
     }
     for s in root.descendants().filter(|n| n.tag_name().name() == "Surface") {
         let Some(def) = child(s, "Definition") else { continue };
@@ -250,6 +319,7 @@ pub struct Export<'a> {
     pub surfaces: Vec<(&'a str, &'a Tin)>,
     pub alignment: Option<&'a Alignment>,
     pub profiles: Vec<&'a Profile>,
+    pub networks: Vec<&'a crate::pipes::Network>,
 }
 
 pub fn write(x: &Export) -> String {
@@ -324,6 +394,29 @@ pub fn write(x: &Export) -> String {
             let _ = writeln!(o, "        </ProfAlign>\n      </Profile>");
         }
         let _ = writeln!(o, "    </Alignment>\n  </Alignments>");
+    }
+    if !x.networks.is_empty() {
+        let _ = writeln!(o, "  <PipeNetworks>");
+        for n in &x.networks {
+            let ty = if n.pipes.iter().any(|p| p.q_avg > 0.0) { "sanitary" } else { "storm" };
+            let _ = writeln!(o, "    <PipeNetwork name=\"{}\" pipeNetType=\"{ty}\">\n      <Structs>", esc(&n.name));
+            for (id, sx, sy, rim, sump) in &n.structures {
+                let _ = writeln!(o, "        <Struct name=\"{}\" elevRim=\"{rim:.4}\" elevSump=\"{sump:.4}\">\n          <Center>{sy:.4} {sx:.4}</Center>", esc(id));
+                for p in n.pipes.iter().filter(|p| &p.to == id) {
+                    let _ = writeln!(o, "          <Invert elev=\"{:.4}\" flowDir=\"in\" refPipe=\"{}\"/>", p.invert_dn, esc(&p.id));
+                }
+                for p in n.pipes.iter().filter(|p| &p.from == id) {
+                    let _ = writeln!(o, "          <Invert elev=\"{:.4}\" flowDir=\"out\" refPipe=\"{}\"/>", p.invert_up, esc(&p.id));
+                }
+                let _ = writeln!(o, "        </Struct>");
+            }
+            let _ = writeln!(o, "      </Structs>\n      <Pipes>");
+            for p in &n.pipes {
+                let _ = writeln!(o, "        <Pipe name=\"{}\" refStart=\"{}\" refEnd=\"{}\" length=\"{:.4}\" slope=\"{:.6}\">\n          <CircPipe diameter=\"{:.4}\"/>\n          <PipeFlow flowIn=\"{:.6}\" hglUp=\"{:.4}\" hglDown=\"{:.4}\"/>\n        </Pipe>", esc(&p.id), esc(&p.from), esc(&p.to), p.length, p.slope, p.diameter_m, p.q_design, p.hgl_up, p.hgl_dn);
+            }
+            let _ = writeln!(o, "      </Pipes>\n    </PipeNetwork>");
+        }
+        let _ = writeln!(o, "  </PipeNetworks>");
     }
     let _ = writeln!(o, "</LandXML>");
     o

@@ -17,5 +17,7 @@ pub mod sheet;
 pub mod standards;
 pub mod tin;
 pub mod tools;
+pub mod walls;
+pub mod widening;
 
 pub type Result<T> = std::result::Result<T, String>;

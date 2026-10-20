@@ -34,7 +34,7 @@ pub struct Session {
     pub corridor_datum: Option<Tin>,
     pub composite: Option<(f64, f64, usize, f64)>,
     pub gradings: Vec<Grading>,
-    pub network: Option<Network>,
+    pub networks: Vec<Network>,
     pub mass_haul: Option<MassHaul>,
     pub materials: Vec<MaterialRow>,
     pub files: Vec<(String, String)>,
@@ -105,7 +105,7 @@ impl Session {
     }
     pub fn all_checks(&self) -> Vec<Check> {
         let mut c = self.checks.clone();
-        if let Some(n) = &self.network {
+        for n in &self.networks {
             c.extend(n.checks.iter().cloned());
         }
         for g in &self.gradings {
@@ -231,7 +231,7 @@ impl Session {
                 if let Some(t) = &self.corridor_fg {
                     surfaces.push(("Corridor FG", t));
                 }
-                let xml = landxml::write(&landxml::Export { points: &self.points, surfaces, alignment: self.alignment.as_ref(), profiles: self.profile.iter().collect() });
+                let xml = landxml::write(&landxml::Export { points: &self.points, surfaces, alignment: self.alignment.as_ref(), profiles: self.profile.iter().collect(), networks: self.networks.iter().collect() });
                 let h = self.write(&file, xml.as_bytes())?;
                 let out = json!({"file": file, "sha256": h, "bytes": xml.len()});
                 let prov = self.log("agent", name, a, &out, &["LandXML 1.2 schema".into()])?;
@@ -409,12 +409,14 @@ impl Session {
                     Some(fg) => pipes::design(&ni, fg, Some(t))?,
                     None => pipes::design(&ni, t, None)?,
                 };
-                let h = self.write("network.json", serde_json::to_string(&n).unwrap().as_bytes())?;
+                let fname = format!("network-{}.json", ni.criteria.system);
+                let h = self.write(&fname, serde_json::to_string(&n).unwrap().as_bytes())?;
                 let fails = n.checks.iter().filter(|c| !c.pass && c.severity == "mandatory").count();
-                let out = json!({"pipes": n.pipes, "structures": n.structures, "checks": n.checks.len(), "mandatory_failures": fails, "detail_sha256": h});
+                let out = json!({"pipes": n.pipes, "structures": n.structures, "hydraulics": n.hydraulics, "checks": n.checks.len(), "mandatory_failures": fails, "file": fname, "detail_sha256": h});
                 let rules: Vec<String> = n.checks.iter().map(|c| c.citation.clone()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
                 let prov = self.log("agent", name, a, &json!({"pipes": n.pipes.len(), "mandatory_failures": fails}), &rules)?;
-                self.network = Some(n);
+                self.networks.retain(|x| x.name != n.name);
+                self.networks.push(n);
                 Ok(json!({"result": out, "provenance": prov}))
             }
             "compute_quantities" => {
@@ -438,7 +440,7 @@ impl Session {
                 let head = self.log.as_ref().map(|l| l.head.clone()).unwrap_or_default();
                 let all = self.all_checks();
                 let info = SheetInfo { project: b.project.clone(), engineer: b.engineer_of_record.clone(), standard: format!("{:?}", b.standard), design_speed: b.design_speed_kmh, audit_head: head.clone(), checks_failed: all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(), checks_total: all.len(), approved_seq: self.approved_seq };
-                let ds = Design { tin: t, al, pr, corridor: self.corridor.as_ref(), network: self.network.as_ref(), gradings: &self.gradings };
+                let ds = Design { tin: t, al, pr, corridor: self.corridor.as_ref(), networks: &self.networks, gradings: &self.gradings };
                 let nxs = self.corridor.as_ref().map_or(0, sheet::n_xs_pages);
                 let has_q = self.mass_haul.is_some();
                 let pages = 1 + nxs + has_q as usize;
@@ -446,7 +448,7 @@ impl Session {
                 if let Some(c) = &self.corridor {
                     sheets.extend(sheet::cross_sections(c, &info, 2, pages));
                     if let Some(mh) = &self.mass_haul {
-                        sheets.push(sheet::mass_haul_sheet(mh, &self.materials, c, self.network.as_ref(), &self.gradings, &info, pages, pages));
+                        sheets.push(sheet::mass_haul_sheet(mh, &self.materials, c, &self.networks, &self.gradings, &info, pages, pages));
                     }
                 }
                 let model = sheet::model(&ds, 1.0).to_dxf();
@@ -497,12 +499,12 @@ impl Session {
                 for g in &self.gradings {
                     blocks.push((format!("Grading {}", g.name), format!("<p>Cut {:.1} m³, fill {:.1} m³ ({} m composite grid). Warnings: {}</p>", g.cut_m3, g.fill_m3, g.cell_m, g.warnings.len())));
                 }
-                if let Some(n) = &self.network {
-                    let mut h = String::from("<table><tr><th>Pipe</th><th>From→To</th><th>L m</th><th>D m</th><th>S %</th><th>Inv up/dn</th><th>Q design m³/s</th><th>Q full</th><th>V full m/s</th><th>h/D</th><th>cover min m</th></tr>");
+                for n in &self.networks {
+                    let mut h = String::from("<table><tr><th>Pipe</th><th>From→To</th><th>L m</th><th>D m</th><th>S %</th><th>Inv up/dn</th><th>Q design m³/s</th><th>Q full</th><th>V full m/s</th><th>h/D</th><th>cover min m</th><th>HGL up/dn</th><th>regime</th></tr>");
                     for p in &n.pipes {
-                        h += &format!("<tr><td>{}</td><td>{}→{}</td><td>{:.1}</td><td>{:.3}</td><td>{:.3}</td><td>{:.3}/{:.3}</td><td>{:.4}</td><td>{:.4}</td><td>{:.2}</td><td>{:.3}</td><td>{:.2}</td></tr>", p.id, p.from, p.to, p.length, p.diameter_m, p.slope * 100.0, p.invert_up, p.invert_dn, p.q_design, p.q_full, p.v_full, p.depth_ratio, p.cover_up.min(p.cover_dn));
+                        h += &format!("<tr><td>{}</td><td>{}→{}</td><td>{:.1}</td><td>{:.3}</td><td>{:.3}</td><td>{:.3}/{:.3}</td><td>{:.4}</td><td>{:.4}</td><td>{:.2}</td><td>{:.3}</td><td>{:.2}</td><td>{:.3}/{:.3}</td><td>{}</td></tr>", p.id, p.from, p.to, p.length, p.diameter_m, p.slope * 100.0, p.invert_up, p.invert_dn, p.q_design, p.q_full, p.v_full, p.depth_ratio, p.cover_up.min(p.cover_dn), p.hgl_up, p.hgl_dn, p.regime);
                     }
-                    blocks.push(("Pipe network 管网".to_string(), h + "</table>"));
+                    blocks.push((format!("Pipe network 管网: {}", n.name), h + "</table><p>" + &n.hgl_method + "</p>"));
                 }
                 let approved = self.approved_seq.is_some() && self.mandatory_failures() == 0;
                 let html = crate::report::html(&b, &self.all_checks(), &blocks, &entries, &ver, &self.files.clone(), approved);
@@ -544,7 +546,7 @@ impl Session {
                 "surface": self.tin.as_ref().map(|t| &t.1), "alignment_length": self.alignment.as_ref().map(|a| a.length),
                 "profile": self.profile.is_some(), "superelevation": self.superelevation.is_some(), "checks": self.all_checks().len(),
                 "corridor": self.corridor.as_ref().map(|c| json!({"cut_m3": c.cut_m3, "fill_m3": c.fill_m3, "sections": c.sections.len()})),
-                "gradings": self.gradings.iter().map(|g| &g.name).collect::<Vec<_>>(), "network": self.network.as_ref().map(|n| n.pipes.len()),
+                "gradings": self.gradings.iter().map(|g| &g.name).collect::<Vec<_>>(), "networks": self.networks.iter().map(|n| (&n.name, n.pipes.len())).collect::<Vec<_>>(),
                 "approved_seq": self.approved_seq, "files": self.files}})),
             _ => Err(format!("unknown tool {name}")),
         }

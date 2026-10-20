@@ -26,6 +26,15 @@ pub struct PipeCriteria {
     /// Rainfall intensity for the rational method (mm/h), engineer-set; storm only.
     #[serde(default)]
     pub intensity_mm_h: Option<f64>,
+    /// Water level at the outfall (m); HGL starts at max(tailwater, invert + (dc + D)/2).
+    #[serde(default)]
+    pub tailwater_m: Option<f64>,
+    /// Required freeboard between structure HGL and rim (m).
+    #[serde(default = "d_fb")]
+    pub freeboard_m: f64,
+}
+fn d_fb() -> f64 {
+    0.3
 }
 fn d_drop() -> f64 {
     0.03
@@ -47,6 +56,11 @@ pub struct Structure {
     /// Sanitary/base inflow at this structure (m³/s).
     #[serde(default)]
     pub inflow_m3s: f64,
+    /// Sanitary: population served at this structure and per-capita flow (L/person/day).
+    #[serde(default)]
+    pub population: f64,
+    #[serde(default)]
+    pub per_capita_lpd: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +104,26 @@ pub struct PipeResult {
     pub v_design: f64,
     pub cover_up: f64,
     pub cover_dn: f64,
+    /// Sanitary only: average dry-weather flow (m³/s) and GB 50014 peaking factor Kz.
+    pub q_avg: f64,
+    pub kz: f64,
+    pub hgl_up: f64,
+    pub hgl_dn: f64,
+    pub egl_up: f64,
+    pub egl_dn: f64,
+    /// "full" (pressurised / surcharged) or "partial" (normal depth governs)
+    pub regime: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StructHydraulics {
+    pub id: String,
+    pub rim: f64,
+    pub hgl: f64,
+    pub egl: f64,
+    pub k: f64,
+    pub deflection_deg: Option<f64>,
+    pub loss_m: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,6 +132,67 @@ pub struct Network {
     pub structures: Vec<(String, f64, f64, f64, f64)>, // id, x, y, rim, sump invert
     pub pipes: Vec<PipeResult>,
     pub checks: Vec<Check>,
+    pub hydraulics: Vec<StructHydraulics>,
+    pub hgl_method: String,
+}
+
+pub const G: f64 = 9.80665;
+
+/// GB 50014-2021 综合生活污水量总变化系数 Kz vs average flow (L/s), linear between rows.
+pub fn gb_kz(q_avg_ls: f64) -> f64 {
+    let t = [(5.0, 2.7), (15.0, 2.4), (40.0, 2.1), (70.0, 2.0), (100.0, 1.9), (200.0, 1.8), (500.0, 1.6), (1000.0, 1.5)];
+    if q_avg_ls <= t[0].0 {
+        return t[0].1;
+    }
+    for w in t.windows(2) {
+        if q_avg_ls <= w[1].0 {
+            return w[0].1 + (w[1].1 - w[0].1) * (q_avg_ls - w[0].0) / (w[1].0 - w[0].0);
+        }
+    }
+    1.5
+}
+
+/// HEC-22 approximate method, manhole loss coefficient vs deflection angle
+/// (straight 0.15, 22.5° 0.45, 45° 0.75, 60° 0.85, 90° 1.00), linear between rows.
+pub fn hec22_k(deflection_deg: f64) -> f64 {
+    let t = [(0.0, 0.15), (22.5, 0.45), (45.0, 0.75), (60.0, 0.85), (90.0, 1.0)];
+    let a = deflection_deg.abs().min(90.0);
+    for w in t.windows(2) {
+        if a <= w[1].0 {
+            return w[0].1 + (w[1].1 - w[0].1) * (a - w[0].0) / (w[1].0 - w[0].0);
+        }
+    }
+    1.0
+}
+
+/// Flow area and top width at depth ratio y.
+fn seg(d: f64, y: f64) -> (f64, f64) {
+    let th = 2.0 * (1.0 - 2.0 * y).acos();
+    (d * d / 8.0 * (th - th.sin()), d * (th / 2.0).sin())
+}
+
+/// Critical depth ratio in a circular pipe: Q²/g = A³/T (bisection).
+pub fn critical_depth(d: f64, q: f64) -> f64 {
+    if q <= 0.0 {
+        return 0.0;
+    }
+    let (mut lo, mut hi) = (1e-6, 0.999);
+    for _ in 0..80 {
+        let m = (lo + hi) / 2.0;
+        let (a, t) = seg(d, m);
+        if a * a * a / t < q * q / G {
+            lo = m
+        } else {
+            hi = m
+        }
+    }
+    (lo + hi) / 2.0
+}
+
+/// Full-flow friction slope from Manning: Sf = (Q·n / (A·R^(2/3)))².
+pub fn friction_slope_full(d: f64, n: f64, q: f64) -> f64 {
+    let a = std::f64::consts::PI * d * d / 4.0;
+    (q * n / (a * (d / 4.0).powf(2.0 / 3.0))).powi(2)
 }
 
 /// Full-pipe Manning flow (SI): Q = (1/n)·A·R^(2/3)·S^(1/2).
@@ -205,9 +300,11 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
     // flows (accumulate downstream)
     let mut ca = vec![0.0; ns];
     let mut base = vec![0.0; ns];
+    let mut avg = vec![0.0; ns];
     for i in 0..ns {
         ca[i] = input.structures[i].c * input.structures[i].area_ha;
         base[i] = input.structures[i].inflow_m3s;
+        avg[i] = input.structures[i].population * input.structures[i].per_capita_lpd / 1000.0 / 86400.0;
     }
     let storm = cr.system == "storm";
     if storm && cr.intensity_mm_h.is_none() && ca.iter().any(|v| *v > 0.0) {
@@ -222,9 +319,12 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
         let j = idx(&p.to)?;
         let (s0, s1) = (&input.structures[i], &input.structures[j]);
         let len = ((s1.x - s0.x).powi(2) + (s1.y - s0.y).powi(2)).sqrt();
-        let q = ca[i] * cr.intensity_mm_h.unwrap_or(0.0) / 360.0 + base[i];
+        let kz = if avg[i] > 0.0 { gb_kz(avg[i] * 1000.0) } else { 0.0 };
+        let q = ca[i] * cr.intensity_mm_h.unwrap_or(0.0) / 360.0 + base[i] + kz * avg[i];
+        let q_avg = avg[i];
         ca[j] += ca[i];
         base[j] += base[i];
+        avg[j] += avg[i];
         let inv_up = (rim[i] - cr.min_cover_m - p.diameter_m).min(lowest_in[i] - cr.structure_drop_m);
         let inv_dn = (inv_up - cr.min_slope * len).min(rim[j] - cr.min_cover_m - p.diameter_m);
         let mut inv_up = inv_up;
@@ -238,7 +338,7 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
         let (qf, vf) = manning_full(p.diameter_m, p.n, slope);
         let y = depth_for(p.diameter_m, p.n, slope, q);
         let vd = y.map_or(vf, |y| manning_partial(p.diameter_m, p.n, slope, y).1);
-        let r = PipeResult { id: p.id.clone(), from: p.from.clone(), to: p.to.clone(), length: len, diameter_m: p.diameter_m, material: p.material.clone(), invert_up: inv_up, invert_dn: inv_dn, slope, q_design: q, q_full: qf, v_full: vf, depth_ratio: y.unwrap_or(f64::INFINITY), v_design: vd, cover_up: rim[i] - inv_up - p.diameter_m, cover_dn: rim[j] - inv_dn - p.diameter_m };
+        let r = PipeResult { id: p.id.clone(), from: p.from.clone(), to: p.to.clone(), length: len, diameter_m: p.diameter_m, material: p.material.clone(), invert_up: inv_up, invert_dn: inv_dn, slope, q_design: q, q_full: qf, v_full: vf, depth_ratio: y.unwrap_or(f64::INFINITY), v_design: vd, cover_up: rim[i] - inv_up - p.diameter_m, cover_dn: rim[j] - inv_dn - p.diameter_m, q_avg, kz, hgl_up: f64::NAN, hgl_dn: f64::NAN, egl_up: f64::NAN, egl_dn: f64::NAN, regime: String::new() };
         let el = format!("pipe {}", p.id);
         let mf = format!("Manning (SI): Q = (1/n)·A·R^(2/3)·S^(1/2), n={}, S={:.5}, D={} m", p.n, slope, p.diameter_m);
         checks.push(chk("P-COVER", "Minimum cover", el.clone(), r.cover_up.min(r.cover_dn), cr.min_cover_m, "m", "min", "mandatory", "rim − invert − D at both ends".into(), "design basis (engineer-set)".into()));
@@ -254,6 +354,7 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
                 checks.push(chk("P-DEPTH", "污水管最大设计充满度", el.clone(), r.depth_ratio, lim, "h/D", "max", "mandatory", format!("{mf}; depth solved for Q={q:.4} m³/s"), format!("{GB}, 最大设计充满度表")));
                 checks.push(chk("P-VMIN", "污水管设计充满度下最小流速", el.clone(), vd, 0.6, "m/s", "min", "mandatory", mf.clone(), format!("{GB}, 最小设计流速")));
                 checks.push(chk("P-VMAX", "非金属管最大流速", el.clone(), vd, 5.0, "m/s", "max", "mandatory", mf.clone(), format!("{GB}, 最大设计流速")));
+                checks.push(chk("P-DMIN", "污水管最小管径", el.clone(), p.diameter_m, 0.3, "m", "min", "mandatory", "D".into(), format!("{GB}, 最小管径（污水管 300 mm）")));
             }
             (PipeStandard::Hec22, _) => {
                 checks.push(chk("P-CAP", "Full-flow capacity ≥ design flow", el.clone(), qf, q, "m³/s", "min", "mandatory", format!("{mf}; Q = C·i·A/360 (SI rational)"), format!("{HEC}, Ch.6 storm drain hydraulics")));
@@ -262,8 +363,91 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
         }
         results[k] = Some(r);
     }
+    // ---- hydraulic & energy grade lines (downstream → upstream) ----
+    let res: Vec<PipeResult> = results.iter().map(|r| r.clone().unwrap()).collect();
+    let mut results: Vec<PipeResult> = res;
+    let mut s_hgl = vec![f64::NAN; ns];
+    let mut s_egl = vec![f64::NAN; ns];
+    let mut s_k = vec![0.0; ns];
+    let mut s_def: Vec<Option<f64>> = vec![None; ns];
+    let mut s_loss = vec![0.0; ns];
+    let heading = |a: usize, b: usize| (input.structures[b].y - input.structures[a].y).atan2(input.structures[b].x - input.structures[a].x);
+    // outfalls
+    for i in 0..ns {
+        if out[i].is_none() {
+            let inc: Vec<usize> = (0..input.pipes.len()).filter(|&k| idx(&input.pipes[k].to).ok() == Some(i)).collect();
+            let mut h = cr.tailwater_m.unwrap_or(f64::NEG_INFINITY);
+            for &k in &inc {
+                let r = &results[k];
+                let dc = critical_depth(r.diameter_m, r.q_design) * r.diameter_m;
+                h = h.max(r.invert_dn + (dc + r.diameter_m) / 2.0);
+            }
+            s_hgl[i] = h;
+            s_egl[i] = h;
+        }
+    }
+    for &i in order.iter().rev() {
+        let Some(k) = out[i] else { continue };
+        let j = idx(&input.pipes[k].to)?;
+        let n = input.pipes[k].n;
+        let r = &mut results[k];
+        let (d, q) = (r.diameter_m, r.q_design);
+        let a_full = std::f64::consts::PI * d * d / 4.0;
+        let yn = if r.depth_ratio.is_finite() { r.depth_ratio * d } else { d };
+        let hdn = s_hgl[j].max(r.invert_dn + yn);
+        let full = hdn >= r.invert_dn + d - 1e-9 || !r.depth_ratio.is_finite();
+        let (hup, vup, vdn) = if full {
+            let hup = (hdn + friction_slope_full(d, n, q) * r.length).max(r.invert_up + yn);
+            (hup, q / a_full, q / a_full)
+        } else {
+            let a = seg(d, yn / d).0.max(1e-12);
+            (r.invert_up + yn, q / a, q / a)
+        };
+        r.hgl_dn = hdn;
+        r.hgl_up = hup;
+        r.egl_dn = hdn + vdn * vdn / (2.0 * G);
+        r.egl_up = hup + vup * vup / (2.0 * G);
+        r.regime = if full { "full".into() } else { "partial".into() };
+        // structure i loss (HEC-22 approximate: H = K·Vo²/2g, Vo = outlet pipe velocity)
+        let inc: Vec<usize> = (0..input.pipes.len()).filter(|&kk| idx(&input.pipes[kk].to).ok() == Some(i)).collect();
+        let main_in = inc.iter().copied().max_by(|a, b| results[*a].q_design.partial_cmp(&results[*b].q_design).unwrap());
+        let (kk, defl) = match main_in {
+            Some(m) => {
+                let a_in = heading(idx(&input.pipes[m].from)?, i);
+                let a_out = heading(i, j);
+                let mut dd = (a_out - a_in).to_degrees();
+                while dd > 180.0 {
+                    dd -= 360.0
+                }
+                while dd < -180.0 {
+                    dd += 360.0
+                }
+                (hec22_k(dd), Some(dd.abs()))
+            }
+            None => (0.5, None), // inlet / start structure, straight run
+        };
+        let r = &results[k];
+        let loss = kk * vup * vup / (2.0 * G);
+        s_k[i] = kk;
+        s_def[i] = defl;
+        s_loss[i] = loss;
+        s_egl[i] = r.egl_up + loss;
+        s_hgl[i] = s_egl[i]; // velocity head in the structure neglected
+    }
+    let mut hyd = Vec::new();
+    for i in 0..ns {
+        let id = input.structures[i].id.clone();
+        checks.push(chk("P-HGL", "Structure HGL below rim minus freeboard / 检查井水位低于井盖减安全高", format!("structure {id}"), s_hgl[i], rim[i] - cr.freeboard_m, "m", "max", "mandatory", format!("HGL_s = EGL_out + K·Vo²/2g, K={:.2}; freeboard {} m", s_k[i], cr.freeboard_m), format!("{HEC}, energy grade line evaluation (approximate method)")));
+        hyd.push(StructHydraulics { id, rim: rim[i], hgl: s_hgl[i], egl: s_egl[i], k: s_k[i], deflection_deg: s_def[i], loss_m: s_loss[i] });
+    }
+    for r in &results {
+        if r.regime == "full" {
+            checks.push(chk("P-SURCH", "Pipe flows full (surcharged)", format!("pipe {}", r.id), r.hgl_dn - r.invert_dn - r.diameter_m, 0.0, "m", "max", "advisory", "HGL at outlet − crown".into(), HEC.into()));
+        }
+    }
+    let results: Vec<Option<PipeResult>> = results.into_iter().map(Some).collect();
     let structures = input.structures.iter().enumerate().map(|(i, s)| (s.id.clone(), s.x, s.y, rim[i], if lowest_in[i].is_finite() { lowest_in[i].min(results.iter().flatten().find(|r| r.from == s.id).map_or(f64::INFINITY, |r| r.invert_up)) } else { results.iter().flatten().find(|r| r.from == s.id).map_or(rim[i] - cr.min_cover_m, |r| r.invert_up) })).collect();
-    Ok(Network { name: input.name.clone(), structures, pipes: results.into_iter().flatten().collect(), checks })
+    Ok(Network { name: input.name.clone(), structures, pipes: results.into_iter().flatten().collect(), checks, hydraulics: hyd, hgl_method: "FHWA HEC-22 approximate method: outfall HGL = max(tailwater, invert + (dc+D)/2); full flow: HGL_up = HGL_dn + Sf·L, Sf = (Qn/(A R^(2/3)))²; partial flow: normal depth; structure: E = EGL_out + K·Vo²/2g, K by deflection (0°0.15, 22.5°0.45, 45°0.75, 60°0.85, 90°1.0; start structure 0.5). Coefficients transcribed — verify against the HEC-22 edition in use.".into() })
 }
 
 #[cfg(test)]

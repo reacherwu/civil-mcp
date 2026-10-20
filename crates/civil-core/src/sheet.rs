@@ -47,7 +47,7 @@ pub struct Design<'a> {
     pub al: &'a Alignment,
     pub pr: &'a Profile,
     pub corridor: Option<&'a Corridor>,
-    pub network: Option<&'a Network>,
+    pub networks: &'a [Network],
     pub gradings: &'a [Grading],
 }
 
@@ -169,7 +169,7 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         dl.push(dl[0]);
         d.poly("GRADING", dl);
     }
-    if let Some(net) = ds.network {
+    for net in ds.networks {
         for p in &net.pipes {
             let a = net.structures.iter().find(|s| s.0 == p.from).unwrap();
             let b = net.structures.iter().find(|s| s.0 == p.to).unwrap();
@@ -324,7 +324,7 @@ pub fn n_xs_pages(c: &Corridor) -> usize {
     c.sections.len().div_ceil(12)
 }
 
-pub fn mass_haul_sheet(mh: &MassHaul, rows: &[MaterialRow], c: &Corridor, net: Option<&Network>, grads: &[Grading], info: &SheetInfo, page: usize, pages: usize) -> Drawing {
+pub fn mass_haul_sheet(mh: &MassHaul, rows: &[MaterialRow], c: &Corridor, nets: &[Network], grads: &[Grading], info: &SheetInfo, page: usize, pages: usize) -> Drawing {
     let mut d = Drawing::default();
     base(&mut d);
     let (x0, y0, x1, y1) = (20.0, 320.0, SHEET_W - 160.0, SHEET_H - 20.0);
@@ -373,7 +373,7 @@ pub fn mass_haul_sheet(mh: &MassHaul, rows: &[MaterialRow], c: &Corridor, net: O
     tot.extend(c.layer_m3.iter().map(|v| format!("{:.1}", v.1)));
     row(&mut d, &tot, y, 2.5);
     y -= 10.0;
-    if let Some(n) = net {
+    for n in nets {
         d.text("TEXT", [20.0, y], 3.0, "管道材料表 Pipe schedule");
         y -= 6.0;
         let mut by: std::collections::BTreeMap<(String, i64), f64> = Default::default();
@@ -422,7 +422,7 @@ pub fn model(ds: &Design, contour_interval: f64) -> Drawing {
             }).collect());
         }
     }
-    if let Some(n) = ds.network {
+    for n in ds.networks {
         for p in &n.pipes {
             let a = n.structures.iter().find(|s| s.0 == p.from).unwrap();
             let b = n.structures.iter().find(|s| s.0 == p.to).unwrap();
