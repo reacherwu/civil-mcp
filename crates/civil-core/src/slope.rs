@@ -301,7 +301,10 @@ pub fn critical(p: &[[f64; 2]], s: &Soil, toe_x: f64, crest_x: f64) -> Option<Ci
         }
     }
     if let Some(c) = best.as_mut() {
-        let (sl, _, _) = slices(p, s, c.xc, c.zc, c.r, n).unwrap();
+        // report FS on the critical circle with 150 slices (search used 30), so strata boundaries are resolved
+        let (sl, _, _) = slices(p, s, c.xc, c.zc, c.r, 150).unwrap();
+        c.fs_bishop = fs_bishop(&sl);
+        c.slices = sl.len();
         let (fsp, th) = spencer(&sl);
         c.fs_spencer = fsp;
         c.theta_deg = th.to_degrees();

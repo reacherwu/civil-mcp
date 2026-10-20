@@ -53,16 +53,23 @@ pub const TOOLS: &[&str] = &[
     "cost_plan",
     "specialist_handoffs",
     "plan_erosion_control",
+    "select_wall_types",
 ];
 
 pub fn tool_list() -> Vec<Value> {
+    let mut v = tool_list5();
+    v.extend(crate::ext6::tool_list());
+    v
+}
+
+fn tool_list5() -> Vec<Value> {
     let o = |n: &str, d: &str, req: &[&str]| json!({"name": n, "description": d, "inputSchema": {"type": "object", "properties": {}, "required": req, "additionalProperties": true}});
     vec![
         o("design_hydrology", "Peak flows at drainage crossings. Catchments are delineated on the TIN (priority-flood pit filling + D8 flow accumulation on a cell_m grid; crossings where the accumulated area at the centreline is >= min_area_ha), or given explicitly as catchments[]. Methods: rational (US/CA), NRCS TR-55 graphical peak (Type II, with p24_mm + cn), ARR 2019 rational-type with Bransby-Williams tc (AU/NZ, engineer IFD from BoM), UK: FEH/ReFH2 peak entered by the engineer (feh_peaks_m3s) with a rational sense check. Inputs: idf {label, points [[duration_min, intensity_mm_h]], source}, c, cn, p24_mm, rain_type, method, cell_m, min_area_ha.", &["idf"]),
         o("design_culverts", "FHWA HDS-5 culvert design at every fill crossing from design_hydrology: inlet control (unsubmerged form 1 / submerged) and outlet control (full-flow energy); smallest diameter from sizes_m meeting headwater <= min(hw_d_max*D, embankment - freeboard) and minimum cover. Inputs: inlet (concrete_square_headwall|concrete_groove_headwall|concrete_groove_projecting|cmp_headwall|cmp_mitered|cmp_projecting), n, sizes_m, hw_d_max, freeboard_m, min_cover_m, v_out_max_ms, tailwater_m, source.", &["inlet", "n", "sizes_m", "hw_d_max", "freeboard_m", "min_cover_m"]),
         o("check_slope_stability", "Bishop simplified and Spencer limit equilibrium on circular slip surfaces for the highest cut and fill slopes (or stations[]). Soil parameters from the geotechnical report: soil {c_kpa, phi_deg, gamma_knm3, ru, source}, geotech_report_ref; fs_min is the engineer/agency criterion. Writes slope-sections.csv for the geotechnical designer.", &["soil", "fs_min", "geotech_report_ref"]),
         o("design_subsurface_drainage", "Pavement subsurface drainage (FHWA-NHI-99-028 / AASHTO 1993 2.4): Cedergren crack infiltration, drainage-layer Darcy capacity, t50 and drainage quality, edge-drain capacity and outlet spacing. Inputs: crack_spacing_m, k_layer_m_day, layer_thickness_m, porosity, pipe_d_m, max_outlet_spacing_m, m_coefficient, t50_target_h, source.", &["crack_spacing_m", "k_layer_m_day", "layer_thickness_m", "porosity", "pipe_d_m", "max_outlet_spacing_m", "m_coefficient"]),
-        o("check_pavement_mechanistic", "Screening mechanistic check (AGPT02 transfer functions, Odemark equivalent thickness + Boussinesq strains). Verify in CIRCLY / AASHTOWare ME. Inputs: layers [{name,h_m,e_mpa}], subgrade_e_mpa, vb_pct, rf, design_esa, tyre_kpa, wheel_kn, nu.", &["layers", "subgrade_e_mpa", "vb_pct", "rf", "design_esa"]),
+        o("check_pavement_mechanistic", "Mechanistic-empirical flexible pavement design: multilayer linear-elastic analysis (Burmister, dual wheels) + AGPT02 or Asphalt Institute transfer functions; optional asphalt thickness stepping (design_ac_max_m). Verify in CIRCLY / AASHTOWare ME. Inputs: layers [{name,h_m,e_mpa}], subgrade_e_mpa, vb_pct, rf, design_esa, criteria, dual_spacing_m, tyre_kpa, wheel_kn, nu, nu_subgrade.", &["layers", "subgrade_e_mpa", "vb_pct", "rf", "design_esa"]),
         o("design_wall_reinforcement", "Cantilever wall stem flexural reinforcement for every corridor wall. Inputs: fc_mpa, fy_mpa, phi, load_factor, cover_m, bar_d_mm, min_ratio, gamma_knm3, phi_soil_deg, surcharge_kpa, source. Shear, cracking, footing and detailing remain with the structural engineer.", &["fc_mpa", "fy_mpa", "load_factor", "cover_m", "bar_d_mm", "min_ratio", "gamma_knm3", "phi_soil_deg"]),
         o("design_marking_signing", "Concept marking and signing: no-passing zones from passing sight distance on the profile (US MUTCD Table 3B-1; other profiles need psd_m), line colours by manual, curve warning signs below curve_warning_r_m. Inputs: psd_m, eye_h_m, min_zone_m, curve_warning_r_m.", &["eye_h_m", "min_zone_m", "curve_warning_r_m"]),
         o("design_lighting", "Concept lighting layout by the lumen method, spacing capped at max_spacing_to_height*H. Inputs: lumens, cu, llf, e_avg_lux, mounting_h_m, arrangement, max_spacing_to_height, source.", &["lumens", "cu", "llf", "e_avg_lux", "mounting_h_m", "max_spacing_to_height"]),
@@ -78,16 +85,16 @@ pub fn tool_list() -> Vec<Value> {
     ]
 }
 
-fn f(a: &Value, k: &str) -> Option<f64> {
+pub(crate) fn f(a: &Value, k: &str) -> Option<f64> {
     a.get(k).and_then(|x| x.as_f64())
 }
-fn req(a: &Value, k: &str) -> crate::Result<f64> {
+pub(crate) fn req(a: &Value, k: &str) -> crate::Result<f64> {
     f(a, k).ok_or_else(|| format!("{k} required (engineer input)"))
 }
-fn hdr(v: &[&str]) -> Vec<String> {
+pub(crate) fn hdr(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
-fn csvq(s: &str) -> String {
+pub(crate) fn csvq(s: &str) -> String {
     if s.contains(',') || s.contains('"') {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
@@ -398,7 +405,7 @@ pub fn render(sh: &ExtSheet, info: &SheetInfo, page: usize, pages: usize) -> Dra
     d
 }
 
-fn cl_poly(al: &crate::align::Alignment, step: f64) -> Vec<[f64; 2]> {
+pub(crate) fn cl_poly(al: &crate::align::Alignment, step: f64) -> Vec<[f64; 2]> {
     let mut v = vec![];
     let mut s = al.start_station();
     while s < al.end_station() {
@@ -413,7 +420,7 @@ fn cl_poly(al: &crate::align::Alignment, step: f64) -> Vec<[f64; 2]> {
     v
 }
 
-fn cl_panel(s: &Session, title: &str) -> Panel {
+pub(crate) fn cl_panel(s: &Session, title: &str) -> Panel {
     let mut p = Panel { title: title.into(), equal: true, ..Default::default() };
     if let Some(al) = &s.alignment {
         p.polys.push(("ALIGNMENT".into(), cl_poly(al, 5.0)));
@@ -441,11 +448,11 @@ fn cl_panel(s: &Session, title: &str) -> Panel {
     p
 }
 
-fn nearest_section(c: &crate::corridor::Corridor, st: f64) -> &crate::corridor::Section {
+pub(crate) fn nearest_section(c: &crate::corridor::Corridor, st: f64) -> &crate::corridor::Section {
     c.sections.iter().min_by(|a, b| (a.station - st).abs().partial_cmp(&(b.station - st).abs()).unwrap()).unwrap()
 }
 
-fn zs_at(p: &[[f64; 2]], x: f64) -> f64 {
+pub(crate) fn zs_at(p: &[[f64; 2]], x: f64) -> f64 {
     for w in p.windows(2) {
         if x >= w[0][0] && x <= w[1][0] {
             let t = (x - w[0][0]) / (w[1][0] - w[0][0]).max(1e-9);
@@ -479,8 +486,8 @@ pub fn sight_dir(pr: &crate::profile::Profile, st: f64, eh: f64, oh: f64, dir: f
     }
 }
 
-type Files = Vec<(String, Vec<u8>)>;
-type B = crate::standards::DesignBasis;
+pub(crate) type Files = Vec<(String, Vec<u8>)>;
+pub(crate) type B = crate::standards::DesignBasis;
 
 impl Session {
     pub fn ext_checks(&self) -> Vec<Check> {
@@ -494,6 +501,7 @@ impl Session {
             "design_culverts",
             "check_slope_stability",
             "design_subsurface_drainage",
+            "select_wall_types",
             "design_wall_reinforcement",
             "design_marking_signing",
             "design_lighting",
@@ -521,7 +529,7 @@ impl Session {
             "design_culverts" => self.x_culverts(a, &b, &mut o, &mut files)?,
             "check_slope_stability" => self.x_slope(a, &b, &mut o, &mut files)?,
             "design_subsurface_drainage" => self.x_subsurface(a, &b, &mut o)?,
-            "check_pavement_mechanistic" => self.x_mech(a, &mut o)?,
+            "check_pavement_mechanistic" => self.x_mech(a, &mut o, &mut files)?,
             "design_wall_reinforcement" => self.x_rebar(a, &mut o, &mut files)?,
             "design_marking_signing" => self.x_marking(a, &b, &mut o, &mut files)?,
             "design_lighting" => self.x_lighting(a, &mut o, &mut files)?,
@@ -534,6 +542,7 @@ impl Session {
             "cost_plan" => self.x_cost(a, &mut o, &mut files)?,
             "specialist_handoffs" => self.x_handoffs(&b, &mut o, &mut files)?,
             "plan_erosion_control" => self.x_esc(a, &mut o, &mut files)?,
+            "select_wall_types" => self.x_walltypes(a, &b, &mut o, &mut files)?,
             _ => return Err(format!("unknown tool {name}")),
         }
         let mut fl = json!({});
@@ -904,7 +913,15 @@ impl Session {
             for (i, p) in p2.iter().enumerate() {
                 let _ = writeln!(scsv, "{st:.2},{side},{kind},{i},{:.4},{:.4}", p[0], p[1]);
             }
-            let Some(cr) = crate::slope::critical(&p2, &soil, toe, crest) else { continue };
+            // strata given relative to the toe elevation (layers_relative_to_toe) become absolute here
+            let mut soil_s = soil.clone();
+            if a["layers_relative_to_toe"].as_bool().unwrap_or(false) {
+                let zt = zs_at(&p2, toe);
+                for l in &mut soil_s.layers {
+                    l.z_top += zt;
+                }
+            }
+            let Some(cr) = crate::slope::critical(&p2, &soil_s, toe, crest) else { continue };
             o.checks.push(chk(
                 "S-FS",
                 "Slope stability factor of safety (Bishop simplified)",
@@ -937,6 +954,10 @@ impl Session {
                     ..Default::default()
                 };
                 p.polys.push(("PAVEMENT".into(), p2.clone()));
+                for l in &soil_s.layers {
+                    p.polys.push(("SUBGRADE".into(), vec![[p2[0][0], l.z_top], [p2[p2.len() - 1][0], l.z_top]]));
+                    p.labels.push(("TEXT".into(), [p2[0][0], l.z_top - 0.8], format!("{} below: c {:.0} kPa, φ {:.0}°", l.name, l.c_kpa, l.phi_deg)));
+                }
                 let arc: Vec<[f64; 2]> = (0..=60)
                     .map(|k| {
                         let x = cr.x_entry + (cr.x_exit - cr.x_entry) * k as f64 / 60.0;
@@ -948,7 +969,7 @@ impl Session {
                 p.labels.push(("SLIP".into(), [cr.xc, cr.zc], format!("centre, R {:.1} m", cr.r)));
                 panels.push(p);
             }
-            res.push(json!({"station": st, "side": side, "kind": kind, "height_m": hgt, "toe_x": toe, "crest_x": crest, "profile": p2, "circle": cr}));
+            res.push(json!({"station": st, "side": side, "kind": kind, "height_m": hgt, "toe_x": toe, "crest_x": crest, "profile": p2, "circle": cr, "soil_layers_abs": soil_s.layers}));
         }
         files.push(("slope-sections.csv".into(), scsv.into_bytes()));
         o.sheets.push(ExtSheet { title: "Slope stability - critical slip circles".into(), panels, tables: vec![(vec![24.0, 12.0, 14.0, 14.0, 20.0, 20.0, 18.0, 16.0, 18.0, 18.0, 16.0], rows)], notes: vec![format!("Soil c' {} kPa, phi' {} deg, gamma {} kN/m3, ru {} from {rref} ({}). Homogeneous soil, circular surfaces, pore pressure by ru; Bishop simplified and Spencer (constant interslice inclination). Layering, water tables, seismic and reinforcement need the geotechnical designer's analysis using slope-sections.csv.", soil.c_kpa, soil.phi_deg, soil.gamma_knm3, soil.ru, soil.source), format!("Criterion FS >= {fsmin} (engineer / agency).")] });
@@ -1038,12 +1059,12 @@ impl Session {
         Ok(())
     }
 
-    fn x_mech(&self, a: &Value, o: &mut ExtOut) -> crate::Result<()> {
+    fn x_mech(&self, a: &Value, o: &mut ExtOut, files: &mut Files) -> crate::Result<()> {
         let m: crate::mech::MechInput = serde_json::from_value(a.clone()).map_err(|e| format!("input: {e}"))?;
         let r = crate::mech::analyse(&m);
         o.checks.push(chk(
             "P-MECH-SG",
-            "Subgrade strain life >= design traffic (screening)",
+            "Subgrade strain life >= design traffic (layered elastic)",
             "pavement".into(),
             r.n_sub,
             m.design_esa,
@@ -1051,12 +1072,12 @@ impl Session {
             "min",
             "advisory",
             format!("eps_v {:.0} microstrain", r.eps_v_sub * 1e6),
-            format!("{}; verify with CIRCLY", crate::mech::AGPT02_MECH),
+            format!("{}; verify with CIRCLY / AASHTOWare ME", r.method),
         ));
         if r.eps_t_ac > 0.0 {
             o.checks.push(chk(
                 "P-MECH-AC",
-                "Asphalt fatigue life >= design traffic (screening)",
+                "Asphalt fatigue life >= design traffic (layered elastic)",
                 "pavement".into(),
                 r.n_ac,
                 m.design_esa,
@@ -1064,9 +1085,21 @@ impl Session {
                 "min",
                 "advisory",
                 format!("eps_t {:.0} microstrain", r.eps_t_ac * 1e6),
-                format!("{}; verify with CIRCLY", crate::mech::AGPT02_MECH),
+                format!("{}; verify with CIRCLY / AASHTOWare ME", r.method),
             ));
         }
+        let mut csv = format!(
+            "# layered elastic analysis, {}\n# point,x_m,eps_t_bottom_ac_microstrain,eps_v_top_subgrade_microstrain,w_subgrade_mm\n",
+            crate::lea::LEA_REF
+        );
+        for p in &r.points {
+            csv += &format!("{},{:.3},{:.2},{:.2},{:.4}\n", p.0, p.1, p.2, p.3, p.4);
+        }
+        csv += "# h_ac_m,N_subgrade,N_asphalt\n";
+        for it in &r.iterations {
+            csv += &format!("{:.3},{:.4e},{:.4e}\n", it.0, it.1, it.2);
+        }
+        files.push(("pavement-mechanistic.csv".into(), csv.into_bytes()));
         o.result = json!({"input": m, "result": r});
         Ok(())
     }
@@ -1080,6 +1113,14 @@ impl Session {
                 if let Some(w) = &sd.wall {
                     if !matches!(w.design.kind, crate::walls::WallKind::Cantilever) {
                         continue;
+                    }
+                    if let Some(sel) = self.ext.get("select_wall_types") {
+                        let keep = sel.result["choices"].as_array().into_iter().flatten().any(|x| {
+                            (x["station"].as_f64().unwrap_or(f64::NAN) - s.station).abs() < 1e-6 && x["side"] == side && x["selected"] == "cantilever"
+                        });
+                        if !keep {
+                            continue;
+                        }
                     }
                     let hs = w.design.h - w.design.base_t;
                     let (mu, d, asr, asmin, as_, sp, ok) = crate::reinforce::stem(&inp, hs, w.design.stem_bot);
@@ -1644,7 +1685,7 @@ impl Session {
     }
 }
 
-fn intersection_panel(s: &Session) -> Panel {
+pub(crate) fn intersection_panel(s: &Session) -> Panel {
     let mut p = Panel { title: "Intersection layout".into(), equal: true, ..Default::default() };
     let Some(it) = s.intersections.first() else { return p };
     let c = [it.point[0], it.point[1]];

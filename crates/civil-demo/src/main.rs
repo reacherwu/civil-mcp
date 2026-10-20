@@ -357,7 +357,8 @@ pub fn run(out: &str) -> Session {
             .collect::<Vec<_>>()
             .join("; ")
     );
-    let v = r.call("check_slope_stability", json!({"soil": {"c_kpa": 8.0, "phi_deg": 30.0, "gamma_knm3": 19.0, "ru": 0.1, "source": demo}, "fs_min": 1.3, "geotech_report_ref": "GEOTECH REPORT PLACEHOLDER (no site investigation in the demo)"}));
+    let v = r.call("check_slope_stability", json!({"soil": {"c_kpa": 8.0, "phi_deg": 30.0, "gamma_knm3": 19.0, "ru": 0.1, "source": demo,
+        "layers": [{"name": "soft clay (DEMO)", "z_top": -0.5, "c_kpa": 6.0, "phi_deg": 20.0, "gamma_knm3": 17.5}]}, "layers_relative_to_toe": true, "fs_min": 1.3, "geotech_report_ref": "GEOTECH REPORT PLACEHOLDER (no site investigation in the demo)"}));
     println!(
         "slope stability: {}",
         v["result"]["sections"]
@@ -380,12 +381,16 @@ pub fn run(out: &str) -> Session {
         v["result"]["result"]["t50_hours"].as_f64().unwrap(),
         v["result"]["result"]["outlet_spacing_m"].as_f64().unwrap()
     );
-    let v = r.call("check_pavement_mechanistic", json!({"layers": [{"name": "asphalt", "h_m": 0.1, "e_mpa": 3000.0}, {"name": "base", "h_m": 0.3, "e_mpa": 300.0}], "subgrade_e_mpa": 50.0, "vb_pct": 11.0, "rf": 1.0, "design_esa": 1.0e6}));
+    let v = r.call("check_pavement_mechanistic", json!({"layers": [{"name": "asphalt", "h_m": 0.1, "e_mpa": 3000.0}, {"name": "base", "h_m": 0.3, "e_mpa": 300.0}], "subgrade_e_mpa": 50.0, "vb_pct": 11.0, "rf": 1.0, "design_esa": 1.0e6, "criteria": "agpt02", "dual_spacing_m": 0.33, "design_ac_max_m": 0.3}));
     println!(
-        "mechanistic screening: subgrade N {:.3e}, asphalt N {:.3e}",
+        "mechanistic (layered elastic): asphalt {:.3} m, subgrade N {:.3e}, asphalt N {:.3e}",
+        v["result"]["result"]["h_ac_m"].as_f64().unwrap(),
         v["result"]["result"]["n_sub"].as_f64().unwrap(),
         v["result"]["result"]["n_ac"].as_f64().unwrap()
     );
+    // wall type selection: tall walls leave the cantilever range (FHWA GEC 11 / BS 8006 / AS 4678 / CSA S6)
+    let v = r.call("select_wall_types", json!({"cantilever_max_h_m": 8.0, "gravity_max_h_m": 3.0, "reshape_max_dz_m": 1.0, "reinforced_gamma_knm3": 20.0, "reinforced_phi_deg": 34.0, "sv_m": 0.6, "mse_bearing_kpa": 400.0, "source": demo}));
+    println!("wall types: {}", v["result"]["summary"]);
     // the agent steps the bar size (then bundles) until every wall fits; each attempt is logged
     for (bar, bundle) in [(16.0, 1.0), (20.0, 1.0), (25.0, 1.0), (32.0, 1.0), (32.0, 2.0)] {
         let v = r.call("design_wall_reinforcement", json!({"fc_mpa": 28.0, "fy_mpa": 420.0, "phi": 0.9, "load_factor": 1.5, "cover_m": 0.05, "bar_d_mm": bar, "bars_per_bundle": bundle, "min_ratio": 0.0018, "gamma_knm3": 19.0, "phi_soil_deg": 30.0, "surcharge_kpa": 10.0, "source": demo}));

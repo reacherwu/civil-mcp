@@ -139,20 +139,35 @@ for r in rcsv("culverts.csv"):
 # ---------- S. slope stability: Bishop (200 slices) and Spencer (fsolve on F, theta) re-coded ----------
 SA = last("check_slope_stability")
 soil = SA["args"]["soil"]; c_, ph, gm, ru = soil["c_kpa"], math.radians(soil["phi_deg"]), soil["gamma_knm3"], soil.get("ru", 0.0)
+LAY = []  # absolute strata of the current section: (z_top, c, phi_rad, gamma)
+def mat(z):
+    """material at elevation z: stratum with the lowest top above z, else the upper soil"""
+    best = None
+    for l in LAY:
+        if z <= l[0] and (best is None or l[0] < best[0]): best = l
+    return (c_, ph, gm) if best is None else best[1:]
+def colw(zb, zt):
+    """column weight by sub-stepping through strata (independent of the Rust interface-cut method)"""
+    if zt <= zb: return 0.0
+    k = 400; dz = (zt - zb) / k
+    return sum(mat(zb + (i + 0.5) * dz)[2] for i in range(k)) * dz
 def slices(p, xc, zc, R, a, b, n=200):
     p = np.array(p); xs_ = a + (np.arange(n) + 0.5) * (b - a) / n; bw = (b - a) / n
     zt = np.interp(xs_, p[:, 0], p[:, 1]); zb = zc - np.sqrt(np.maximum(R * R - (xs_ - xc) ** 2, 0))
-    h = np.maximum(zt - zb, 0); al = np.arcsin(np.clip((xs_ - xc) / R, -1, 1))
-    return bw, h * bw * gm, al
+    al = np.arcsin(np.clip((xs_ - xc) / R, -1, 1))
+    W = np.array([colw(b_, t_) for b_, t_ in zip(zb, zt)]) * bw if LAY else np.maximum(zt - zb, 0) * bw * gm
+    global CS, TS
+    CS = np.array([mat(z)[0] for z in zb]); TS = np.tan(np.array([mat(z)[1] for z in zb]))
+    return bw, W, al
 def bishop(bw, W, al):
-    t = math.tan(ph); F = 1.5; u = ru * W / bw
+    t = TS; F = 1.5; u = ru * W / bw
     for _ in range(300):
-        F2 = np.sum((c_ * bw + (W - u * bw) * t) / (np.cos(al) * (1 + np.tan(al) * t / F))) / np.sum(W * np.sin(al))
+        F2 = np.sum((CS * bw + (W - u * bw) * t) / (np.cos(al) * (1 + np.tan(al) * t / F))) / np.sum(W * np.sin(al))
         if abs(F2 - F) < 1e-12: break
         F = F2
     return F
 def spencer(bw, W, al, F0):
-    t = math.tan(ph); u = ru * W / bw
+    t = TS; u = ru * W / bw; c_ = CS
     def Q(F, th):
         num = c_ * bw / np.cos(al) / F + (W * np.cos(al) - u * bw / np.cos(al)) * t / F - W * np.sin(al)
         return num / (np.cos(al - th) * (1 + np.tan(al - th) * t / F))
@@ -161,6 +176,7 @@ def spencer(bw, W, al, F0):
     return fsolve(eqs, [F0, 0.2])[0]
 rng = np.random.default_rng(1)
 for s in SA["result"]["sections"]:
+    LAY = [(l["z_top"], l["c_kpa"], math.radians(l["phi_deg"]), l["gamma_knm3"]) for l in s.get("soil_layers_abs", [])]
     cr = s["circle"]; bw, W, al = slices(s["profile"], cr["xc"], cr["zc"], cr["r"], cr["x_entry"], cr["x_exit"])
     fb = bishop(bw, W, al)
     tag = f"{s['kind']} {s['station']:.0f} {s['side']}"
@@ -199,9 +215,9 @@ def strains(zd, E):
     R = math.hypot(a0, zd); sz = p0 * (1 - zd ** 3 / R ** 3); sr = p0 / 2 * ((1 + 2 * nu) - 2 * (1 + nu) * zd / R + zd ** 3 / R ** 3)
     return (sz - 2 * nu * sr) / (E * 1000), ((1 - nu) * sr - nu * sz) / (E * 1000)
 he = f_ * sum(l["h_m"] * (l["e_mpa"] / mi["subgrade_e_mpa"]) ** (1 / 3) for l in mi["layers"])
-report("mechanistic subgrade vertical strain (microstrain)", mr["eps_v_sub"], strains(he, mi["subgrade_e_mpa"])[0] * 1e6, 1e-6)
+report("mechanistic Odemark screening subgrade strain (microstrain)", mr["odemark_eps_v"], strains(he, mi["subgrade_e_mpa"])[0] * 1e6, 1e-6)
 e2 = mi["layers"][1]["e_mpa"]; he1 = f_ * mi["layers"][0]["h_m"] * (mi["layers"][0]["e_mpa"] / e2) ** (1 / 3)
-report("mechanistic asphalt horizontal strain (microstrain)", mr["eps_t_ac"], -strains(he1, e2)[1] * 1e6, 1e-6)
+report("mechanistic Odemark screening asphalt strain (microstrain)", mr["odemark_eps_t"], -strains(he1, e2)[1] * 1e6, 1e-6)
 
 # ---------- W. wall stem flexure: equilibrium re-derived (a = As fy / 0.85 f'c b) ----------
 WA = last("design_wall_reinforcement")["args"]

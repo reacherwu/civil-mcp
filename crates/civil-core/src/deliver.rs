@@ -218,13 +218,51 @@ pub fn boq(s: &Session) -> (Vec<BoqRow>, String) {
             })
             .sum();
         add(code("FP-14 615", "SHW Series 1100", "Kerbs and footpaths"), "Sidewalk / footway", "m²", walk, "sections with sidewalk");
-        add(
-            code("FP-14 258", "SHW Series 600/1700 (structures)", "Retaining walls"),
-            "Reinforced concrete retaining wall (concrete)",
-            "m³",
-            c.wall_concrete_m3,
-            "wall proportioning per section",
-        );
+        if let Some(sel) = s.ext.get("select_wall_types") {
+            let ch = sel.result["choices"].as_array().cloned().unwrap_or_default();
+            let g = |x: &serde_json::Value, k: &str| x[k].as_f64().unwrap_or(0.0);
+            let sum =
+                |kind: &str, fq: &dyn Fn(&serde_json::Value) -> f64| ch.iter().filter(|x| x["selected"] == kind).map(|x| fq(x) * g(x, "trib_m")).sum::<f64>();
+            add(
+                code("FP-14 258", "SHW Series 600/1700 (structures)", "Retaining walls"),
+                "Reinforced concrete cantilever retaining wall (concrete)",
+                "m³",
+                sum("cantilever", &|x| g(x, "cantilever_concrete_m2")),
+                "walls selected as cantilever (select_wall_types), section area × tributary length",
+            );
+            let mse = |x: &serde_json::Value| x["mse"].clone();
+            let rf = sum("MSE", &|x| g(x, "h_m") * g(&mse(x), "l_m"));
+            if rf > 0.0 {
+                let code_mse = code("FP-14 255", "SHW Series 600 (reinforced soil, Class 6I/6J)", "Retaining walls");
+                add(code_mse.clone(), "MSE wall select reinforced fill", "m³", rf, "H × L × tributary length");
+                add(code_mse.clone(), "MSE wall facing (precast panels / blocks)", "m²", sum("MSE", &|x| g(x, "exposed_h_m")), "exposed height × length");
+                add(
+                    code_mse,
+                    "MSE soil reinforcement (geogrid / strips, supplier design)",
+                    "m²",
+                    sum("MSE", &|x| g(&mse(x), "l_m") * g(&mse(x), "layers")),
+                    "L × layers × length",
+                );
+            }
+            let nails = sum("soil nail", &|x| g(x, "nails_per_m") * g(x, "nail_l_m"));
+            if nails > 0.0 {
+                add(
+                    code("FP-14 256", "SHW Series 600 (soil nailing)", "Retaining walls"),
+                    "Soil nails (drilled, grouted)",
+                    "m",
+                    nails,
+                    "nails per m × nail length × length",
+                );
+            }
+        } else {
+            add(
+                code("FP-14 258", "SHW Series 600/1700 (structures)", "Retaining walls"),
+                "Reinforced concrete retaining wall (concrete)",
+                "m³",
+                c.wall_concrete_m3,
+                "wall proportioning per section",
+            );
+        }
     }
     for n in &s.networks {
         let mut by: std::collections::BTreeMap<String, f64> = Default::default();
