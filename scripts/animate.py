@@ -1,7 +1,7 @@
 """Render the agent's design run as a 1080p MP4 + GIF, purely from a demo output dir.
 
 Every frame is drawn from files the tools actually wrote (run-log.jsonl, design.xml,
-corridor.json, grading-*.json, network.json, quantities.json, sheets.pdf) plus the
+corridor.json, grading-*.json, network-*.json, intersection-*.json, quantities.json, sheets.pdf) plus the
 public DEM. Nothing is hand-drawn.
 
 usage: python scripts/animate.py <demo-out> <dem.npy> <x0> <y0> <px> <media-dir>
@@ -45,7 +45,9 @@ pts = np.array([[float(v) for v in c.text.split()] for c in root.iter(ns + "CgPo
 corr = json.load(open(f"{out}/corridor.json"))["corridor"]
 secs = corr["sections"]
 cl = np.array([[s["x"], s["y"]] for s in secs]); sta = np.array([s["station"] for s in secs])
-net = json.load(open(f"{out}/network.json"))
+net = json.load(open(f"{out}/network-storm.json"))
+san = json.load(open(f"{out}/network-sanitary.json"))
+X = json.load(open(f"{out}/intersection-X1.json")); X = X.get("intersection", X)
 q = json.load(open(f"{out}/quantities.json"))
 grads = [json.load(open(os.path.join(out, f))) for f in sorted(os.listdir(out)) if f.startswith("grading-")]
 subprocess.run(["pdftoppm", "-r", "110", "-png", "-f", "1", "-l", "1", f"{out}/sheets.pdf", f"{media}/sheet"], check=True)
@@ -71,24 +73,34 @@ def fmt_args(a, maxlen=150):
 
 chk1 = entry("check_standards", 0); chk2 = entry("check_standards", 1); chk3 = entry("check_standards", 2)
 p1, p2 = entry("design_pipe_network", 0), entry("design_pipe_network", 1)
+s1, s2, s3 = (entry("design_pipe_network", i) for i in (2, 3, 4))
+x0_, x1_ = entry("design_intersection", 0), entry("design_intersection", 1)
 def fails(e):
     return [f"× {c['id']} {c['element']}: {c['value']:.3g} vs limit {c['limit']:.3g} {c['unit']}" for c in e["mandatory_failures"]]
 pipe_fails = fails
-
-corr_e = entry("build_corridor"); gr_e = entry("grade")
+corr_e = entry("build_corridor"); gr_e = entry("grade"); W = corr_e["result"]["walls"]
+walls = [(s_, sd, s_[sd]["wall"]) for s_ in secs for sd in ("left", "right") if s_[sd].get("wall")]
+wmax = max(walls, key=lambda w: w[2]["design"]["h"])
+wd_ = wmax[2]["design"]
+def sec_xy(st):
+    i = int(np.argmin(np.abs(sta - st))); return cl[i]
 S = [  # (seconds, tool label, call entry, status lines, stage key)
     (3.0, "USGS 3DEP 1/3″ DEM (public domain) — Palo Alto, CA", None, ["本动画每一帧均来自 civil-mcp 实际运行输出", "Every frame is drawn from the tools' real outputs"], "dem"),
-    (3.5, "set_design_basis + load_points", entry("load_points"), [f"工程师设定: JTG D20-2017, 40 km/h, e_max 0.08, μ 0.04", f"{entry('load_points')['result']['points']} 个测量点 survey points"], "points"),
-    (3.5, "build_surface", entry("build_surface"), [f"TIN: {entry('build_surface')['result']['triangles']} triangles"], "tin"),
-    (4.0, "create_alignment (Ls = 40 m) → check_standards", entry("create_alignment", 0), [f"{chk1['result']['mandatory_failures']} mandatory failure:"] + fails(chk1) + ["→ 超高过渡段超出缓和曲线, 需加长 Ls"], "align0"),
-    (4.0, "create_alignment (Ls = 50 m) + design_superelevation", entry("create_alignment", 1), [f"L = {entry('create_alignment',1)['result']['length_m']:.2f} m", "√ SE-IN-LS curve 1, curve 2 pass"], "align"),
-    (5.0, "suggest_profile → create_profile → check_standards", entry("create_profile"), [f"√ {chk2['result']['total']} checks, {chk2['result']['mandatory_failures']} mandatory failures"], "profile"),
-    (5.0, "create_assembly → build_corridor", corr_e, [f"{corr_e['result']['sections']} sections @20 m", f"cut {corr_e['result']['cut_m3']:.0f} m³ / fill {corr_e['result']['fill_m3']:.0f} m³", f"composite-grid cross-check: {corr_e['result']['composite_check']['cut_diff_pct']:+.2f}% / {corr_e['result']['composite_check']['fill_diff_pct']:+.2f}%"], "corridor"),
-    (3.5, "grade (pad 50×30 m, 2:1 slopes)", gr_e, [f"cut {gr_e['result']['cut_m3']:.0f} m³ / fill {gr_e['result']['fill_m3']:.0f} m³"], "grading"),
-    (4.5, "design_pipe_network (attempt 1, GB 50014-2021)", p1, [f"{p1['result']['mandatory_failures']} mandatory failures:"] + pipe_fails(p1), "pipes0"),
-    (4.0, "design_pipe_network (attempt 2: upsize + 3% max slope, drop MH)", p2, ["√ Manning / velocity / capacity / cover: all pass"], "pipes"),
-    (4.0, "compute_quantities (mass haul)", entry("compute_quantities"), [f"final ordinate {q['mass_haul']['final_ordinate']:.0f} m³ (import needed)", f"balance point K0+{q['mass_haul']['balance_stations'][0]:.0f}"], "haul"),
-    (6.0, "check_standards → generate_drawings", entry("generate_drawings"), [f"√ {chk3['result']['total']} checks, 0 mandatory failures", "8 sheets PDF/DXF, 中文 OFL font embedded", "状态: 初步设计 PRELIMINARY — 待注册工程师审核"], "sheet"),
+    (3.0, "set_design_basis + load_points", entry("load_points"), [f"工程师设定: JTG D20-2017, 40 km/h, e_max 0.08, μ 0.04", f"{entry('load_points')['result']['points']} 个测量点 survey points"], "points"),
+    (3.0, "build_surface", entry("build_surface"), [f"TIN: {entry('build_surface')['result']['triangles']} triangles"], "tin"),
+    (3.5, "create_alignment (Ls = 40 m) → check_standards", entry("create_alignment", 0), [f"{chk1['result']['mandatory_failures']} mandatory failure:"] + fails(chk1) + ["→ 超高过渡段超出缓和曲线, 需加长 Ls"], "align0"),
+    (3.5, "create_alignment (Ls = 50 m) + design_superelevation", entry("create_alignment", 1), [f"L = {entry('create_alignment',1)['result']['length_m']:.2f} m", "√ SE-IN-LS curve 1, curve 2 pass"], "align"),
+    (4.0, "suggest_profile → create_profile → check_standards", entry("create_profile"), [f"√ {chk2['result']['total']} checks, {chk2['result']['mandatory_failures']} mandatory failures"], "profile"),
+    (5.0, "build_corridor: 右侧路缘石+人行道, JTG 加宽, 挡墙规则", corr_e, [f"{corr_e['result']['sections']} sections @20 m", f"cut {corr_e['result']['cut_m3']:.0f} m³ / fill {corr_e['result']['fill_m3']:.0f} m³", f"composite-grid cross-check: {corr_e['result']['composite_check']['cut_diff_pct']:+.2f}% / {corr_e['result']['composite_check']['fill_diff_pct']:+.2f}%", "加宽 widening JTG 表7.6.1: " + ", ".join(f"R{w['radius']:.0f}→{w['widening_m']} m" for w in corr_e['result']['widening'])], "corridor"),
+    (5.0, "retaining walls (slope height > 12 m → cantilever wall)", corr_e, [f"{W['sections_with_wall']} sections, L {W['length_left_m']:.1f} m left / {W['length_right_m']:.1f} m right", f"concrete {W['concrete_m3']:.0f} m³", f"max wall H {wd_['h']:.1f} m, B {wd_['base_b']:.2f} m", f"√ Ks {wd_['fs_sliding']:.2f} ≥ 1.3  Kt {wd_['fs_overturning']:.2f} ≥ 1.6", f"√ e {wd_['eccentricity']:.2f} ≤ B/6, pmax {wd_['q_max_kpa']:.0f} ≤ 1.2·250 kPa (GB 50007)"], "walls"),
+    (4.0, "design_intersection X1 @ K0+700 (T/4-leg, R 15 m)", x0_, [f"{len(x0_['mandatory_failures'])} mandatory failures:"] + fails(x0_) + ["视距三角形被挖方坡遮挡 → 工程师决定移位"], "isect0"),
+    (4.5, "design_intersection X1 @ K0+790", x1_, ["√ 0 mandatory failures", "√ I-ISD: 0.278·40·7.5 = 83.4 m clear (AASHTO §9.5.3 B1)", "√ curb returns R 15 m ≥ 12 m, approach grade ≤ 3%", f"return patch fill {sum(l['patch_fill_m3'] for l in X['legs']):.0f} m³"], "isect"),
+    (3.0, "grade (pad 50×30 m, 2:1 slopes)", gr_e, [f"cut {gr_e['result']['cut_m3']:.0f} m³ / fill {gr_e['result']['fill_m3']:.0f} m³"], "grading"),
+    (4.0, "design_pipe_network storm (attempt 1, GB 50014-2021)", p1, [f"{len(p1['mandatory_failures'])} mandatory failures:"] + pipe_fails(p1)[:5] + (["…"] if len(p1['mandatory_failures']) > 5 else []), "pipes0"),
+    (5.0, "storm attempt 2 + HEC-22 HGL/EGL", p2, ["√ capacity / velocity / cover pass", f"√ P-HGL: min freeboard {min(h['rim'] - h['hgl'] for h in net['hydraulics']):.2f} m ≥ 0.3 m", f"advisory: {sum(1 for c in net['checks'] if not c['pass'])} surcharged pipe(s)"], "pipes"),
+    (5.0, "sanitary sewer (GB 50014 Kz, 3 attempts)", s3, [f"attempt 1: {len(s1['mandatory_failures'])} failures (P-VMIN)", f"attempt 2 (min slope 1.2%): {len(s2['mandatory_failures'])} failure", "attempt 3 (S1 min slope 2%): √ 0 failures", f"Kz {min(p["kz"] for p in san["pipes"]):.2f}-{max(p['kz'] for p in san['pipes']):.2f}"], "sanitary"),
+    (3.5, "compute_quantities (mass haul)", entry("compute_quantities"), [f"final ordinate {q['mass_haul']['final_ordinate']:.0f} m³ (import needed)", f"balance point K0+{q['mass_haul']['balance_stations'][0]:.0f}"], "haul"),
+    (5.0, "check_standards → generate_drawings", entry("generate_drawings"), [f"√ {chk3['result']['total']} checks, 0 mandatory failures", f"{entry('generate_drawings')['result']['pages']} sheets PDF/DXF (incl. pipe profiles HGL/EGL)", "DXF → DWG via ODA File Converter: entity counts identical", "状态: 初步设计 PRELIMINARY — 待注册工程师审核"], "sheet"),
 ]
 order = [s[4] for s in S]
 total = sum(s[0] for s in S)
@@ -105,6 +117,7 @@ def draw(fi):
     stage = order.index(s[4])
     fig = plt.figure(figsize=(19.2, 10.8), dpi=100)
     fig.patch.set_facecolor("#111418")
+    past = lambda k: stage >= order.index(k)
     if s[4] == "sheet":
         ax = fig.add_axes([0.01, 0.02, 0.62, 0.96]); ax.imshow(sheet); ax.axis("off")
     else:
@@ -112,19 +125,27 @@ def draw(fi):
         ax.imshow(hs, extent=ext, cmap="gray", vmin=0.0, vmax=1.0, interpolation="bicubic")
         ax.imshow(dem, extent=ext, cmap="terrain", alpha=0.25, interpolation="bicubic")
         ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2] - 30, ext[3]); ax.set_facecolor("#111418"); ax.axis("off")
-        if stage >= 1:
+        zoom = None
+        if s[4] == "walls": zoom = (wmax[0]["x"], wmax[0]["y"], 140)
+        if s[4] == "isect0": zoom = (*sec_xy(700.0), 110)
+        if s[4] == "isect": zoom = (X["point"][0], X["point"][1], 110)
+        if zoom:
+            k = min(1.0, (t - acc) / 1.0); full = ((ext[0] + ext[1]) / 2, (ext[2] + ext[3]) / 2, (ext[1] - ext[0]) / 2)
+            cx, cy, r = [f + (z - f) * k for f, z in zip(full, zoom)]
+            ax.set_xlim(cx - r, cx + r); ax.set_ylim(cy - r, cy + r)
+        if past("points"):
             n = len(pts) if stage > 1 else int(len(pts) * u)
             ax.scatter(pts[:n, 0], pts[:n, 1], s=1.2, c="#ffd54a", alpha=0.6, lw=0)
-        if stage >= 2:
+        if past("tin"):
             n = len(eg_segs) if stage > 2 else int(len(eg_segs) * u)
             ax.add_collection(LineCollection(eg_segs[:n], colors="#00e5ff", lw=0.35, alpha=0.55))
-        if stage >= 4:
+        if past("align"):
             n = len(cl) if stage > 4 else max(2, int(len(cl) * u))
             ax.plot(cl[:n, 0], cl[:n, 1], color="#ff3b30", lw=2.5)
-        if stage == 3:
+        if s[4] == "align0":
             ax.text(0.5, 0.5, "Ls = 40 m  × SE-IN-LS", color="#ff6b6b", fontsize=34, ha="center", transform=ax.transAxes, weight="bold")
-        if stage >= 6:
-            n = len(secs) if stage > 6 else max(2, int(len(secs) * u))
+        if past("corridor"):
+            n = len(secs) if s[4] != "corridor" else max(2, int(len(secs) * u))
             polys, cols = [], []
             for a, b in zip(secs[: n - 1], secs[1:n]):
                 for sd in ("left", "right"):
@@ -132,20 +153,55 @@ def draw(fi):
                     polys.append([off(a, 0), off(a, sg * a[sd]["daylight"]), off(b, sg * b[sd]["daylight"]), off(b, 0)])
                     cols.append("#e5484d" if a[sd]["cut"] else "#30a46c")
             ax.add_collection(PolyCollection(polys, facecolors=cols, edgecolors="none", alpha=0.75))
+            for sd, sg in (("left", 1), ("right", -1)):
+                e_ = np.array([off(s_, sg * s_[sd]["paved_width"]) for s_ in secs[:n]])
+                ax.plot(e_[:, 0], e_[:, 1], color="#f5f5f5", lw=0.8)
             ax.plot(cl[:n, 0], cl[:n, 1], color="white", lw=1)
-        if stage >= 7:
+        if past("walls"):
+            for sd, sg in (("left", 1), ("right", -1)):
+                run = []
+                for s_ in secs + [None]:
+                    w_ = s_ and s_[sd].get("wall")
+                    if w_:
+                        run.append(off(s_, sg * w_["offset"]))
+                    elif run:
+                        r_ = np.array(run); ax.plot(r_[:, 0], r_[:, 1], color="#ffd60a", lw=5 if s[4] == "walls" else 3, solid_capstyle="butt"); run = []
+        if s[4] == "isect0":
+            p_ = sec_xy(700.0); ax.scatter([p_[0]], [p_[1]], s=900, facecolors="none", edgecolors="#ff453a", lw=3)
+            ax.text(p_[0] + 12, p_[1] + 12, "X1 @ K0+700\n× I-ISD ×2", color="#ff6b6b", fontsize=20, weight="bold")
+        if past("isect"):
+            for l in X["legs"]:
+                pp = np.array(l["patch"]); ax.fill(pp[:, 0], pp[:, 1], color="#8e8e93", alpha=0.85)
+                lc_ = l["corridor"]["sections"]
+                for sd, sg in (("left", 1), ("right", -1)):
+                    e_ = np.array([off(s_, sg * s_[sd]["daylight"]) for s_ in lc_]); ax.plot(e_[:, 0], e_[:, 1], color="#30a46c", lw=1)
+                for el in ("edge_left", "edge_right"):
+                    e_ = np.array(l[el]); ax.plot(e_[:, 0], e_[:, 1], color="#d1d1d6", lw=1.2)
+                for r_ in l["returns"]:
+                    a_ = np.array(r_["arc"]); ax.plot(a_[:, 0], a_[:, 1], color="white", lw=2)
+                if s[4] == "isect":
+                    for sl in l["sight"]:
+                        tr = np.array(sl["triangle"]); ax.fill(tr[:, 0], tr[:, 1], color="#d4ff3a" if sl["clear"] else "#ff453a", alpha=0.45, lw=0)
+                        ax.plot([sl["eye"][0], sl["target"][0]], [sl["eye"][1], sl["target"][1]], color="#d4ff3a" if sl["clear"] else "#ff453a", lw=2.5, ls="--")
+        if past("grading"):
             for g in grads:
                 fp = np.array(g["footprint"]); dl = np.array(g["daylight"])
-                k_ = len(fp) if stage > 7 else max(2, int(len(fp) * u))
-                ax.fill(dl[:, 0], dl[:, 1], color="#c084fc", alpha=0.35 if stage > 7 else 0.35 * u)
+                k_ = len(fp) if s[4] != "grading" else max(2, int(len(fp) * u))
+                ax.fill(dl[:, 0], dl[:, 1], color="#c084fc", alpha=0.35)
                 ax.plot(fp[:k_, 0], fp[:k_, 1], color="#c084fc", lw=2)
-        if stage >= 8:
+        if past("pipes0"):
             st = {s_[0]: {"x": s_[1], "y": s_[2]} for s_ in net["structures"]}
-            bad = {c["element"].split()[-1] for c in p1["mandatory_failures"]} if stage == 8 else set()
+            bad = {c["element"].split()[-1] for c in p1["mandatory_failures"]} if s[4] == "pipes0" else set()
             for p in net["pipes"]:
                 a, b = st[p["from"]], st[p["to"]]
                 ax.plot([a["x"], b["x"]], [a["y"], b["y"]], color="#ff9f0a" if p["id"] in bad else "#0a84ff", lw=3.5)
             ax.scatter([s_[1] for s_ in net["structures"]], [s_[2] for s_ in net["structures"]], s=40, c="white", edgecolors="k", zorder=5)
+        if past("sanitary"):
+            st = {s_[0]: s_ for s_ in san["structures"]}
+            for p in san["pipes"]:
+                a, b = st[p["from"]], st[p["to"]]
+                ax.plot([a[1], b[1]], [a[2], b[2]], color="#a2845e", lw=3)
+            ax.scatter([s_[1] for s_ in san["structures"]], [s_[2] for s_ in san["structures"]], s=30, c="#a2845e", edgecolors="w", zorder=5)
         ax.text(0.01, 0.01, "USGS 3DEP DEM, UTM 10N · civil-mcp demo output", color="w", fontsize=11, transform=ax.transAxes)
     # right panel
     px = 0.585 if s[4] != "sheet" else 0.645
@@ -161,7 +217,37 @@ def draw(fi):
         c = "#ff6b6b" if line.startswith("×") or "failure" in line and not line.startswith("√") else ("#4ade80" if line.startswith("√") else "#e6e9ef")
         fig.text(px, 0.66 - i * 0.042, line, color=c, fontsize=17)
     # inset charts
-    if s[4] in ("profile", "corridor", "grading", "pipes0", "pipes"):
+    if s[4] == "walls":
+        ia = fig.add_axes([px, 0.06, 0.38, 0.3]); ia.set_facecolor("#1b1f24"); ia.set_aspect("equal")
+        sx, sd_, w_ = wmax; sg = 1 if sd_ == "left" else -1
+        g_ = np.array(sx["ground"]); ia.plot(g_[:, 0] * sg, g_[:, 1], color="#b08968", lw=1.5)
+        for side in ("left", "right"):
+            f_ = np.array(sx[side]["fg"]); ia.plot(f_[:, 0] * (1 if side == sd_ else -1) * sg, f_[:, 1], color="#ff3b30", lw=1.5)
+        wd = w_["design"]; back = (1 if w_["cut"] else -1); o, zt, zb = w_["offset"], w_["top_z"], w_["bottom_z"]; zbt = zb + wd["base_t"]
+        ia.fill([o, o, o + back * wd["stem_bot"], o + back * wd["stem_top"]], [zt, zbt, zbt, zt], color="#c7c7cc")
+        a_, b_ = o - back * wd["toe"], o - back * wd["toe"] + back * wd["base_b"]
+        ia.fill([a_, b_, b_, a_], [zb, zb, zbt, zbt], color="#c7c7cc")
+        ia.set_xlim(o - 25, o + 12) if back < 0 else ia.set_xlim(o - 12, o + 25)
+        ia.tick_params(colors="#9aa4b2"); ia.set_title(f"挡墙断面 K0+{sx['station']:.0f} ({sd_}), H {wd['h']:.1f} m - corridor.json", color="w", fontsize=12)
+    if s[4] in ("pipes", "sanitary"):
+        nn = net if s[4] == "pipes" else san
+        hyd = {h["id"]: h for h in nn["hydraulics"]}; down = {p["from"]: p for p in nn["pipes"]}
+        heads = [s_[0] for s_ in nn["structures"] if not any(p["to"] == s_[0] for p in nn["pipes"])]
+        best = []
+        for h_ in heads:
+            path, c_ = [], h_
+            while c_ in down: path.append(down[c_]); c_ = down[c_]["to"]
+            if sum(p["length"] for p in path) > sum(p["length"] for p in best): best = path
+        ia = fig.add_axes([px, 0.06, 0.38, 0.3]); ia.set_facecolor("#1b1f24"); ch = 0
+        for p in best:
+            L = p["length"]
+            ia.fill([ch, ch + L, ch + L, ch], [p["invert_up"], p["invert_dn"], p["invert_dn"] + p["diameter_m"], p["invert_up"] + p["diameter_m"]], color="#0a84ff" if nn is net else "#a2845e", alpha=0.6)
+            ia.plot([ch, ch + L], [p["hgl_up"], p["hgl_dn"]], color="#00e5ff", lw=1.8)
+            ia.plot([ch, ch + L], [p["egl_up"], p["egl_dn"]], color="#ff453a", lw=1, ls="--")
+            ia.plot([ch, ch + L], [hyd[p["from"]]["rim"], hyd[p["to"]]["rim"]], color="#b08968", lw=1.5)
+            ch += L
+        ia.tick_params(colors="#9aa4b2"); ia.set_title(f"{nn['name']} 管道纵断面: HGL 青 / EGL 红虚 / rim 棕", color="w", fontsize=12)
+    if s[4] in ("profile", "corridor", "grading", "pipes0"):
         ia = fig.add_axes([px, 0.08, 0.38, 0.27]); ia.set_facecolor("#1b1f24")
         n = len(secs) if s[4] != "profile" else max(2, int(len(secs) * u))
         ia.plot(sta, [s_["ground_cl"] for s_ in secs], color="#b08968", lw=1.5, label="地面 ground")
