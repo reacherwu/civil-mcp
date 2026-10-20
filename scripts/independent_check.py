@@ -546,7 +546,7 @@ gq = lambda key: sum(float(r_[-2]) for r_ in bq if key in ",".join(r_))
 report("BoQ roadway excavation = corridor cut (m³)", gq("Roadway excavation"), corr["cut_m3"], 0.05, "m³", rel=False)  # CSV writes 1 decimal
 report("BoQ embankment = corridor fill (m³)", gq("Embankment construction"), corr["fill_m3"], 0.01, "m³", rel=False)
 pl = sum(p["length"] for n_ in nets.values() for p in n_["pipes"])
-report("BoQ pipe length = network pipe lengths (m)", sum(float(r_[-2]) for r_ in bq if " pipe " in r_[1]), pl, 0.2, "m", rel=False)
+report("BoQ pipe length = network pipe lengths (m)", sum(float(r_[-2]) for r_ in bq if " pipe " in r_[1] and "Culvert" not in r_[1]), pl, 0.2, "m", rel=False)
 report("BoQ barrier length = barrier runs (m)", sum(float(r_[-2]) for r_ in bq if "guardrail" in r_[1].lower()), sum(b_["length_m"] for b_ in PR["barriers"]), 0.2, "m", rel=False)
 
 json.dump([dict(zip(["check", "civil_mcp", "independent", "diff", "unit", "ok"], r_)) for r_ in rows], open(f"{out}/independent-checks.json", "w"), ensure_ascii=False, indent=1)

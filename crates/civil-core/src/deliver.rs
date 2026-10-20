@@ -457,7 +457,7 @@ fn drainage_report(s: &Session) -> String {
             }
         }
     }
-    let _ = writeln!(r, "\n## Limits\n\n- Rainfall intensity and runoff coefficients are engineer inputs. No IDF/ARR 2019/FEH hydrology is computed.\n- Culverts and subsurface drainage are not designed.");
+    let _ = writeln!(r, "\n## Limits\n\n- Rainfall intensity and runoff coefficients are engineer inputs. Catchment hydrology (rational/TR-55/ARR, FEH note), HDS-5 culverts and subsurface drainage are in design_hydrology / design_culverts / design_subsurface_drainage (see hydrology.csv, culverts.csv).");
     r
 }
 
