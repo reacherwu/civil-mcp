@@ -452,7 +452,7 @@ pub fn run(out: &str) -> Session {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    let v = r.call("locality_plan", json!({"utm_zone": 10, "north": true}));
+    let v = r.call("locality_plan", json!({"utm_zone": 10, "north": true, "basemap_geojson": "data/basemap/osm-locality.geojson"}));
     println!("locality: start {:.6},{:.6}", v["result"]["start"]["lat"].as_f64().unwrap(), v["result"]["start"]["lon"].as_f64().unwrap());
     let v = r.call(
         "check_intersection_sight",

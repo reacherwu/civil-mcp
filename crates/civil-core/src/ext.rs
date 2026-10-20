@@ -332,6 +332,13 @@ pub fn render(sh: &ExtSheet, info: &SheetInfo, page: usize, pages: usize) -> Dra
         ("PAVEMENT", 2),
         ("SUBGRADE", 8),
         ("ROUTE-SELECTED", 6),
+        ("OSM-ROAD-MAJOR", 30),
+        ("OSM-ROAD", 8),
+        ("OSM-ROAD-MINOR", 9),
+        ("OSM-WATER", 5),
+        ("OSM-PLACE", 7),
+        ("LANDSCAPE", 3),
+        ("SIGNAL", 1),
     ] {
         d.layer(l, c);
     }
@@ -1525,7 +1532,7 @@ impl Session {
         let ll1 = crate::landuse::utm_to_ll(x1, y1, zone, north);
         let cl = cl_poly(al, 10.0);
         let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-        let mut p = Panel { title: "Locality plan (UTM 1 km grid)".into(), equal: true, ..Default::default() };
+        let mut p = Panel { title: "Locality plan (UTM 1 km grid, OpenStreetMap basemap)".into(), equal: true, ..Default::default() };
         let (gx0, gy0) = (((cx - 5000.0) / 1000.0).floor() * 1000.0, ((cy - 5000.0) / 1000.0).floor() * 1000.0);
         for k in 0..=10 {
             let (gx, gy) = (gx0 + k as f64 * 1000.0, gy0 + k as f64 * 1000.0);
@@ -1535,6 +1542,58 @@ impl Session {
                 p.labels.push(("TEXT".into(), [gx, gy0 - 300.0], format!("{gx:.0}E")));
                 p.labels.push(("TEXT".into(), [gx0 - 900.0, gy], format!("{gy:.0}N")));
             }
+        }
+        // OpenStreetMap basemap (offline cache in the repo), clipped to the 10 km grid window
+        let mut attribution = String::new();
+        if let Some(path) = a["basemap_geojson"].as_str() {
+            let txt = std::fs::read_to_string(path).map_err(|e| format!("basemap {path}: {e}"))?;
+            let gj: Value = serde_json::from_str(&txt).map_err(|e| format!("basemap json: {e}"))?;
+            attribution = gj["attribution"].as_str().unwrap_or("© OpenStreetMap contributors, ODbL 1.0").to_string();
+            let inwin = |q: &[f64; 2]| q[0] >= gx0 && q[0] <= gx0 + 10000.0 && q[1] >= gy0 && q[1] <= gy0 + 10000.0;
+            let mut named: std::collections::BTreeSet<String> = Default::default();
+            for ft in gj["features"].as_array().into_iter().flatten() {
+                let pr = &ft["properties"];
+                let kind = pr["kind"].as_str().unwrap_or("");
+                let cls = pr["class"].as_str().unwrap_or("");
+                let co = &ft["geometry"]["coordinates"];
+                let proj = |c: &Value| {
+                    let (e, n) = crate::landuse::ll_to_utm(c[1].as_f64().unwrap_or(0.0), c[0].as_f64().unwrap_or(0.0), zone);
+                    [e, n]
+                };
+                if kind == "place" {
+                    let q = proj(co);
+                    if inwin(&q) && matches!(pr["place"].as_str(), Some("city" | "town" | "suburb" | "village")) {
+                        p.labels.push(("OSM-PLACE".into(), q, pr["name"].as_str().unwrap_or("").to_uppercase()));
+                    }
+                    continue;
+                }
+                let pts: Vec<[f64; 2]> = co.as_array().into_iter().flatten().map(proj).collect();
+                // split into runs inside the window
+                let mut run: Vec<[f64; 2]> = vec![];
+                let layer = match (kind, cls) {
+                    ("road", "motorway" | "trunk" | "primary" | "motorway_link" | "trunk_link" | "primary_link") => "OSM-ROAD-MAJOR",
+                    ("road", "secondary" | "tertiary") => "OSM-ROAD",
+                    ("road", _) => "OSM-ROAD-MINOR",
+                    _ => "OSM-WATER",
+                };
+                for q in pts.iter().chain(std::iter::once(&[f64::NAN, f64::NAN])) {
+                    if q[0].is_finite() && inwin(q) {
+                        run.push(*q);
+                    } else if run.len() >= 2 {
+                        p.polys.push((layer.into(), std::mem::take(&mut run)));
+                    } else {
+                        run.clear();
+                    }
+                }
+                let name = pr["ref"].as_str().filter(|r| !r.is_empty()).or(pr["name"].as_str()).unwrap_or("");
+                if layer == "OSM-ROAD-MAJOR" && !name.is_empty() && pts.len() > 4 && named.insert(name.to_string()) {
+                    let q = pts[pts.len() / 2];
+                    if inwin(&q) {
+                        p.labels.push(("OSM-ROAD-MAJOR".into(), q, name.to_string()));
+                    }
+                }
+            }
+            p.labels.push(("TEXT".into(), [gx0 + 100.0, gy0 + 150.0], attribution.clone()));
         }
         p.polys.push(("ROUTE-SELECTED".into(), cl.clone()));
         let bx = 1200.0;
@@ -1554,8 +1613,11 @@ impl Session {
             vec!["Start".into(), format!("{x0:.3}"), format!("{y0:.3}"), format!("{:.6}", ll0.0), format!("{:.6}", ll0.1)],
             vec!["End".into(), format!("{x1:.3}"), format!("{y1:.3}"), format!("{:.6}", ll1.0), format!("{:.6}", ll1.1)],
         ];
-        o.sheets.push(ExtSheet { title: "Locality plan".into(), panels: vec![p, q], tables: vec![(vec![20.0, 34.0, 34.0, 30.0, 30.0], rows)], notes: vec![format!("WGS84 / UTM zone {zone}{} (inverse transverse Mercator series, Snyder 1987, USGS PP 1395). No base mapping is shipped: overlay agency / OS / LINZ / USGS mapping under the user's licence.", if north { "N" } else { "S" })] });
-        o.result = json!({"start": {"e": x0, "n": y0, "lat": ll0.0, "lon": ll0.1}, "end": {"e": x1, "n": y1, "lat": ll1.0, "lon": ll1.1}, "zone": zone, "north": north});
+        o.sheets.push(ExtSheet { title: "Locality plan".into(), panels: vec![p, q], tables: vec![(vec![20.0, 34.0, 34.0, 30.0, 30.0], rows)], notes: vec![
+            format!("WGS84 / UTM zone {zone}{} (transverse Mercator series, Snyder 1987, USGS PP 1395).", if north { "N" } else { "S" }),
+            if attribution.is_empty() { "No basemap supplied (basemap_geojson): overlay agency / OS / LINZ / USGS mapping under the user's licence.".to_string() } else { format!("Basemap: {attribution}. Offline extract cached in the repository (data/basemap); refresh with scripts/fetch_osm_basemap.py. OSM is not survey-grade: for location only.") },
+        ] });
+        o.result = json!({"start": {"e": x0, "n": y0, "lat": ll0.0, "lon": ll0.1}, "end": {"e": x1, "n": y1, "lat": ll1.0, "lon": ll1.1}, "zone": zone, "north": north, "basemap": a["basemap_geojson"], "attribution": attribution});
         Ok(())
     }
 

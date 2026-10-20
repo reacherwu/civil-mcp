@@ -33,6 +33,7 @@ pub mod quantities;
 pub mod reinforce;
 pub mod report;
 pub mod route;
+pub mod signals;
 pub mod slope;
 pub mod subsurface;
 pub mod superelev;

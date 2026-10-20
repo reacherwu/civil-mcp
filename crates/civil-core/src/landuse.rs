@@ -266,8 +266,42 @@ pub fn utm_to_ll(e: f64, n: f64, zone: u32, north: bool) -> (f64, f64) {
     (lat.to_degrees(), lon.to_degrees())
 }
 
+/// forward transverse Mercator (Snyder 1987 eq. 8-9 … 8-10), WGS84, UTM zone
+pub fn ll_to_utm(lat: f64, lon: f64, zone: u32) -> (f64, f64) {
+    let a: f64 = 6378137.0;
+    let f: f64 = 1.0 / 298.257223563;
+    let e2 = f * (2.0 - f);
+    let ep2 = e2 / (1.0 - e2);
+    let k0 = 0.9996;
+    let (p, l) = (lat.to_radians(), lon.to_radians());
+    let l0 = ((zone as f64 - 1.0) * 6.0 - 180.0 + 3.0).to_radians();
+    let n = a / (1.0 - e2 * p.sin().powi(2)).sqrt();
+    let t = p.tan().powi(2);
+    let c = ep2 * p.cos().powi(2);
+    let aa = (l - l0) * p.cos();
+    let m = a
+        * ((1.0 - e2 / 4.0 - 3.0 * e2 * e2 / 64.0 - 5.0 * e2.powi(3) / 256.0) * p
+            - (3.0 * e2 / 8.0 + 3.0 * e2 * e2 / 32.0 + 45.0 * e2.powi(3) / 1024.0) * (2.0 * p).sin()
+            + (15.0 * e2 * e2 / 256.0 + 45.0 * e2.powi(3) / 1024.0) * (4.0 * p).sin()
+            - (35.0 * e2.powi(3) / 3072.0) * (6.0 * p).sin());
+    let x = k0 * n * (aa + (1.0 - t + c) * aa.powi(3) / 6.0 + (5.0 - 18.0 * t + t * t + 72.0 * c - 58.0 * ep2) * aa.powi(5) / 120.0);
+    let y = k0
+        * (m + n
+            * p.tan()
+            * (aa * aa / 2.0
+                + (5.0 - t + 9.0 * c + 4.0 * c * c) * aa.powi(4) / 24.0
+                + (61.0 - 58.0 * t + t * t + 600.0 * c - 330.0 * ep2) * aa.powi(6) / 720.0));
+    (x + 500000.0, if lat < 0.0 { y + 10000000.0 } else { y })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn utm_forward_inverse_round_trip() {
+        let (e, n) = super::ll_to_utm(37.400803, -122.169338, 10);
+        let (la, lo) = super::utm_to_ll(e, n, 10, true);
+        assert!((la - 37.400803).abs() < 1e-7 && (lo + 122.169338).abs() < 1e-7, "{la} {lo}");
+    }
     #[test]
     fn utm_inverse_known_point() {
         // central meridian, equator → (0, -123) for zone 10
