@@ -58,6 +58,9 @@ pub struct PipeData {
     pub hgl_up: Option<f64>,
     pub hgl_down: Option<f64>,
     pub flow_in: Option<f64>,
+    /// curved pipe: the Pipe's <Center> point (x, y). In Civil 3D 2025 exports this is the
+    /// arc MID-POINT (equidistant from both ends), not the arc centre — measured, see docs/VALIDATION.md
+    pub arc_center: Option<[f64; 2]>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -144,6 +147,7 @@ pub fn read(text: &str) -> crate::Result<LandXmlData> {
                 hgl_up: flow.and_then(|f| attr_f(f, "hglUp")),
                 hgl_down: flow.and_then(|f| attr_f(f, "hglDown")),
                 flow_in: flow.and_then(|f| attr_f(f, "flowIn")),
+                arc_center: ne(child(p, "Center")),
             });
         }
         out.pipe_networks.push(PipeNetworkData { name: pn.attribute("name").unwrap_or("").into(), net_type: pn.attribute("pipeNetType").unwrap_or("").into(), structs, pipes });
