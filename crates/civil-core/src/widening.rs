@@ -21,23 +21,14 @@ pub struct WideningResult {
     pub citation: String,
 }
 
-/// JTG D20-2017 Table 7.6.1, two-lane widening (m) by radius band; vehicle class 1/2/3.
-/// Transcribed — verify against the code. Radius > 250 m: no widening.
-pub fn jtg(radius: f64, class: u8) -> WideningResult {
-    let bands = [250.0, 200.0, 150.0, 100.0, 70.0, 50.0, 30.0, 25.0, 20.0, 15.0];
-    let rows: [[f64; 9]; 3] = [[0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.8, 2.2, 2.5], [0.6, 0.7, 0.9, 1.2, 1.5, 2.0, f64::NAN, f64::NAN, f64::NAN], [0.8, 1.0, 1.5, 2.0, 2.5, f64::NAN, f64::NAN, f64::NAN, f64::NAN]];
-    let row = &rows[(class.clamp(1, 3) - 1) as usize];
-    let mut w = 0.0;
-    if radius <= bands[0] {
-        w = f64::NAN;
-        for i in 0..9 {
-            if radius <= bands[i] && radius > bands[i + 1] - 1e-9 {
-                w = row[i];
-                break;
-            }
-        }
-    }
-    WideningResult { radius, widening_m: w, method: format!("JTG table, two lanes, vehicle class {class}"), citation: "JTG D20-2017 公路路线设计规范 §7.6 平曲线加宽 (表 7.6.1)".into() }
+/// Engineer-entered widening table (e.g. a TAC, DMRB or Austroads table, which are not shipped).
+/// Rows [radius_upper, widening]: the widening of the first row whose radius_upper ≥ R, sorted ascending;
+/// R above every row: no widening. R below the first row is not handled by the table (NaN).
+pub fn table(radius: f64, rows: &[[f64; 2]], citation: &str) -> WideningResult {
+    let mut r = rows.to_vec();
+    r.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
+    let w = if r.is_empty() { f64::NAN } else if radius > r.last().unwrap()[0] { 0.0 } else { r.iter().find(|x| radius <= x[0]).map_or(f64::NAN, |x| x[1]) };
+    WideningResult { radius, widening_m: w, method: "engineer-entered widening table".into(), citation: if citation.is_empty() { "engineer-entered table (no citation given)".into() } else { citation.into() } }
 }
 
 /// AASHTO Green Book 2018 §3.3.10 (metric): w_c = N(U + C) + (N − 1)F_A + Z,
@@ -59,11 +50,11 @@ pub fn aashto(radius: f64, speed_kmh: f64, lanes: usize, lane_width: f64, v: &Ve
 mod tests {
     use super::*;
     #[test]
-    fn jtg_bands() {
-        assert_eq!(jtg(300.0, 1).widening_m, 0.0);
-        assert_eq!(jtg(150.0, 1).widening_m, 0.6);
-        assert_eq!(jtg(120.0, 1).widening_m, 0.8);
-        assert_eq!(jtg(60.0, 2).widening_m, 1.5);
+    fn table_lookup() {
+        let t = [[100.0, 0.9], [200.0, 0.6], [300.0, 0.3]];
+        assert_eq!(table(350.0, &t, "x").widening_m, 0.0);
+        assert_eq!(table(250.0, &t, "x").widening_m, 0.3);
+        assert_eq!(table(150.0, &t, "x").widening_m, 0.6);
     }
     #[test]
     fn aashto_hand_calc() {

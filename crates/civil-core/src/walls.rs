@@ -80,22 +80,28 @@ pub struct WallDesign {
 
 pub const GAMMA_C: f64 = 24.0;
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Criteria {
     pub fs_sliding: f64,
     pub fs_overturning: f64,
     /// eccentricity limit as a fraction of B (1/6 keeps the whole base in compression)
     pub e_frac: f64,
-    /// p_max ≤ k·f_a
+    /// p_max ≤ k·(allowable bearing)
     pub qmax_factor: f64,
-    pub citation: &'static str,
+    pub citation: String,
 }
 
-pub fn criteria(std_jtg: bool) -> Criteria {
-    if std_jtg {
-        Criteria { fs_sliding: 1.3, fs_overturning: 1.6, e_frac: 1.0 / 6.0, qmax_factor: 1.2, citation: "GB 50007-2011 建筑地基基础设计规范 §6.7.5 (抗滑 Ks≥1.3, 抗倾覆 Kt≥1.6), §5.2.1 (pk≤fa, pkmax≤1.2fa)" }
-    } else {
-        Criteria { fs_sliding: 1.5, fs_overturning: 2.0, e_frac: 1.0 / 6.0, qmax_factor: 1.0, citation: "AASHTO Standard Specifications for Highway Bridges 17th ed. §5.5.5 (service load: FS sliding ≥1.5, overturning ≥2.0, e ≤ B/6 on soil)" }
+/// Global-factor-of-safety criteria. Only the US profile ships default values (AASHTO Standard
+/// Specifications, allowable-stress method). Canada (CSA S6), the UK (BS EN 1997-1 / CD 360 family) and
+/// Australia/New Zealand (AS 4678 / NZTA Bridge Manual) use limit-state partial factors; the engineer must
+/// enter equivalent criteria and a citation, or the wall check fails.
+pub fn criteria(std: crate::standards::Standard, custom: Option<&Criteria>) -> crate::Result<Criteria> {
+    if let Some(c) = custom {
+        return Ok(c.clone());
+    }
+    match std {
+        crate::standards::Standard::Us => Ok(Criteria { fs_sliding: 1.5, fs_overturning: 2.0, e_frac: 1.0 / 6.0, qmax_factor: 1.0, citation: "AASHTO Standard Specifications for Highway Bridges 17th ed. §5.5.5 (service load: FS sliding ≥ 1.5, overturning ≥ 2.0, e ≤ B/6 on soil)".into() }),
+        s => Err(format!("{s:?}: retaining-wall acceptance criteria are limit-state based in this jurisdiction; the engineer must enter design_basis.wall_criteria (fs_sliding, fs_overturning, e_frac, qmax_factor, citation)")),
     }
 }
 
@@ -180,7 +186,7 @@ mod tests {
         // Pa = 0.5·18·9/3 = 27 kN; Mo = 27·1 = 27 kN·m
         // W1 = 0.5·3·24 = 36 @ 1.55; W2 = 0.5·1.3·3·24 = 46.8 @ 0.8667 → V = 82.8, Mr = 55.8 + 40.56 = 96.36
         let soil = Soil { gamma_kn_m3: 18.0, phi_deg: 30.0, base_friction: 0.5, bearing_kpa: 200.0, surcharge_kpa: 0.0 };
-        let d = analyse(&WallKind::Gravity, 3.0, 1.8, &soil, &criteria(true));
+        let d = analyse(&WallKind::Gravity, 3.0, 1.8, &soil, &criteria(crate::standards::Standard::Us, None).unwrap());
         assert!((d.ka - 1.0 / 3.0).abs() < 1e-12);
         assert!((d.pa_kn - 27.0).abs() < 1e-9 && (d.m_over - 27.0).abs() < 1e-9);
         assert!((d.sum_v_kn - 82.8).abs() < 1e-9 && (d.m_resist - 96.36).abs() < 1e-9, "{} {}", d.sum_v_kn, d.m_resist);
@@ -196,11 +202,11 @@ mod tests {
         let soil = Soil { gamma_kn_m3: 19.0, phi_deg: 30.0, base_friction: 0.45, bearing_kpa: 250.0, surcharge_kpa: 10.0 };
         for h in [2.0, 4.0, 6.0, 8.0] {
             for k in [WallKind::Cantilever, WallKind::Gravity] {
-                let d = proportion(&k, h, &soil, &criteria(true));
+                let d = proportion(&k, h, &soil, &criteria(crate::standards::Standard::Us, None).unwrap());
                 assert!(d.pass, "{k:?} H={h}: {d:?}");
                 // one step narrower fails (minimality)
                 if d.iterations > 1 {
-                    assert!(!analyse(&k, h, d.base_b - 0.05, &soil, &criteria(true)).pass);
+                    assert!(!analyse(&k, h, d.base_b - 0.05, &soil, &criteria(crate::standards::Standard::Us, None).unwrap()).pass);
                 }
             }
         }

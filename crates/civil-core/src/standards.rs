@@ -1,21 +1,49 @@
-//! Design-standard checks. Every check carries the formula or table it used and
-//! a citation so a reviewing engineer can verify it by hand.
+//! Design standards profiles for road design in the US, Canada, the UK, Australia and New Zealand.
 //!
-//! IMPORTANT: table values below were transcribed by the authors of this tool
-//! from the cited documents. Clause/table numbers and values must be verified
-//! by the engineer in responsible charge against the edition they use.
+//! Every value used by a check carries its provenance:
+//! - `verified`: read from a public source during development; the source and clause are cited.
+//! - `formula`: a published formula is shipped, and the inputs come from the engineer.
+//! - `engineer`: the table is copyrighted or paywalled, or could not be verified. The engineer
+//!   in responsible charge must enter the value from the edition they work to, and the tool refuses
+//!   to run without it.
+//! The engineer must still confirm every value against the current edition and any jurisdictional
+//! supplement before use.
 use crate::align::Alignment;
 use crate::profile::Profile;
 use crate::superelev;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Standard {
-    #[serde(rename = "AASHTO_GREEN_BOOK_2018")]
-    Aashto2018,
-    #[serde(rename = "JTG_D20_2017")]
-    JtgD20_2017,
+    #[serde(rename = "US_AASHTO_2018")]
+    Us,
+    #[serde(rename = "CA_TAC_2017")]
+    Ca,
+    #[serde(rename = "UK_DMRB")]
+    Uk,
+    #[serde(rename = "AU_AUSTROADS")]
+    Au,
+    #[serde(rename = "NZ_AUSTROADS_NZTA")]
+    Nz,
 }
+
+impl Standard {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Standard::Us => "US: AASHTO A Policy on Geometric Design of Highways and Streets (2018, 7th ed.), FHWA HEC-22/HEC-15",
+            Standard::Ca => "Canada: TAC Geometric Design Guide for Canadian Roads (2017) + provincial supplement",
+            Standard::Uk => "UK: DMRB (CD 109, CD 123, CD 224/225/226, CG 501, CD 377)",
+            Standard::Au => "Australia: Austroads Guide to Road Design Parts 3/4/6, AGPT02, ARR 2019 + state supplement",
+            Standard::Nz => "New Zealand: Austroads GRD + NZTA Waka Kotahi supplements",
+        }
+    }
+}
+
+pub const AASHTO: &str = "AASHTO A Policy on Geometric Design of Highways and Streets, 7th ed. (2018), metric";
+pub const TAC: &str = "TAC Geometric Design Guide for Canadian Roads (2017)";
+pub const CD109: &str = "DMRB CD 109 Highway link design, Revision 1 (Mar 2020)";
+pub const AGRD3: &str = "Austroads Guide to Road Design Part 3: Geometric Design";
+pub const NZTA: &str = "NZTA Waka Kotahi: Austroads GRD is the primary geometric reference (NZTA geometric design page); SHGDM supplementary";
 
 /// Set by the engineer in responsible charge *before* design starts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,20 +52,44 @@ pub struct DesignBasis {
     pub engineer_of_record: String,
     pub standard: Standard,
     pub design_speed_kmh: f64,
-    /// Maximum superelevation (m/m), engineer's choice (e.g. 0.06, 0.08).
+    /// Maximum superelevation (m/m), engineer's choice.
     #[serde(default)]
     pub e_max: Option<f64>,
-    /// Side friction factor used for superelevation/radius (AASHTO f_max, JTG μ).
+    /// Side friction factor for the minimum-radius formula (US/CA/AU/NZ). Engineer input (copyrighted tables).
     #[serde(default)]
     pub f_max: Option<f64>,
-    /// AASHTO only: maximum grade %, from the Green Book chapter for the functional class/terrain.
+    /// Maximum grade %. UK: defaults to CD 109 Table 5.1 from `road_type`; elsewhere engineer input.
     #[serde(default)]
     pub max_grade_pct: Option<f64>,
-    #[serde(default = "d_t")]
-    pub perception_reaction_s: f64,
-    #[serde(default = "d_a")]
-    pub deceleration_mps2: f64,
-    /// Normal crown cross slope (m/m).
+    /// UK only: "motorway" | "dual" | "single" (CD 109 Table 5.1).
+    #[serde(default)]
+    pub road_type: Option<String>,
+    /// Reaction time (s). US default 2.5 (Green Book); AU/NZ engineer input (typically 2.0–2.5).
+    #[serde(default)]
+    pub perception_reaction_s: Option<f64>,
+    /// US/CA deceleration rate a (m/s²). US default 3.4.
+    #[serde(default)]
+    pub deceleration_mps2: Option<f64>,
+    /// AU/NZ coefficient of deceleration d (car, sealed road); engineer input (0.36 typical).
+    #[serde(default)]
+    pub deceleration_coeff: Option<f64>,
+    /// Crest sight-line driver eye / object heights (m). US default 1.08/0.60; AU/NZ default 1.1/0.2; CA engineer input.
+    #[serde(default)]
+    pub eye_height_m: Option<f64>,
+    #[serde(default)]
+    pub object_height_m: Option<f64>,
+    /// Minimum sag K (m per %). US: from the headlight formula; UK: CD 109 Table 2.10; CA/AU/NZ engineer input.
+    #[serde(default)]
+    pub sag_k_min: Option<f64>,
+    /// Maximum relative gradient of the rotated edge (%). US: AASHTO table; others engineer input.
+    #[serde(default)]
+    pub max_relative_gradient_pct: Option<f64>,
+    /// UK only: rate of increase of centripetal acceleration q (m/s³) for the basic transition; CD 109 §4.14.1 desirable ≤ 0.3.
+    #[serde(default)]
+    pub transition_q: Option<f64>,
+    /// Retaining-wall acceptance criteria (required outside the US profile).
+    #[serde(default)]
+    pub wall_criteria: Option<crate::walls::Criteria>,
     #[serde(default = "d_nc")]
     pub normal_crown: f64,
     #[serde(default = "d_lw")]
@@ -45,17 +97,11 @@ pub struct DesignBasis {
     #[serde(default = "d_one")]
     pub lanes_rotated_per_side: f64,
 }
-fn d_t() -> f64 {
-    2.5
-}
-fn d_a() -> f64 {
-    3.4
-}
 fn d_nc() -> f64 {
-    0.02
+    0.025
 }
 fn d_lw() -> f64 {
-    3.5
+    3.65
 }
 fn d_one() -> f64 {
     1.0
@@ -78,76 +124,178 @@ pub struct Check {
     pub citation: String,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct JtgRow {
-    pub speed: f64,
-    pub r_general: f64,
-    pub r_limit: f64,
-    pub max_grade: f64,
-    pub min_grade_len: f64,
-    pub crest_rv: f64,
-    pub sag_rv: f64,
-    pub min_vc_len: f64,
-    pub ssd: f64,
-    pub min_spiral: f64,
-    pub no_super_radius: f64,
-    /// 超高渐变率 1/p for rotation about the centreline (value = p)
-    pub rel_gradient_inv: f64,
+/// One design parameter with its provenance (for the parameter register in the design report).
+#[derive(Debug, Clone, Serialize)]
+pub struct Param {
+    pub name: String,
+    pub value: f64,
+    pub unit: String,
+    /// "verified" | "formula" | "engineer"
+    pub status: String,
+    pub source: String,
 }
 
-/// JTG D20-2017 values by design speed (km/h), transcribed; verify before use.
-const JTG: [JtgRow; 7] = [
-    JtgRow { speed: 120.0, r_general: 1000.0, r_limit: 650.0, max_grade: 3.0, min_grade_len: 300.0, crest_rv: 11000.0, sag_rv: 4000.0, min_vc_len: 100.0, ssd: 210.0, min_spiral: 100.0, no_super_radius: 5500.0, rel_gradient_inv: 250.0 },
-    JtgRow { speed: 100.0, r_general: 700.0, r_limit: 400.0, max_grade: 4.0, min_grade_len: 250.0, crest_rv: 6500.0, sag_rv: 3000.0, min_vc_len: 85.0, ssd: 160.0, min_spiral: 85.0, no_super_radius: 4000.0, rel_gradient_inv: 225.0 },
-    JtgRow { speed: 80.0, r_general: 400.0, r_limit: 250.0, max_grade: 5.0, min_grade_len: 200.0, crest_rv: 3000.0, sag_rv: 2000.0, min_vc_len: 70.0, ssd: 110.0, min_spiral: 70.0, no_super_radius: 2500.0, rel_gradient_inv: 200.0 },
-    JtgRow { speed: 60.0, r_general: 200.0, r_limit: 125.0, max_grade: 6.0, min_grade_len: 150.0, crest_rv: 1400.0, sag_rv: 1000.0, min_vc_len: 50.0, ssd: 75.0, min_spiral: 50.0, no_super_radius: 1500.0, rel_gradient_inv: 175.0 },
-    JtgRow { speed: 40.0, r_general: 100.0, r_limit: 60.0, max_grade: 7.0, min_grade_len: 120.0, crest_rv: 450.0, sag_rv: 450.0, min_vc_len: 35.0, ssd: 40.0, min_spiral: 35.0, no_super_radius: 600.0, rel_gradient_inv: 150.0 },
-    JtgRow { speed: 30.0, r_general: 65.0, r_limit: 30.0, max_grade: 8.0, min_grade_len: 100.0, crest_rv: 250.0, sag_rv: 250.0, min_vc_len: 25.0, ssd: 30.0, min_spiral: 25.0, no_super_radius: 350.0, rel_gradient_inv: 125.0 },
-    JtgRow { speed: 20.0, r_general: 30.0, r_limit: 15.0, max_grade: 9.0, min_grade_len: 60.0, crest_rv: 100.0, sag_rv: 100.0, min_vc_len: 20.0, ssd: 20.0, min_spiral: 20.0, no_super_radius: 150.0, rel_gradient_inv: 100.0 },
-];
-pub fn jtg_row(speed: f64) -> Option<JtgRow> {
-    JTG.iter().find(|r| r.speed == speed).copied()
+fn p(name: &str, value: f64, unit: &str, status: &str, source: &str) -> Param {
+    Param { name: name.into(), value, unit: unit.into(), status: status.into(), source: source.into() }
 }
-pub const JTG_CITE: &str = "JTG D20-2017 公路路线设计规范 (Design Specification for Highway Alignment)";
-pub const AASHTO_CITE: &str = "AASHTO A Policy on Geometric Design of Highways and Streets, 7th ed. (2018), metric";
+
+/// CD 109 Table 2.10 (Crown copyright, Open Government Licence), verified from the published PDF.
+/// columns: design speed, SSD desirable, SSD one step below, R adverse camber, R 2.5 %, R 3.5 %, R desirable (5 %),
+/// R one step below (7 %), R two steps below (7 %), crest K desirable, crest K one step below, sag K desirable.
+pub const CD109_T210: [[f64; 12]; 6] = [
+    [120.0, 295.0, 215.0, 2880.0, 2040.0, 1440.0, 1020.0, 720.0, 510.0, 182.0, 100.0, 37.0],
+    [100.0, 215.0, 160.0, 2040.0, 1440.0, 1020.0, 720.0, 510.0, 360.0, 100.0, 55.0, 26.0],
+    [85.0, 160.0, 120.0, 1440.0, 1020.0, 720.0, 510.0, 360.0, 255.0, 55.0, 30.0, 20.0],
+    [70.0, 120.0, 90.0, 1020.0, 720.0, 510.0, 360.0, 255.0, 180.0, 30.0, 17.0, 20.0],
+    [60.0, 90.0, 70.0, 720.0, 510.0, 360.0, 255.0, 180.0, 127.0, 17.0, 10.0, 13.0],
+    [50.0, 70.0, 50.0, 520.0, 360.0, 255.0, 180.0, 127.0, 90.0, 10.0, 6.5, 9.0],
+];
+pub fn cd109_row(v: f64) -> Option<[f64; 12]> {
+    CD109_T210.iter().find(|r| r[0] == v).copied()
+}
+/// CD 109 Table 5.1: (desirable max, permitted relaxation) gradient % by road type.
+pub fn cd109_grade(road_type: &str) -> Option<(f64, f64)> {
+    match road_type {
+        "motorway" => Some((3.0, 4.0)),
+        "dual" => Some((4.0, 8.0)),
+        "single" => Some((6.0, 8.0)),
+        _ => None,
+    }
+}
+
+/// AASHTO 2018 metric maximum relative gradient (%), by design speed. Transcribed from the
+/// Green Book (Table 3-15); copyrighted table, values must be verified by the engineer.
+pub fn aashto_max_rel_gradient_pct(v: f64) -> f64 {
+    let t = [(20.0, 0.80), (30.0, 0.75), (40.0, 0.70), (50.0, 0.65), (60.0, 0.60), (70.0, 0.55), (80.0, 0.50), (90.0, 0.47), (100.0, 0.44), (110.0, 0.41), (120.0, 0.38), (130.0, 0.35)];
+    let mut best = t[0];
+    for r in t {
+        if (r.0 - v).abs() < (best.0 - v).abs() {
+            best = r
+        }
+    }
+    best.1
+}
+
+/// Resolved parameter set for a basis: every value the checks use, with provenance.
+#[derive(Debug, Clone, Serialize)]
+pub struct Resolved {
+    pub ssd: f64,
+    pub ssd_formula: String,
+    pub ssd_source: String,
+    /// crest: either a K value (UK table) or eye/object heights for the sight formula
+    pub crest_k_one_step: Option<f64>,
+    pub crest_k_desirable: Option<f64>,
+    pub eye_object: Option<(f64, f64)>,
+    pub sag_k_min: Option<f64>,
+    pub r_min: f64,
+    pub r_desirable: Option<f64>,
+    pub r_formula: String,
+    pub g_max: f64,
+    pub g_desirable: Option<f64>,
+    pub rel_grad_pct: f64,
+    pub params: Vec<Param>,
+}
+
+fn need(v: Option<f64>, what: &str, std: Standard) -> crate::Result<f64> {
+    v.ok_or_else(|| format!("{:?} profile: '{what}' must be entered by the engineer (table not shipped: copyrighted/paywalled or not verified)", std))
+}
+
+pub fn resolve(b: &DesignBasis) -> crate::Result<Resolved> {
+    let v = b.design_speed_kmh;
+    let mut params = Vec::new();
+    match b.standard {
+        Standard::Us | Standard::Ca => {
+            let us = b.standard == Standard::Us;
+            let src = if us { AASHTO } else { TAC };
+            let t = if us { b.perception_reaction_s.unwrap_or(2.5) } else { need(b.perception_reaction_s, "perception_reaction_s", b.standard)? };
+            let a = if us { b.deceleration_mps2.unwrap_or(3.4) } else { need(b.deceleration_mps2, "deceleration_mps2", b.standard)? };
+            let ssd = 0.278 * v * t + 0.039 * v * v / a;
+            params.push(p("brake reaction time t", t, "s", if us && b.perception_reaction_s.is_none() { "verified" } else { "engineer" }, &format!("{src}, stopping sight distance (2.5 s; confirmed in state DOT manuals, e.g. IDOT BLR Ch. 28, MoDOT EPG 941)")));
+            params.push(p("deceleration rate a", a, "m/s²", if us && b.deceleration_mps2.is_none() { "verified" } else { "engineer" }, &format!("{src}, stopping sight distance (3.4 m/s²)")));
+            params.push(p("SSD", ssd, "m", "formula", &format!("{src}: SSD = 0.278·V·t + 0.039·V²/a")));
+            let (h1, h2) = if us { (b.eye_height_m.unwrap_or(1.08), b.object_height_m.unwrap_or(0.60)) } else { (need(b.eye_height_m, "eye_height_m", b.standard)?, need(b.object_height_m, "object_height_m", b.standard)?) };
+            params.push(p("crest eye height", h1, "m", if us && b.eye_height_m.is_none() { "verified" } else { "engineer" }, &format!("{src}, crest vertical curves")));
+            params.push(p("crest object height", h2, "m", if us && b.object_height_m.is_none() { "verified" } else { "engineer" }, &format!("{src}, crest vertical curves")));
+            let sag = if us { b.sag_k_min } else { Some(need(b.sag_k_min, "sag_k_min", b.standard)?) };
+            if let Some(k) = sag {
+                params.push(p("sag K minimum", k, "m/%", "engineer", src));
+            }
+            let (e, f) = (need(b.e_max, "e_max", b.standard)?, need(b.f_max, "f_max", b.standard)?);
+            let rmin = v * v / (127.0 * (e + f));
+            params.push(p("e_max", e, "m/m", "engineer", src));
+            params.push(p("f_max (side friction)", f, "", "engineer", &format!("{src} (side-friction table copyrighted; engineer enters)")));
+            params.push(p("R_min", rmin, "m", "formula", "R_min = V²/(127(e+f))"));
+            let g = need(b.max_grade_pct, "max_grade_pct", b.standard)?;
+            params.push(p("max grade", g, "%", "engineer", &format!("{src}, maximum grades by functional class and terrain")));
+            let rg = if us { b.max_relative_gradient_pct.unwrap_or(aashto_max_rel_gradient_pct(v)) } else { need(b.max_relative_gradient_pct, "max_relative_gradient_pct", b.standard)? };
+            params.push(p("max relative gradient", rg, "%", if us && b.max_relative_gradient_pct.is_none() { "engineer" } else { "engineer" }, &if us { format!("{AASHTO}, superelevation runoff (Table 3-15, transcribed; verify)") } else { format!("{TAC}, superelevation runoff") }));
+            Ok(Resolved { ssd, ssd_formula: format!("SSD = 0.278·V·t + 0.039·V²/a = 0.278·{v}·{t} + 0.039·{v}²/{a}"), ssd_source: src.into(), crest_k_one_step: None, crest_k_desirable: None, eye_object: Some((h1, h2)), sag_k_min: sag, r_min: rmin, r_desirable: None, r_formula: format!("V²/(127(e+f)) = {v}²/(127·({e}+{f}))"), g_max: g, g_desirable: None, rel_grad_pct: rg, params })
+        }
+        Standard::Uk => {
+            let r = cd109_row(v).ok_or("UK_DMRB: design speed must be one of 120, 100, 85, 70, 60, 50 km/h (CD 109 Table 2.10)")?;
+            params.push(p("SSD desirable minimum", r[1], "m", "verified", &format!("{CD109} Table 2.10")));
+            params.push(p("SSD one step below desirable", r[2], "m", "verified", &format!("{CD109} Table 2.10")));
+            params.push(p("desirable minimum R (e 5 %)", r[6], "m", "verified", &format!("{CD109} Table 2.10")));
+            params.push(p("two steps below desirable R (e 7 %)", r[8], "m", "verified", &format!("{CD109} Table 2.10")));
+            params.push(p("crest K desirable", r[9], "m/%", "verified", &format!("{CD109} Table 2.10")));
+            params.push(p("crest K one step below", r[10], "m/%", "verified", &format!("{CD109} Table 2.10")));
+            params.push(p("sag K desirable", r[11], "m/%", "verified", &format!("{CD109} Table 2.10")));
+            let rt = b.road_type.as_deref().ok_or("UK_DMRB: road_type (motorway|dual|single) required for CD 109 Table 5.1")?;
+            let (gd, gr) = cd109_grade(rt).ok_or("road_type must be motorway|dual|single")?;
+            let g = b.max_grade_pct.unwrap_or(gr);
+            params.push(p("gradient desirable max", gd, "%", "verified", &format!("{CD109} Table 5.1 ({rt})")));
+            params.push(p("gradient permitted relaxation", gr, "%", "verified", &format!("{CD109} Table 5.1 ({rt})")));
+            let e = need(b.e_max, "e_max (CD 109: 7 % rural, 5 % urban max)", b.standard)?;
+            params.push(p("e_max", e, "m/m", "engineer", &format!("{CD109} §4.2 (rural ≤ 7 %, urban ≤ 5 %)")));
+            let rg = need(b.max_relative_gradient_pct, "max_relative_gradient_pct", b.standard)?;
+            params.push(p("max relative gradient", rg, "%", "engineer", "not taken from CD 109 in this tool; engineer enters"));
+            let q = b.transition_q.unwrap_or(0.3);
+            params.push(p("transition q", q, "m/s³", "verified", &format!("{CD109} §4.13–4.15 (q ≤ 0.3 desirable, ≤ 0.6 max)")));
+            Ok(Resolved { ssd: r[1], ssd_formula: format!("CD 109 Table 2.10, V = {v} kph"), ssd_source: CD109.into(), crest_k_one_step: Some(r[10]), crest_k_desirable: Some(r[9]), eye_object: None, sag_k_min: Some(r[11]), r_min: r[8], r_desirable: Some(r[6]), r_formula: format!("CD 109 Table 2.10, V = {v} kph"), g_max: g, g_desirable: Some(gd), rel_grad_pct: rg, params })
+        }
+        Standard::Au | Standard::Nz => {
+            let src = if b.standard == Standard::Au { AGRD3.to_string() } else { format!("{AGRD3} (adopted by {NZTA})") };
+            let rt = need(b.perception_reaction_s, "perception_reaction_s", b.standard)?;
+            let d = need(b.deceleration_coeff, "deceleration_coeff", b.standard)?;
+            let ssd = rt * v / 3.6 + v * v / (254.0 * d);
+            params.push(p("reaction time RT", rt, "s", "engineer", &format!("{src}, sight distance (2.0–2.5 s; e.g. MRWA supplement mandates 2.5 s desirable)")));
+            params.push(p("coefficient of deceleration d", d, "", "engineer", &format!("{src} (0.36 for cars, e.g. MRWA supplement §5.1)")));
+            params.push(p("SSD", ssd, "m", "formula", &format!("{src}: SSD = RT·V/3.6 + V²/(254(d + 0.01a)), a = 0 here")));
+            let (h1, h2) = (b.eye_height_m.unwrap_or(1.1), b.object_height_m.unwrap_or(0.2));
+            params.push(p("crest eye height", h1, "m", "engineer", &format!("{src} (car eye 1.1 m, object 0.2 m; verify vs the crest K table)")));
+            params.push(p("crest object height", h2, "m", "engineer", &src));
+            let sag = need(b.sag_k_min, "sag_k_min", b.standard)?;
+            params.push(p("sag K minimum", sag, "m/%", "engineer", &src));
+            let (e, f) = (need(b.e_max, "e_max", b.standard)?, need(b.f_max, "f_max", b.standard)?);
+            let rmin = v * v / (127.0 * (e + f));
+            params.push(p("e_max", e, "m/m", "engineer", &src));
+            params.push(p("f_max (side friction)", f, "", "engineer", &format!("{src} (side-friction table not shipped)")));
+            params.push(p("R_min", rmin, "m", "formula", "R_min = V²/(127(e+f))"));
+            let g = need(b.max_grade_pct, "max_grade_pct", b.standard)?;
+            params.push(p("max grade", g, "%", "engineer", &src));
+            let rg = need(b.max_relative_gradient_pct, "max_relative_gradient_pct", b.standard)?;
+            params.push(p("max relative gradient", rg, "%", "engineer", &src));
+            Ok(Resolved { ssd, ssd_formula: format!("SSD = RT·V/3.6 + V²/(254·d) = {rt}·{v}/3.6 + {v}²/(254·{d})"), ssd_source: src.clone(), crest_k_one_step: None, crest_k_desirable: None, eye_object: Some((h1, h2)), sag_k_min: Some(sag), r_min: rmin, r_desirable: None, r_formula: format!("V²/(127(e+f)) = {v}²/(127·({e}+{f}))"), g_max: g, g_desirable: None, rel_grad_pct: rg, params })
+        }
+    }
+}
 
 pub fn validate_basis(b: &DesignBasis) -> crate::Result<()> {
     if b.engineer_of_record.trim().is_empty() {
         return Err("design basis must name the engineer in responsible charge".into());
     }
-    if b.e_max.is_none() || b.f_max.is_none() {
-        return Err("design basis requires e_max and f_max (JTG: μ) chosen by the engineer".into());
-    }
     if !(b.normal_crown > 0.0 && b.normal_crown < 0.06) || b.lane_width_m <= 0.0 {
         return Err("normal_crown must be in (0, 0.06) and lane_width_m > 0".into());
     }
-    match b.standard {
-        Standard::JtgD20_2017 => {
-            if jtg_row(b.design_speed_kmh).is_none() {
-                return Err("JTG D20-2017 design speed must be one of 120,100,80,60,40,30,20 km/h".into());
-            }
-        }
-        Standard::Aashto2018 => {
-            if b.max_grade_pct.is_none() {
-                return Err("AASHTO basis requires max_grade_pct chosen by the engineer (depends on functional class and terrain)".into());
-            }
-        }
-    }
-    Ok(())
+    resolve(b).map(|_| ())
 }
 
-/// Stopping sight distance (m). AASHTO: 0.278·V·t + 0.039·V²/a. JTG: table.
 pub fn ssd(b: &DesignBasis) -> f64 {
-    match b.standard {
-        Standard::JtgD20_2017 => jtg_row(b.design_speed_kmh).map_or(0.0, |r| r.ssd),
-        Standard::Aashto2018 => {
-            let v = b.design_speed_kmh;
-            0.278 * v * b.perception_reaction_s + 0.039 * v * v / b.deceleration_mps2
-        }
-    }
+    resolve(b).map_or(0.0, |r| r.ssd)
 }
 
-/// Minimum crest curve length for sight distance S with eye h1 / object h2.
+/// Minimum crest curve length for sight distance S with eye h1 / object h2:
+/// L = A·S²/(200(√h1+√h2)²) if S < L, else 2S − 200(√h1+√h2)²/A.
 pub fn crest_len_min_h(a: f64, s: f64, h1: f64, h2: f64) -> f64 {
     let a = a.abs();
     let c = 200.0 * (h1.sqrt() + h2.sqrt()).powi(2);
@@ -160,15 +308,9 @@ pub fn crest_len_min_h(a: f64, s: f64, h1: f64, h2: f64) -> f64 {
 }
 /// AASHTO crest (eye 1.08 m, object 0.60 m) => 658.
 pub fn crest_len_min(a: f64, s: f64) -> f64 {
-    let a = a.abs();
-    let l1 = a * s * s / 658.0;
-    if l1 >= s {
-        l1
-    } else {
-        (2.0 * s - 658.0 / a).max(0.0)
-    }
+    crest_len_min_h(a, s, 1.08, 0.60)
 }
-/// Minimum sag curve length for headlight sight distance (0.6 m, 1°).
+/// AASHTO sag curve length for headlight sight distance (0.6 m, 1°): 120 + 3.5S.
 pub fn sag_len_min(a: f64, s: f64) -> f64 {
     let a = a.abs();
     let l1 = a * s * s / (120.0 + 3.5 * s);
@@ -179,6 +321,24 @@ pub fn sag_len_min(a: f64, s: f64) -> f64 {
     }
 }
 
+/// Minimum vertical curve length for a grade change A (%) under the basis.
+pub fn vc_len_min(b: &DesignBasis, r: &Resolved, a_pct: f64) -> (f64, String) {
+    let crest = a_pct < 0.0;
+    if crest {
+        if let Some(k) = r.crest_k_desirable {
+            return (k * a_pct.abs(), format!("L = K·A, K = {k} (CD 109 Table 2.10 desirable crest K)"));
+        }
+        let (h1, h2) = r.eye_object.unwrap();
+        (crest_len_min_h(a_pct, r.ssd, h1, h2), format!("crest: L = A·S²/(200(√{h1}+√{h2})²) if S<L else 2S−200(√h1+√h2)²/A, S = {:.1} m", r.ssd))
+    } else if let Some(k) = r.sag_k_min {
+        (k * a_pct.abs(), format!("L = K·A, sag K = {k}"))
+    } else if b.standard == Standard::Us {
+        (sag_len_min(a_pct, r.ssd), format!("sag (headlight 0.6 m, 1°): L = A·S²/(120+3.5S) if S<L else 2S−(120+3.5S)/A, S = {:.1} m", r.ssd))
+    } else {
+        (0.0, "no sag criterion".into())
+    }
+}
+
 pub fn chk(id: &str, item: &str, element: String, value: f64, limit: f64, unit: &str, kind: &str, severity: &str, formula: String, citation: String) -> Check {
     let pass = if kind == "min" { value >= limit - 1e-9 } else { value <= limit + 1e-9 };
     Check { id: id.into(), item: item.into(), element, value, limit, unit: unit.into(), kind: kind.into(), pass, severity: severity.into(), formula, citation }
@@ -186,120 +346,86 @@ pub fn chk(id: &str, item: &str, element: String, value: f64, limit: f64, unit: 
 
 pub fn run_checks(b: &DesignBasis, al: &Alignment, pr: Option<&Profile>) -> Vec<Check> {
     let mut out = Vec::new();
+    let r = match resolve(b) {
+        Ok(r) => r,
+        Err(e) => {
+            out.push(chk("BASIS", "Design basis complete", "basis".into(), 0.0, 1.0, "bool", "min", "mandatory", e, "tool rule".into()));
+            return out;
+        }
+    };
     let v = b.design_speed_kmh;
-    let s = ssd(b);
     let curves = al.curves();
     let se = superelev::design(b, al);
-    match b.standard {
-        Standard::Aashto2018 => {
-            let (e, f) = (b.e_max.unwrap_or(0.0), b.f_max.unwrap_or(0.0));
-            let rmin = v * v / (127.0 * (e + f));
-            for c in &curves {
-                let el = format!("curve {}", c.index);
-                out.push(chk("H-RMIN", "Horizontal curve radius", el.clone(), c.radius, rmin, "m", "min", "mandatory",
-                    format!("Rmin = V²/(127(e+f)) = {v}²/(127·({e}+{f})) = {rmin:.1} m"), format!("{AASHTO_CITE}, Ch.3 minimum radius")));
-                for (side, ls) in [("entry", c.ls_in), ("exit", c.ls_out)] {
-                    if ls > 0.0 {
-                        let lmin = (24.0 * 0.20 * c.radius).sqrt();
-                        let lmax = (24.0 * 1.0 * c.radius).sqrt();
-                        out.push(chk("H-LS-MIN", "Spiral length (minimum, lateral shift 0.20 m)", format!("{el} {side}"), ls, lmin, "m", "min", "advisory",
-                            format!("Ls,min = √(24·p_min·R), p_min=0.20 m → {lmin:.1} m"), format!("{AASHTO_CITE}, Ch.3 spiral curve transitions")));
-                        out.push(chk("H-LS-MAX", "Spiral length (maximum, lateral shift 1.0 m)", format!("{el} {side}"), ls, lmax, "m", "max", "advisory",
-                            format!("Ls,max = √(24·p_max·R), p_max=1.0 m → {lmax:.1} m"), format!("{AASHTO_CITE}, Ch.3 spiral curve transitions")));
-                    }
-                }
+    let src = r.ssd_source.clone();
+    for c in &curves {
+        let el = format!("curve {}", c.index);
+        out.push(chk("H-RMIN", "Horizontal curve radius (minimum)", el.clone(), c.radius, r.r_min, "m", "min", "mandatory", format!("R_min = {} = {:.1} m", r.r_formula, r.r_min), if b.standard == Standard::Uk { format!("{CD109} Table 2.10 (two steps below desirable; beyond this a departure is required)") } else { format!("{src}, minimum radius") }));
+        if let Some(rd) = r.r_desirable {
+            out.push(chk("H-RDES", "Horizontal curve radius (desirable minimum; below = relaxation)", el.clone(), c.radius, rd, "m", "min", "advisory", format!("CD 109 Table 2.10 desirable minimum R (e 5 %) = {rd} m"), format!("{CD109} Table 2.10, §4.5 relaxations (Table 4.5)")));
+        }
+        for (side, ls) in [("entry", c.ls_in), ("exit", c.ls_out)] {
+            if ls <= 0.0 {
+                continue;
             }
-            if let Ok(se) = &se {
-                let dmax = superelev::aashto_max_rel_gradient_pct(v);
-                for sc in &se.curves {
-                    if sc.e > 0.0 {
-                        out.push(chk("SE-REL", "Superelevation relative gradient", format!("curve {}", sc.curve), sc.relative_gradient * 100.0, dmax, "%", "max", "mandatory",
-                            format!("Δ = w·(e+nc)/L = {:.2}·({:.4}+{:.3})/L; max Δ for {v} km/h", se.rotation_width, sc.e, se.nc), format!("{AASHTO_CITE}, Ch.3 superelevation runoff, max relative gradient table")));
-                    }
+            match b.standard {
+                Standard::Uk => {
+                    let q = b.transition_q.unwrap_or(0.3);
+                    let basic = v.powi(3) / (46.7 * q * c.radius);
+                    let lreq = basic.min((24.0 * c.radius).sqrt());
+                    out.push(chk("H-LS-MIN", "Transition length (basic transition, CD 109 Eq 4.13)", format!("{el} {side}"), ls, lreq, "m", "min", "advisory", format!("L = V³/(46.7·q·R) = {basic:.1} m (q = {q}); capped at √(24R) = {:.1} m (§4.15)", (24.0 * c.radius).sqrt()), format!("{CD109} §4.13–4.15")));
                 }
+                Standard::Us | Standard::Ca => {
+                    let lmin = (24.0 * 0.20 * c.radius).sqrt();
+                    let lmax = (24.0 * 1.0 * c.radius).sqrt();
+                    out.push(chk("H-LS-MIN", "Spiral length (minimum, lateral shift 0.20 m)", format!("{el} {side}"), ls, lmin, "m", "min", "advisory", format!("Ls,min = √(24·p_min·R), p_min = 0.20 m → {lmin:.1} m"), format!("{src}, spiral curve transitions")));
+                    out.push(chk("H-LS-MAX", "Spiral length (maximum, lateral shift 1.0 m)", format!("{el} {side}"), ls, lmax, "m", "max", "advisory", format!("Ls,max = √(24·p_max·R), p_max = 1.0 m → {lmax:.1} m"), format!("{src}, spiral curve transitions")));
+                }
+                _ => {}
             }
-            if let Some(p) = pr {
-                let gmax = b.max_grade_pct.unwrap_or(0.0);
-                for (i, g) in p.grades_pct.iter().enumerate() {
-                    out.push(chk("V-GMAX", "Grade", format!("segment VPI{i}->VPI{}", i + 1), g.abs(), gmax, "%", "max", "mandatory",
-                        format!("|g| ≤ engineer-selected max grade {gmax}%"), format!("{AASHTO_CITE}, maximum grades by functional class (value set in design basis)")));
-                }
-                for c in &p.curves {
-                    let (lmin, f) = if c.crest {
-                        (crest_len_min(c.a_pct, s), format!("crest, S={s:.1} m: L = A·S²/658 if S<L else 2S−658/A"))
-                    } else {
-                        (sag_len_min(c.a_pct, s), format!("sag (headlight), S={s:.1} m: L = A·S²/(120+3.5S) if S<L else 2S−(120+3.5S)/A"))
-                    };
-                    out.push(chk("V-LVC", "Vertical curve length for SSD", format!("VPI {} (A={:.2}%)", c.vpi_index, c.a_pct), c.length, lmin, "m", "min", "mandatory",
-                        format!("{f}; SSD = 0.278·V·t + 0.039·V²/a, t={} s, a={} m/s²", b.perception_reaction_s, b.deceleration_mps2),
-                        format!("{AASHTO_CITE}, Ch.3 stopping sight distance and vertical curves")));
+        }
+    }
+    if let Ok(se) = &se {
+        for sc in &se.curves {
+            if sc.e > 0.0 {
+                out.push(chk("SE-REL", "Superelevation relative gradient", format!("curve {}", sc.curve), sc.relative_gradient * 100.0, r.rel_grad_pct, "%", "max", "mandatory", format!("Δ = w·(e+nc)/L = {:.2}·({:.4}+{:.3})/L", se.rotation_width, sc.e, se.nc), format!("{src}, superelevation development (limit from design basis parameter register)")));
+                let c = curves.iter().find(|c| c.index == sc.curve).unwrap();
+                if c.ls_in > 0.0 {
+                    out.push(chk("SE-IN-LS", "Superelevation development fits within the transition", format!("curve {}", sc.curve), c.ls_in.min(c.ls_out), sc.required_length, "m", "min", "mandatory", format!("required L = w·(e+nc)/Δmax = {:.1} m ≤ spiral length", sc.required_length), format!("{src}, superelevation development on transitions")));
                 }
             }
         }
-        Standard::JtgD20_2017 => {
-            let row = jtg_row(v).unwrap_or(JTG[3]);
-            for c in &curves {
-                let el = format!("curve {}", c.index);
-                out.push(chk("H-RMIN-LIM", "圆曲线最小半径（极限值）", el.clone(), c.radius, row.r_limit, "m", "min", "mandatory",
-                    format!("table V={v} km/h → {} m", row.r_limit), format!("{JTG_CITE}, 圆曲线最小半径表")));
-                out.push(chk("H-RMIN-GEN", "圆曲线最小半径（一般值）", el.clone(), c.radius, row.r_general, "m", "min", "advisory",
-                    format!("table V={v} km/h → {} m", row.r_general), format!("{JTG_CITE}, 圆曲线最小半径表")));
-                if c.radius < row.no_super_radius {
-                    for (side, ls) in [("entry", c.ls_in), ("exit", c.ls_out)] {
-                        out.push(chk("H-LS-MIN", "缓和曲线最小长度", format!("{el} {side}"), ls, row.min_spiral, "m", "min", "mandatory",
-                            format!("R={:.0} < 不设超高最小半径 {} m → 缓和曲线 required; table → {} m", c.radius, row.no_super_radius, row.min_spiral), format!("{JTG_CITE}, 缓和曲线最小长度表")));
-                    }
-                }
+    }
+    if let Some(pr) = pr {
+        for (i, g) in pr.grades_pct.iter().enumerate() {
+            let el = format!("segment VPI{i}->VPI{}", i + 1);
+            out.push(chk("V-GMAX", "Grade (maximum)", el.clone(), g.abs(), r.g_max, "%", "max", "mandatory", format!("|g| ≤ {}%", r.g_max), if b.standard == Standard::Uk { format!("{CD109} Table 5.1 permitted relaxation") } else { format!("{src}, maximum grade (engineer-entered)") }));
+            if let Some(gd) = r.g_desirable {
+                out.push(chk("V-GDES", "Grade (desirable maximum; above = relaxation)", el, g.abs(), gd, "%", "max", "advisory", format!("|g| ≤ {gd}%"), format!("{CD109} Table 5.1 desirable maximum, §5.1.1")));
             }
-            if let Ok(se) = &se {
-                for sc in &se.curves {
-                    if sc.e > 0.0 {
-                        let lim = 1.0 / row.rel_gradient_inv * 100.0;
-                        out.push(chk("SE-REL", "超高渐变率", format!("curve {}", sc.curve), sc.relative_gradient * 100.0, lim, "%", "max", "mandatory",
-                            format!("p = B'·Δi/Lc = {:.2}·({:.4}+{:.3})/Lc ≤ 1/{}", se.rotation_width, sc.e, se.nc, row.rel_gradient_inv), format!("{JTG_CITE}, 超高渐变率表（绕中线旋转）")));
-                        let c = curves.iter().find(|c| c.index == sc.curve).unwrap();
-                        if c.ls_in > 0.0 {
-                            out.push(chk("SE-IN-LS", "超高过渡段应在缓和曲线内", format!("curve {}", sc.curve), c.ls_in.min(c.ls_out), sc.required_length, "m", "min", "mandatory",
-                                format!("Lc = B'·Δi/p = {:.1} m ≤ Ls", sc.required_length), format!("{JTG_CITE}, 超高过渡")));
-                        }
-                    }
-                }
-            }
-            if let Some(p) = pr {
-                for (i, g) in p.grades_pct.iter().enumerate() {
-                    out.push(chk("V-GMAX", "最大纵坡", format!("segment VPI{i}->VPI{}", i + 1), g.abs(), row.max_grade, "%", "max", "mandatory",
-                        format!("table V={v} km/h → {}%", row.max_grade), format!("{JTG_CITE}, 最大纵坡表")));
-                    let len = p.input.vpis[i + 1][0] - p.input.vpis[i][0];
-                    out.push(chk("V-LMIN", "最小坡长", format!("segment VPI{i}->VPI{}", i + 1), len, row.min_grade_len, "m", "min", "mandatory",
-                        format!("VPI spacing; table V={v} km/h → {} m", row.min_grade_len), format!("{JTG_CITE}, 最小坡长表")));
-                }
-                for c in &p.curves {
-                    let rv = if c.a_pct.abs() > 1e-12 { c.length / (c.a_pct.abs() / 100.0) } else { f64::INFINITY };
-                    let (lim, name) = if c.crest { (row.crest_rv, "凸形竖曲线最小半径（极限值）") } else { (row.sag_rv, "凹形竖曲线最小半径（极限值）") };
-                    out.push(chk("V-RVC", name, format!("VPI {} (A={:.2}%)", c.vpi_index, c.a_pct), rv, lim, "m", "min", "mandatory",
-                        format!("R = L/(A/100) = {:.1}/{:.4}", c.length, c.a_pct.abs() / 100.0), format!("{JTG_CITE}, 竖曲线最小半径和最小长度表")));
-                    out.push(chk("V-LVC", "竖曲线最小长度", format!("VPI {}", c.vpi_index), c.length, row.min_vc_len, "m", "min", "mandatory",
-                        format!("table V={v} km/h → {} m", row.min_vc_len), format!("{JTG_CITE}, 竖曲线最小半径和最小长度表")));
-                    if c.crest {
-                        let lmin = crest_len_min_h(c.a_pct, row.ssd, 1.2, 0.1);
-                        out.push(chk("V-SSD", "凸形竖曲线停车视距（复核）", format!("VPI {}", c.vpi_index), c.length, lmin, "m", "min", "advisory",
-                            format!("停车视距 S={} m (table); L = A·S²/(200(√1.2+√0.1)²) if S<L else 2S−…/A", row.ssd), format!("{JTG_CITE}, 停车视距表; eye 1.2 m / object 0.1 m")));
-                    }
-                }
+        }
+        for c in &pr.curves {
+            let (lmin, f) = vc_len_min(b, &r, c.a_pct);
+            let el = format!("VPI {} (A={:.2}%)", c.vpi_index, c.a_pct);
+            out.push(chk("V-LVC", if c.crest { "Crest curve length for stopping sight distance" } else { "Sag curve length" }, el.clone(), c.length, lmin, "m", "min", if b.standard == Standard::Uk { "advisory" } else { "mandatory" }, f, if b.standard == Standard::Uk { format!("{CD109} §5.4–5.5 and Table 2.10 (desirable)") } else { format!("{src}, vertical curves") }));
+            if b.standard == Standard::Uk && c.crest {
+                let k1 = r.crest_k_one_step.unwrap();
+                out.push(chk("V-LVC-RLX", "Crest curve length, one step below desirable", el, c.length, k1 * c.a_pct.abs(), "m", "min", "mandatory", format!("L = K·A, K = {k1}"), format!("{CD109} Table 2.10 one step below desirable crest K; Table 3.5 permitted relaxations")));
             }
         }
     }
     if let Err(e) = &se {
-        out.push(Check { id: "SE-DESIGN".into(), item: "Superelevation design".into(), element: "alignment".into(), value: 0.0, limit: 1.0, unit: "bool".into(), kind: "min".into(), pass: false, severity: "mandatory".into(), formula: e.clone(), citation: "tool rule".into() });
+        out.push(chk("SE-DESIGN", "Superelevation design", "alignment".into(), 0.0, 1.0, "bool", "min", "mandatory", e.clone(), "tool rule".into()));
     } else if let Ok(se) = &se {
         for w in se.curves.windows(2) {
             let ok = w[1].a_in >= w[0].a_out - 1e-6 || w[0].e == 0.0 || w[1].e == 0.0;
-            out.push(Check { id: "SE-OVERLAP".into(), item: "Superelevation transitions do not overlap".into(), element: format!("curves {}–{}", w[0].curve, w[1].curve), value: w[1].a_in - w[0].a_out, limit: 0.0, unit: "m gap".into(), kind: "min".into(), pass: ok, severity: "mandatory".into(), formula: format!("next transition start {:.2} ≥ previous end {:.2}", w[1].a_in, w[0].a_out), citation: "geometric consistency (tool rule)".into() });
+            let mut c = chk("SE-OVERLAP", "Superelevation transitions do not overlap", format!("curves {}-{}", w[0].curve, w[1].curve), w[1].a_in - w[0].a_out, 0.0, "m gap", "min", "mandatory", format!("next transition start {:.2} ≥ previous end {:.2}", w[1].a_in, w[0].a_out), "geometric consistency (tool rule)".into());
+            c.pass = ok;
+            out.push(c);
         }
     }
     if let Some(p) = pr {
         let cover = p.start() <= al.start_station() + 1e-6 && p.end() >= al.end_station() - 1e-6;
-        out.push(Check { id: "G-COVER".into(), item: "Profile covers alignment".into(), element: "profile".into(), value: if cover { 1.0 } else { 0.0 }, limit: 1.0, unit: "bool".into(), kind: "min".into(), pass: cover, severity: "mandatory".into(), formula: format!("profile {:.2}–{:.2} vs alignment {:.2}–{:.2}", p.start(), p.end(), al.start_station(), al.end_station()), citation: "geometric consistency (tool rule)".into() });
+        out.push(chk("G-COVER", "Profile covers alignment", "profile".into(), if cover { 1.0 } else { 0.0 }, 1.0, "bool", "min", "mandatory", format!("profile {:.2}-{:.2} vs alignment {:.2}-{:.2}", p.start(), p.end(), al.start_station(), al.end_station()), "geometric consistency (tool rule)".into()));
     }
     out
 }
@@ -308,7 +434,7 @@ pub fn run_checks(b: &DesignBasis, al: &Alignment, pr: Option<&Profile>) -> Vec<
 mod tests {
     use super::*;
     fn basis() -> DesignBasis {
-        serde_json::from_value(serde_json::json!({"project":"t","engineer_of_record":"x","standard":"AASHTO_GREEN_BOOK_2018","design_speed_kmh":80.0,"e_max":0.08,"f_max":0.14,"max_grade_pct":6.0})).unwrap()
+        serde_json::from_value(serde_json::json!({"project":"t","engineer_of_record":"x","standard":"US_AASHTO_2018","design_speed_kmh":80.0,"e_max":0.08,"f_max":0.14,"max_grade_pct":6.0})).unwrap()
     }
     #[test]
     fn ssd_80kmh_matches_green_book_table() {
@@ -319,15 +445,31 @@ mod tests {
     fn crest_k_80kmh() {
         assert_eq!(crest_len_min(1.0, 130.0), 0.0);
         let k = crest_len_min(10.0, 130.0) / 10.0;
-        assert!((k - 25.7).abs() < 0.1);
-        // generic form with AASHTO heights reproduces 658
-        assert!((crest_len_min_h(10.0, 130.0, 1.08, 0.60) - crest_len_min(10.0, 130.0)).abs() / crest_len_min(10.0, 130.0) < 0.002);
+        assert!((k - 25.7).abs() < 0.1, "{k}");
     }
     #[test]
-    fn jtg_ssd_table() {
+    fn uk_cd109_values_and_required_inputs() {
         let mut b = basis();
-        b.standard = Standard::JtgD20_2017;
-        b.design_speed_kmh = 60.0;
-        assert_eq!(ssd(&b), 75.0);
+        b.standard = Standard::Uk;
+        b.design_speed_kmh = 85.0;
+        assert!(resolve(&b).is_err()); // road_type, relative gradient required
+        b.road_type = Some("single".into());
+        b.max_grade_pct = None;
+        b.max_relative_gradient_pct = Some(0.6);
+        let r = resolve(&b).unwrap();
+        assert_eq!((r.ssd, r.crest_k_desirable, r.sag_k_min, r.r_min, r.g_max), (160.0, Some(55.0), Some(20.0), 255.0, 8.0));
+    }
+    #[test]
+    fn austroads_ssd_formula_and_engineer_inputs() {
+        let mut b = basis();
+        b.standard = Standard::Au;
+        assert!(resolve(&b).is_err());
+        b.perception_reaction_s = Some(2.5);
+        b.deceleration_coeff = Some(0.36);
+        b.sag_k_min = Some(20.0);
+        b.max_relative_gradient_pct = Some(0.5);
+        let r = resolve(&b).unwrap();
+        // 2.5·80/3.6 + 80²/(254·0.36) = 55.56 + 69.99
+        assert!((r.ssd - (2.5 * 80.0 / 3.6 + 6400.0 / (254.0 * 0.36))).abs() < 1e-9);
     }
 }

@@ -35,7 +35,87 @@ se = load("superelevation.json")
 nets = {g: json.load(open(g)) for g in sorted(glob.glob(f"{out}/network-*.json"))}
 q = load("quantities.json")
 
-# ---------- 1. cross-section areas: fine numerical integration of |ground - datum| ----------
+# ---------- 3. superelevation (US profile: e = emax·Rmin/R, development = w·(e+nc)/Δ) ----------
+LOG = [json.loads(l) for l in open(f"{out}/run-log.jsonl")]
+basis = [e for e in LOG if e["tool"] == "set_design_basis"][-1]["args"]["basis"]
+V = basis["design_speed_kmh"]
+if basis["standard"] in ("US_AASHTO_2018", "CA_TAC_2017", "AU_AUSTROADS", "NZ_AUSTROADS_NZTA"):
+    rmin = V * V / (127 * (basis["e_max"] + basis["f_max"]))
+    rg = basis.get("max_relative_gradient_pct") or dict([(20, .8), (30, .75), (40, .7), (50, .65), (60, .6), (70, .55), (80, .5), (90, .47), (100, .44), (110, .41), (120, .38), (130, .35)])[int(round(V / 10) * 10)]
+    for c in se["curves"]:
+        e_ref = min(basis["e_max"], basis["e_max"] * rmin / c["radius"])
+        if e_ref <= se["nc"]:
+            e_ref = se["nc"] if e_ref > 0 else 0.0
+        L_ref = se["rotation_width"] * (e_ref + se["nc"]) / (rg / 100)
+        report(f"superelevation e, curve {c['curve']}", c["e"], e_ref, 1e-6)
+        report(f"superelevation development length, curve {c['curve']}", c["required_length"], L_ref, 1e-6)
+        report(f"provided development ≥ required, curve {c['curve']} (m spare)", (c["b_in"] - c["a_in"]) - c["required_length"], 0.0, 1e9, "m", rel=False)
+ssd_ref = 0.278 * V * 2.5 + 0.039 * V * V / 3.4
+ssd_log = [e for e in LOG if e["tool"] == "set_design_basis"][-1]["result"]["ssd_m"]
+report("SSD = 0.278·V·t + 0.039·V²/a (AASHTO, t 2.5 s, a 3.4 m/s²) (m)", ssd_log, ssd_ref, 1e-9, "m", rel=False)
+
+# ---------- 4. LandXML: clothoid geometry vs scipy Fresnel, schema ----------
+ns = {"l": "http://www.landxml.org/schema/LandXML-1.2"}
+root = ET.parse(f"{out}/design.xml").getroot()
+ne = lambda e: np.array([float(v) for v in e.text.split()][::-1])  # N E -> E N
+for sp in root.iter("{%s}Spiral" % ns["l"]):
+    L = float(sp.get("length")); R = float(sp.get("radiusEnd") if sp.get("radiusEnd") != "INF" else sp.get("radiusStart"))
+    A = math.sqrt(R * L); S, C = fresnel(L / (A * math.sqrt(math.pi)))
+    chord_ref = A * math.sqrt(math.pi) * math.hypot(C, S)
+    chord = np.linalg.norm(ne(sp.find("l:End", ns)) - ne(sp.find("l:Start", ns)))
+    report(f"clothoid chord L={L:g} R={R:g} (m)", chord, chord_ref, 1e-6, "m", rel=False)
+if xsd:
+    import xmlschema
+    errs = list(xmlschema.XMLSchema(xsd).iter_errors(f"{out}/design.xml"))
+    report("LandXML 1.2 XSD validation errors", len(errs), 0, 0, "", rel=False)
+
+class TriInterp:
+    """Linear interpolation on given triangles (bucketed point location, barycentric weights)."""
+    def __init__(self, x, y, z, F):
+        self.x, self.y, self.z, self.F = x, y, z, F
+        X, Y = x[F], y[F]
+        self.lo = np.c_[X.min(1), Y.min(1)]; self.hi = np.c_[X.max(1), Y.max(1)]
+        self.h = float(np.median(np.c_[X.max(1) - X.min(1), Y.max(1) - Y.min(1)]).max()) or 1.0
+        self.o = np.array([x.min(), y.min()]); b = {}
+        for t in range(len(F)):
+            i0, j0 = ((self.lo[t] - self.o) // self.h).astype(int); i1, j1 = ((self.hi[t] - self.o) // self.h).astype(int)
+            for i in range(i0, i1 + 1):
+                for j in range(j0, j1 + 1):
+                    b.setdefault((i, j), []).append(t)
+        self.b = b
+    def __call__(self, qx, qy):
+        qx = np.asarray(qx, float); qy = np.asarray(qy, float); shp = np.broadcast(qx, qy).shape
+        qx = np.broadcast_to(qx, shp).ravel(); qy = np.broadcast_to(qy, shp).ravel()
+        out = np.full(qx.size, np.nan)
+        keys = np.floor((np.c_[qx, qy] - self.o) / self.h).astype(int)
+        order = {}
+        for n, k in enumerate(map(tuple, keys)):
+            order.setdefault(k, []).append(n)
+        for k, idx in order.items():
+            tris = self.b.get(k)
+            if not tris: continue
+            idx = np.array(idx); px, py = qx[idx], qy[idx]
+            for t in tris:
+                a, bb, c = self.F[t]
+                x1, y1, x2, y2, x3, y3 = self.x[a], self.y[a], self.x[bb], self.y[bb], self.x[c], self.y[c]
+                det = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+                if det == 0: continue
+                l1 = ((y2 - y3) * (px - x3) + (x3 - x2) * (py - y3)) / det
+                l2 = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3)) / det
+                l3 = 1 - l1 - l2
+                m = (l1 >= -1e-12) & (l2 >= -1e-12) & (l3 >= -1e-12) & np.isnan(out[idx])
+                out[idx[m]] = l1[m] * self.z[a] + l2[m] * self.z[bb] + l3[m] * self.z[c]
+        return out.reshape(shp) if shp else float(out[0])
+
+for sf in root.iter("{%s}Surface" % ns["l"]):
+    if sf.get("name") == "EG":
+        P_ = np.array([[float(v) for v in p.text.split()] for p in sf.iter("{%s}P" % ns["l"])])
+        # interpolate on the surface's own triangles (<Faces>): the EG points are a regular DEM
+        # grid, where an independent Delaunay splits each square on an arbitrary diagonal
+        F_ = np.array([[int(v) - 1 for v in f.text.split()] for f in sf.iter("{%s}F" % ns["l"])])
+        eg = TriInterp(P_[:, 1], P_[:, 0], P_[:, 2], F_)
+egF = eg
+# ---------- 1. cross-section areas: fine numerical integration of |EG (own triangle lookup) - datum| ----------
 def interp(poly, x):
     p = np.array(poly)
     return np.interp(x, p[:, 0], p[:, 1])
@@ -47,7 +127,9 @@ for s in corr["sections"]:
     for sg, side in ((1, s["left"]), (-1, s["right"])):
         gs = g.copy(); gs[:, 0] *= sg; gs = gs[np.argsort(gs[:, 0])]
         o = np.linspace(0, side["daylight"], 20001)
-        dz = np.interp(o, gs[:, 0], gs[:, 1]) - interp(side["datum"], o)
+        # existing ground straight from the EG triangles along the section normal
+        nx_, ny_ = -math.sin(s["heading"]), math.cos(s["heading"])
+        dz = np.nan_to_num(egF(s["x"] + sg * o * nx_, s["y"] + sg * o * ny_) - interp(side["datum"], o))
         c += np.trapezoid(np.clip(dz, 0, None), o); f += np.trapezoid(np.clip(-dz, 0, None), o)
     cut_a.append(c); fill_a.append(f)
 ours_c = np.array([s["cut_area"] for s in corr["sections"]]); ours_f = np.array([s["fill_area"] for s in corr["sections"]])
@@ -69,43 +151,13 @@ ordn = np.array(mh["ordinates"])
 report("mass haul max |ordinate diff| (m³)", float(np.max(np.abs(np.interp(st, ordn[:, 0], ordn[:, 1]) - m))), 0.0, 1.0, "m³", rel=False)
 report("haul moment ∫|M|ds (m³·m)", mh["haul_moment_m3m"], float(np.trapezoid(np.abs(m), st)), 0.5)
 
-# ---------- 3. superelevation (JTG i = V²/127R − μ, transition = B·Δi/p) ----------
-for c in se["curves"]:
-    if "JTG" in c["method"] or "μ" in c["method"]:
-        V, mu = 40.0, float(c["method"].split("−")[-1])
-        e_ref = V * V / (127 * c["radius"]) - mu
-        p_ref = 1 / 150  # JTG, 40 km/h, rotation about centreline
-        L_ref = se["rotation_width"] * (e_ref + se["nc"]) / p_ref
-        report(f"superelevation e, curve {c['curve']}", c["e"], e_ref, 1e-6)
-        report(f"superelevation transition length, curve {c['curve']}", c["required_length"], L_ref, 1e-6)
-        report(f"provided transition ≥ required, curve {c['curve']} (m spare)", (c["b_in"] - c["a_in"]) - c["required_length"], 0.0, 1e9, "m", rel=False)
-
-# ---------- 4. LandXML: clothoid geometry vs scipy Fresnel, schema ----------
-ns = {"l": "http://www.landxml.org/schema/LandXML-1.2"}
-root = ET.parse(f"{out}/design.xml").getroot()
-ne = lambda e: np.array([float(v) for v in e.text.split()][::-1])  # N E -> E N
-for sp in root.iter("{%s}Spiral" % ns["l"]):
-    L = float(sp.get("length")); R = float(sp.get("radiusEnd") if sp.get("radiusEnd") != "INF" else sp.get("radiusStart"))
-    A = math.sqrt(R * L); S, C = fresnel(L / (A * math.sqrt(math.pi)))
-    chord_ref = A * math.sqrt(math.pi) * math.hypot(C, S)
-    chord = np.linalg.norm(ne(sp.find("l:End", ns)) - ne(sp.find("l:Start", ns)))
-    report(f"clothoid chord L={L:g} R={R:g} (m)", chord, chord_ref, 1e-6, "m", rel=False)
-if xsd:
-    import xmlschema
-    errs = list(xmlschema.XMLSchema(xsd).iter_errors(f"{out}/design.xml"))
-    report("LandXML 1.2 XSD validation errors", len(errs), 0, 0, "", rel=False)
-
-for sf in root.iter("{%s}Surface" % ns["l"]):
-    if sf.get("name") == "EG":
-        P_ = np.array([[float(v) for v in p.text.split()] for p in sf.iter("{%s}P" % ns["l"])])
-        eg = LinearNDInterpolator(P_[:, [1, 0]], P_[:, 2])
 # ---------- 5. Manning / rational / GB Kz / partial flow / HGL-EGL (second implementation) ----------
 G = 9.80665
-KZ = [(5, 2.7), (15, 2.4), (40, 2.1), (70, 2.0), (100, 1.9), (200, 1.8), (500, 1.6), (1000, 1.5)]  # GB 50014-2021 表 4.1.15
-def kz(q_ls):
-    if q_ls <= KZ[0][0]: return KZ[0][1]
-    if q_ls >= KZ[-1][0]: return KZ[-1][1]
-    return float(np.interp(q_ls, [k_[0] for k_ in KZ], [k_[1] for k_ in KZ]))
+def peak(method, pop):  # P in thousands
+    Pk = pop / 1000.0
+    if method == "ten_states": return (18 + math.sqrt(Pk)) / (4 + math.sqrt(Pk))  # Ten States Standards Fig. 1
+    if method == "harmon": return 1 + 14 / (4 + math.sqrt(Pk))
+    raise ValueError(method)
 def seg(D, y):
     th = 2 * math.acos(max(-1.0, min(1.0, 1 - 2 * y / D))); a = D * D / 8 * (th - math.sin(th)); P = D * th / 2
     return a, a / P, D * math.sin(th / 2)  # area, R, top width
@@ -126,16 +178,17 @@ for nf, net in nets.items():
     for p in net["pipes"]:
         D, n, S = p["diameter_m"], pin[p["id"]]["n"], p["slope"]
         avg = acc(p["from"], lambda s_: s_.get("population", 0) * s_.get("per_capita_lpd", 0) / 86400e3)
-        k_ = kz(avg * 1000) if avg > 0 else 0.0
+        k_ = peak(cr["local"]["peaking"], acc(p["from"], lambda s_: s_.get("population", 0))) if avg > 0 else 0.0
         Qd = acc(p["from"], lambda s_: s_.get("c", 0) * s_.get("area_ha", 0)) * cr.get("intensity_mm_h", 0) / 360 + acc(p["from"], lambda s_: s_.get("inflow_m3s", 0)) + k_ * avg
         A = math.pi * D * D / 4; Qf = A * (D / 4) ** (2 / 3) * S ** 0.5 / n
         qy = lambda y: seg(D, y)[0] * seg(D, y)[1] ** (2 / 3) * S ** 0.5 / n
-        w["q"] = max(w["q"], abs(p["q_design"] - Qd)); w["qf"] = max(w["qf"], abs(p["q_full"] - Qf) / Qf * 100); w["kz"] = max(w["kz"], abs(p["kz"] - k_))
+        w["q"] = max(w["q"], abs(p["q_design"] - Qd)); w["qf"] = max(w["qf"], abs(p["q_full"] - Qf) / Qf * 100); w["kz"] = max(w["kz"], abs(p["peak_factor"] - k_))
         if Qd < qy(0.938 * D) * 0.999:
             y = brentq(lambda y: qy(y) - Qd, 1e-6 * D, 0.938 * D, xtol=1e-12)
             w["y"] = max(w["y"], abs(p["depth_ratio"] - y / D)); w["v"] = max(w["v"], abs(p["v_design"] - Qd / seg(D, y)[0]))
-    report(f"[{tag}] design Q (rational + Kz·Q_avg), max abs diff (m³/s)", w["q"], 0, 1e-9, "m³/s", rel=False)
-    report(f"[{tag}] GB 50014 Kz (np.interp), max abs diff", w["kz"], 0, 1e-12, "", rel=False)
+    report(f"[{tag}] design Q (rational + PF·Q_avg), max abs diff (m³/s)", w["q"], 0, 1e-9, "m³/s", rel=False)
+    if cr["system"] == "sanitary":
+        report(f"[{tag}] peaking factor ({cr['local']['peaking']}), max abs diff", w["kz"], 0, 1e-12, "", rel=False)
     report(f"[{tag}] Manning full-flow Q, max diff (%)", w["qf"], 0, 1e-6, "%", rel=False)
     report(f"[{tag}] partial-flow depth ratio (brentq), max abs diff", w["y"], 0, 1e-4, "", rel=False)
     report(f"[{tag}] partial-flow velocity, max abs diff (m/s)", w["v"], 0, 1e-3, "m/s", rel=False)
@@ -189,7 +242,6 @@ def poly_wc(pts):
     pts = np.array(pts); x, y = pts[:, 0], pts[:, 1]; cr_ = x * np.roll(y, -1) - np.roll(x, -1) * y
     A = cr_.sum() / 2; cx = ((x + np.roll(x, -1)) * cr_).sum() / (6 * A)
     return abs(A), cx
-jtg = "JTG" in json.dumps(se) or True
 wmax = {"slide": 0, "over": 0, "e": 0, "q": 0}; nwall = 0; minfs = [9e9, 9e9]
 for s in corr["sections"]:
     for side in ("left", "right"):
@@ -206,34 +258,35 @@ for s in corr["sections"]:
             parts = [(poly_wc([(toe, t), (toe + sb, t), (toe + sb, H_), (toe + sb - st_, H_)]), 24.0),
                      (poly_wc([(0, 0), (B, 0), (B, t), (0, t)]), 24.0),
                      (poly_wc([(toe + sb, t), (B, t), (B, H_), (toe + sb, H_)]), g_)]
-            V = sum(a_ * gm for (a_, _), gm in parts) + heel * q_
+            Vw = sum(a_ * gm for (a_, _), gm in parts) + heel * q_
             Mr = sum(a_ * gm * cx for (a_, cx), gm in parts) + heel * q_ * (toe + sb + heel / 2)
         else:
             parts = [(poly_wc([(0, 0), (B, 0), (B, H_), (B - st_, H_)]), 24.0)]
-            V = sum(a_ * gm for (a_, _), gm in parts); Mr = sum(a_ * gm * cx for (a_, cx), gm in parts)
-        e_ = B / 2 - (Mr - Mo) / V; qm = V / B * (1 + 6 * e_ / B)
-        wmax["slide"] = max(wmax["slide"], abs(mu * V / Pa - d_["fs_sliding"])); wmax["over"] = max(wmax["over"], abs(Mr / Mo - d_["fs_overturning"]))
+            Vw = sum(a_ * gm for (a_, _), gm in parts); Mr = sum(a_ * gm * cx for (a_, cx), gm in parts)
+        e_ = B / 2 - (Mr - Mo) / Vw; qm = Vw / B * (1 + 6 * e_ / B)
+        wmax["slide"] = max(wmax["slide"], abs(mu * Vw / Pa - d_["fs_sliding"])); wmax["over"] = max(wmax["over"], abs(Mr / Mo - d_["fs_overturning"]))
         wmax["e"] = max(wmax["e"], abs(e_ - d_["eccentricity"])); wmax["q"] = max(wmax["q"], abs(qm - d_["q_max_kpa"]))
-        minfs = [min(minfs[0], mu * V / Pa), min(minfs[1], Mr / Mo)]
+        minfs = [min(minfs[0], mu * Vw / Pa), min(minfs[1], Mr / Mo)]
 if nwall:
     report(f"walls ({nwall} sections): sliding FS μV/Pa, max abs diff", wmax["slide"], 0, 1e-6, "", rel=False)
     report("walls: overturning FS Mr/Mo (numeric pressure integral), max abs diff", wmax["over"], 0, 1e-6, "", rel=False)
     report("walls: eccentricity, max abs diff (m)", wmax["e"], 0, 1e-6, "m", rel=False)
     report("walls: q_max V/B(1+6e/B), max abs diff (kPa)", wmax["q"], 0, 1e-3, "kPa", rel=False)
-    report("walls: min sliding FS (GB 50007 §6.7.5 ≥ 1.3)", minfs[0], 1.3, 1e9, "", rel=False)
-    report("walls: min overturning FS (≥ 1.6)", minfs[1], 1.6, 1e9, "", rel=False)
+    report("walls: min sliding FS (AASHTO Std Spec 17th §5.5.5 ≥ 1.5)", minfs[0], 1.5, 1e9, "", rel=False)
+    report("walls: min overturning FS (≥ 2.0)", minfs[1], 2.0, 1e9, "", rel=False)
 
-# ---------- 5c. curve widening: JTG D20-2017 表 7.6.1 (transcribed separately), section paved width ----------
-JTG_W = {1: [0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.8, 2.2, 2.5], 2: [0.6, 0.7, 0.9, 1.2, 1.5, 2.0], 3: [0.8, 1.0, 1.5, 2.0, 2.5]}
-BANDS = [250, 200, 150, 100, 70, 50, 30, 25, 20, 15]  # band i: BANDS[i+1] ≤ R < BANDS[i]... R in (BANDS[i+1], BANDS[i]]
-wcls = [e for e in (json.loads(l) for l in open(f"{out}/run-log.jsonl")) if e["tool"] == "build_corridor"][-1]["args"].get("widening", {}).get("jtg_class")
-if wcls:
+# ---------- 5c. curve widening: AASHTO off-tracking formula (re-derived), N lanes ----------
+wargs = [e for e in LOG if e["tool"] == "build_corridor"][-1]["args"].get("widening") or {}
+if wargs.get("method") == "AASHTO":
+    veh = wargs["vehicle"]; lanes = len(asm["lanes_m"]) + len((asm.get("right") or {}).get("lanes_m") or asm["lanes_m"])
+    lw = sum(asm["lanes_m"]) / len(asm["lanes_m"]); wn = lanes * lw; C = 0.6 if wn <= 6.0 else (0.75 if wn <= 6.6 else 0.9)
     worst = 0
     for wv in corr["widening"]:
-        R = wv["radius"]; i_ = next((i for i in range(len(BANDS) - 1) if BANDS[i + 1] <= R < BANDS[i] or (i == 0 and R == BANDS[0])), None)
-        ref = 0.0 if R > 250 or i_ is None or i_ >= len(JTG_W[wcls]) else JTG_W[wcls][i_]
-        worst = max(worst, abs(wv["widening_m"] - ref))
-    report("JTG 表7.6.1 widening by radius, max abs diff (m)", worst, 0, 1e-12, "m", rel=False)
+        R = wv["radius"]; U = veh["track_u_m"] + R - math.sqrt(R * R - sum(l * l for l in veh["wheelbases_m"]))
+        A_ = veh["front_overhang_m"]; L1 = veh["wheelbases_m"][0]; FA = math.sqrt(R * R + A_ * (2 * L1 + A_)) - R
+        wc = lanes * (U + C) + (lanes - 1) * FA + 0.1 * V / math.sqrt(R)
+        worst = max(worst, abs(wv["widening_m"] - max(0.0, wc - wn)))
+    report("AASHTO §3.3.10 widening w_c − w_n, max abs diff (m)", worst, 0, 1e-9, "m", rel=False)
 
 # ---------- 5d. intersections: ISD, return tangency, patch volume by 0.1 m grid ----------
 for xf in sorted(glob.glob(f"{out}/intersection-*.json")):
@@ -258,8 +311,7 @@ for xf in sorted(glob.glob(f"{out}/intersection-*.json")):
         XX, YY = np.meshgrid(np.arange(x0 + h / 2, x1, h), np.arange(y0 + h / 2, y1, h))
         m_ = path.contains_points(np.c_[XX.ravel(), YY.ravel()]).reshape(XX.shape)
         import matplotlib.tri as mtri  # same faces as the tool (surface definition), independent integration
-        tri = mtri.Triangulation(pts[:, 0], pts[:, 1], np.array(l["patch_faces"]))
-        fg = np.ma.filled(mtri.LinearTriInterpolator(tri, pts[:, 2])(XX, YY), np.nan); dz = np.where(m_, eg(XX, YY) - fg, 0)
+        fg = TriInterp(pts[:, 0], pts[:, 1], pts[:, 2], np.array(l["patch_faces"]))(XX, YY); dz = np.where(~np.isnan(fg), eg(XX, YY) - fg, 0)  # region = union of the patch faces
         dz = np.nan_to_num(dz)
         report(f"{X['name']} {l['name']} return-patch fill vs 0.1 m grid on its faces (tool samples 0.25 m)", l["patch_fill_m3"], float(np.clip(-dz, 0, None).sum() * h * h), 1.0)
 
@@ -267,7 +319,7 @@ for xf in sorted(glob.glob(f"{out}/intersection-*.json")):
 for sf in root.iter("{%s}Surface" % ns["l"]):
     if sf.get("name") == "EG":
         P = np.array([[float(v) for v in p.text.split()] for p in sf.iter("{%s}P" % ns["l"])])
-        eg = LinearNDInterpolator(P[:, [1, 0]], P[:, 2])
+        egD = LinearNDInterpolator(P[:, [1, 0]], P[:, 2])
 # Analytic mitred-offset model for a convex pad: outward distance d = max over edges of
 # the signed edge-normal distance; design = z_pad ± d/slope_h, clipped by EG. No triangulation.
 for gf in glob.glob(f"{out}/grading-*.json"):
@@ -284,27 +336,218 @@ for gf in glob.glob(f"{out}/grading-*.json"):
         a_, b_ = V[i], V[(i + 1) % len(V)]
         t = (b_ - a_) / np.linalg.norm(b_ - a_); nrm = np.array([t[1], -t[0]]) if ccw else np.array([-t[1], t[0]])
         d = np.maximum(d, (X - a_[0]) * nrm[0] + (Y - a_[1]) * nrm[1])
-    d = d.clip(0); G = eg(X, Y)
+    d = d.clip(0); G = egD(X, Y)
     cut = np.nansum(np.clip(G - (z + d / args["cut_slope_h"]), 0, None)) * h * h
     fill = np.nansum(np.clip((z - d / args["fill_slope_h"]) - G, 0, None)) * h * h
     report(f"{g['name']} grading cut vs analytic mitred model (m³)", g["cut_m3"], float(cut), 1.0)
     report(f"{g['name']} grading fill vs analytic mitred model (m³)", g["fill_m3"], float(fill), 1.0)
 
-# ---------- 7. drawings: DXF audit, PDF parse + embedded CJK font ----------
+# ---------- 7. drawings: DXF audit, English text, Latin code page, PDF parse ----------
 from ezdxf import recover
-import pypdf
+import pypdf, re
 dxf_err = 0
 for f in sorted(glob.glob(f"{out}/*.dxf")):
     doc, aud = recover.readfile(f)
     a = doc.audit(); dxf_err += len(a.errors) + len(aud.fixes)
-    assert "CJK" in doc.styles, f
+    if "SANS" not in doc.styles or doc.header.get("$DWGCODEPAGE") != "ANSI_1252":
+        dxf_err += 1; print("BAD style/codepage", f)
     want = 6 if f.endswith("model.dxf") else 4  # model in metres, sheets in millimetres
     if doc.header.get("$INSUNITS") != want:
         dxf_err += 1; print("BAD $INSUNITS", f, doc.header.get("$INSUNITS"))
-report("DXF audit errors+fixes (all files)", dxf_err, 0, 0, "", rel=False)
+report("DXF audit errors+fixes+style/codepage/units problems (all files)", dxf_err, 0, 0, "", rel=False)
 r = pypdf.PdfReader(f"{out}/sheets.pdf")
 txt = "".join(p.extract_text() for p in r.pages)
-report("PDF text extract contains 横断面图 and 初步设计", float("横断面图" in txt and "初步设计" in txt), 1.0, 0, "", rel=False)
+report("PDF text extract contains CROSS SECTIONS and PRELIMINARY", float("CROSS SECTIONS" in txt and "PRELIMINARY" in txt), 1.0, 0, "", rel=False)
+CJK = re.compile("[\u3000-\u9fff\uff00-\uffef]")
+ncjk = sum(len(CJK.findall(open(f, encoding="utf-8", errors="ignore").read())) for f in glob.glob(f"{out}/*") if f.endswith((".json", ".jsonl", ".md", ".csv", ".html", ".xml", ".dxf")))
+report("CJK characters in all text outputs", ncjk + len(CJK.findall(txt)), 0, 0, "", rel=False)
+idx = re.findall(r"Sheet (\d+) of (\d+)", txt)
+report("PDF pages vs 'Sheet n of N' in title blocks", len(r.pages), int(idx[0][1]) if idx else -1, 0, "", rel=False)
+
+# ---------- 8. pavement: AASHTO 1993 equations re-coded, solved with brentq ----------
+pav = [e for e in LOG if e["tool"] == "design_pavement"]
+def flex_logw(SN, zr, s0, dpsi, mr):
+    return zr * s0 + 9.36 * math.log10(SN + 1) - 0.2 + math.log10(dpsi / 2.7) / (0.4 + 1094 / (SN + 1) ** 5.19) + 2.32 * math.log10(mr) - 8.07
+def rigid_logw(D, zr, s0, dpsi, pt, sc, cd, J, ec, k):
+    return zr * s0 + 7.35 * math.log10(D + 1) - 0.06 + math.log10(dpsi / 3.0) / (1 + 1.624e7 / (D + 1) ** 8.46) + (4.22 - 0.32 * pt) * math.log10(sc * cd * (D ** 0.75 - 1.132) / (215.63 * J * (D ** 0.75 - 18.42 / (ec / k) ** 0.25)))
+sn_ex = brentq(lambda x: flex_logw(x, -1.645, 0.35, 1.9, 5000) - math.log10(5e6), 0.5, 15)
+report("AASHTO 93 flexible worked example (Guide Fig 3.1: SN ≈ 5.0)", sn_ex, 5.0, 2.0)
+d_ex = brentq(lambda x: rigid_logw(x, -1.645, 0.29, 1.7, 2.5, 650, 1.0, 3.2, 5e6, 72) - math.log10(5.1e6), 5, 20)
+report("AASHTO 93 rigid worked example (Guide Fig 3.7 nomograph reading D ≈ 10.0 in; equation solution)", d_ex, 10.0, 3.0)
+for e in pav:
+    a_ = e["args"]; res = e["result"]; tr = a_["traffic"]
+    W = 365 * tr["aadt"] * tr["hv_frac"] * tr["esa_per_hv"] * tr["dir_factor"] * tr["lane_factor"] * ((1 + tr["growth"]) ** tr["years"] - 1) / tr["growth"]
+    dpsi = a_["p0"] - a_["pt"]
+    if a_["kind"] == "flexible":
+        mr = 1500 * a_["subgrade_cbr"]
+        sn = brentq(lambda x: flex_logw(x, a_["reliability_zr"], a_["s0"], dpsi, mr) - math.log10(W), 0.05, 20)
+        report("pavement flexible: SN over subgrade", res["sn_required"], sn, 1e-4)
+        prov = 0.0
+        for i, L in enumerate(a_["layers"]):
+            mr_b = a_["layers"][i + 1]["modulus_mpa"] * 145.0377 if i + 1 < len(a_["layers"]) else mr
+            snr = brentq(lambda x: flex_logw(x, a_["reliability_zr"], a_["s0"], dpsi, mr_b) - math.log10(W), 0.01, 20)
+            t = max((snr - prov) / (L["a"] * L["m"]) * 25.4, L["min_mm"]); t = math.ceil(t / 5 - 1e-9) * 5
+            prov += L["a"] * L["m"] * t / 25.4
+            report(f"pavement flexible: {L['name']} thickness (mm)", res["layers"][i]["thickness_mm"], t, 0, "mm", rel=False)
+        report("pavement flexible: SN provided ≥ SN required", res["sn_provided"] - res["sn_required"], 0, 1e9, "", rel=False)
+    else:
+        D = brentq(lambda x: rigid_logw(x, a_["reliability_zr"], a_["s0"], dpsi, a_["pt"], a_["sc_mpa"] * 145.0377, a_["cd"], a_["j"], a_["ec_mpa"] * 145.0377, a_["k_mpa_m"] * 3.684) - math.log10(W), 4.5, 30)
+        report("pavement rigid: slab (mm, D·25.4 rounded up to 10)", res["layers"][0]["thickness_mm"], math.ceil(D * 25.4 / 10 - 1e-9) * 10, 0, "mm", rel=False)
+
+# ---------- 9. route alternatives: search cost re-derived with scipy.sparse.csgraph on the state graph ----------
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import dijkstra
+RA = load("route-alternatives.json"); ra_args = [e for e in LOG if e["tool"] == "generate_route_alternatives"][-1]["args"]
+bbox = [e for e in LOG if e["tool"] == "build_surface"][-1]["result"]["bbox"]
+cell = ra_args.get("cell_m", 10.0); nx = int(math.floor((bbox[2] - bbox[0]) / cell)) + 1; ny = int(math.floor((bbox[3] - bbox[1]) / cell)) + 1
+gx, gy = np.meshgrid(bbox[0] + np.arange(nx) * cell, bbox[1] + np.arange(ny) * cell)
+Z = eg(gx, gy)  # same EG triangles (LandXML Faces), independent interpolation
+gm = RA["recommendation"]["max_grade_pct_used"] / 100
+DIRS = [(1, 0), (2, 1), (1, 1), (1, 2), (0, 1), (-1, 2), (-1, 1), (-2, 1), (-1, 0), (-2, -1), (-1, -1), (-1, -2), (0, -1), (1, -2), (1, -1), (2, -1)]
+def seg_dist(P, A, B):
+    v = B - A; l2 = (v ** 2).sum(); t = np.clip(((P - A) @ v) / l2 if l2 > 0 else 0, 0, 1)
+    return np.hypot(*(A + t[:, None] * v - P).T)
+found = []
+worst_cost = 0
+for alt in RA["alternatives"]:
+    sp = alt["weights"]
+    pen = np.zeros((ny, nx))
+    if sp.get("avoid_previous_m", 0) > 0 and found:
+        P_ = np.c_[gx.ravel(), gy.ravel()]; dmin = np.full(len(P_), np.inf)
+        for poly in found:
+            poly = np.array(poly)
+            for k_ in range(len(poly) - 1):
+                dmin = np.minimum(dmin, seg_dist(P_, poly[k_], poly[k_ + 1]))
+        pen = np.where(dmin.reshape(ny, nx) < sp["avoid_previous_m"], 3.0, 0.0)
+    rows_, cols_, vals_ = [], [], []
+    J_, I_ = np.mgrid[0:ny, 0:nx]
+    for d in range(16):
+        for dd in (-1, 0, 1):
+            nd = (d + dd) % 16; di, dj = DIRS[nd]
+            ni, nj = I_ + di, J_ + dj
+            ok = (ni >= 0) & (nj >= 0) & (ni < nx) & (nj < ny)
+            i0, j0, i1, j1 = I_[ok], J_[ok], ni[ok], nj[ok]
+            z0, z1 = Z[j0, i0], Z[j1, i1]
+            l = math.hypot(di, dj) * cell
+            if abs(di) == 2 or abs(dj) == 2:
+                ai, aj = i0 + int(di / 2), j0 + int(dj / 2); bi, bj = i0 + int((di + np.sign(di)) / 2), j0 + int((dj + np.sign(dj)) / 2)
+                inb = (ai >= 0) & (aj >= 0) & (ai < nx) & (aj < ny) & (bi >= 0) & (bj >= 0) & (bi < nx) & (bj < ny)
+                zm = np.full(z0.shape, np.nan)
+                zm[inb] = (Z[aj[inb], ai[inb]] + Z[bj[inb], bi[inb]]) / 2
+                gr = np.maximum(np.abs(zm - z0), np.abs(z1 - zm)) / (l / 2)
+            else:
+                gr = np.abs(z1 - z0) / l
+            ex = np.clip(gr - gm, 0, None) * 100
+            c_ = (1 + sp["w_grade"] * ex * ex + sp["w_terrain"] * 100 * gr + pen[j1, i1]) * l + sp["w_turn"] * abs(dd) * cell
+            good = np.isfinite(c_)
+            rows_.append(((j0 * nx + i0) * 16 + d)[good]); cols_.append(((j1 * nx + i1) * 16 + nd)[good]); vals_.append(c_[good])
+    N = nx * ny * 16
+    Gm = coo_matrix((np.concatenate(vals_), (np.concatenate(rows_), np.concatenate(cols_))), shape=(N, N)).tocsr()
+    snap = lambda p: (int(np.clip(round((p[0] - bbox[0]) / cell), 0, nx - 1)), int(np.clip(round((p[1] - bbox[1]) / cell), 0, ny - 1)))
+    si, sj = snap(ra_args["start"]); ei, ej = snap(ra_args["end"])
+    dist = dijkstra(Gm, indices=[(sj * nx + si) * 16 + d for d in range(16)], min_only=True)
+    ref = min(dist[(ej * nx + ei) * 16 + d] for d in range(16))
+    report(f"route {alt['name']}: least-cost search cost vs scipy csgraph Dijkstra", alt["search_cost"], float(ref), 1e-6)
+    found.append(alt["path"])
+    plen = sum(math.dist(alt["path"][k_], alt["path"][k_ + 1]) for k_ in range(len(alt["path"]) - 1))
+    report(f"route {alt['name']}: path length (m)", alt["path_length_m"], plen, 1e-9)
+best = min((a_ for a_ in RA["alternatives"] if "error" not in a_["evaluation"]), key=lambda a_: (a_["evaluation"]["geometry_mandatory_failures"], a_["evaluation"]["cost_proxy"]))
+report("route recommendation = min(failures, cost proxy)", float(best["name"] == RA["recommendation"]["recommended"]), 1.0, 0, "", rel=False)
+for a_ in RA["alternatives"]:
+    e_ = a_["evaluation"]
+    if "error" in e_: continue
+    rt = RA["recommendation"]["rates"]
+    cp = rt["excavation"] * e_["cut_m3"] + rt["embankment"] * e_["fill_m3"] + rt["borrow_waste"] * abs(e_["imbalance_m3"]) + rt["wall_concrete"] * e_["wall_concrete_m3"] + rt["pavement_m2"] * e_["pavement_m2"]
+    report(f"route {a_['name']}: cost proxy from its quantities", e_["cost_proxy"], cp, 1e-9)
+
+# ---------- 10. protection: HEC-15 normal depth / shear / riprap and length of need ----------
+PR = load("protection.json"); pa = [e for e in LOG if e["tool"] == "design_protection"][-1]["args"]
+X_ = pa["runout_length_m"] * (pa["clear_zone_m"] - pa["barrier_offset_m"]) / pa["clear_zone_m"]
+worst_lon = max([abs(b_["length_of_need_m"] - X_) for b_ in PR["barriers"]] + [0])
+report("barrier length of need X = L_R(L_A − L_2)/L_A, max abs diff (m)", worst_lon, 0, 1e-9, "m", rel=False)
+dt = asm.get("ditch")
+def nb(da, d50):
+    r_ = max(da / d50, 1.5); return 0.319 * da ** (1 / 6) / (2.25 + 5.23 * math.log10(r_))
+wd = wt = 0; rip = 9e9
+for dch in PR["ditches"]:
+    b_, z1, z2, S = dt["bottom_width_m"], dt["foreslope_h"], asm["cut_slope_h"], dch["slope"]
+    name = dch["lining"]
+    if name.startswith("rock riprap"): d50 = dch["riprap_d50_m"]; nf = lambda y: nb(y, d50)
+    elif "25 mm" in name: nf = lambda y: nb(y, 0.025)
+    elif "50 mm" in name: nf = lambda y: nb(y, 0.05)
+    elif name.startswith("concrete"): nf = lambda y: 0.013
+    else: nf = lambda y: 0.020
+    def qy(y):
+        A = b_ * y + 0.5 * (z1 + z2) * y * y; P = b_ + y * (math.hypot(1, z1) + math.hypot(1, z2))
+        return A * (A / P) ** (2 / 3) * S ** 0.5 / nf(y)
+    y = brentq(lambda y: qy(y) - dch["q_max_m3s"], 1e-6, 5)
+    wd = max(wd, abs(y - dch["depth_m"])); wt = max(wt, abs(9810 * y * S - dch["tau_d"]))
+    if name.startswith("rock riprap"):
+        re_ = math.sqrt(9.81 * y * S) * d50 / 1.131e-6
+        F, SF = (0.047, 1.0) if re_ <= 4e4 else ((0.15, 1.5) if re_ >= 2e5 else (0.047 + (re_ - 4e4) / 1.6e5 * 0.103, 1 + (re_ - 4e4) / 1.6e5 * 0.5))
+        rip = min(rip, d50 - SF * y * S / (F * (pa.get("riprap_sg", 2.65) - 1)))
+    elif dch["tau_p"] is not None and math.isfinite(dch["tau_p"]):
+        report(f"ditch {dch['side']} {dch['from']:.0f}: τd ≤ τp ({name})", dch["tau_p"] - 9810 * y * S, 0, 1e9, "N/m²", rel=False)
+report("HEC-15 ditch normal depth (brentq), max abs diff (m)", wd, 0, 1e-4, "m", rel=False)
+report("HEC-15 τd = γ d S, max abs diff (N/m²)", wt, 0, 1e-2, "N/m²", rel=False)
+if rip < 9e9:
+    report("HEC-15 Eq 6.8 riprap: D50 − required (m, ≥ 0)", rip, 0, 1e9, "m", rel=False)
+
+# ---------- 11. earthwork: borrow/waste and overhaul (independent segment code) ----------
+EW = q["earthwork"]; kf = EW["shrink_factor"]
+report("borrow (compacted) = max(0, fill − cut·k)", EW["borrow_compacted_m3"], max(0.0, corr["fill_m3"] - corr["cut_m3"] * kf), 1e-9, "m³", rel=False)
+report("waste (bank) = max(0, cut·k − fill)/k", EW["waste_bank_m3"], max(0.0, corr["cut_m3"] * kf - corr["fill_m3"]) / kf, 1e-9, "m³", rel=False)
+o = np.array(mh["ordinates"]); FH = mh["free_haul_m"]
+cuts = [0]
+xs, ys = list(o[:, 0]), list(o[:, 1])
+X2, Y2 = [xs[0]], [ys[0]]; segs = []
+for k_ in range(1, len(xs)):
+    if ys[k_ - 1] * ys[k_] < 0:
+        t = ys[k_ - 1] / (ys[k_ - 1] - ys[k_]); xz = xs[k_ - 1] + t * (xs[k_] - xs[k_ - 1])
+        X2.append(xz); Y2.append(0.0); segs.append((X2, Y2)); X2, Y2 = [xz], [0.0]
+    X2.append(xs[k_]); Y2.append(ys[k_])
+segs.append((X2, Y2))
+oh = 0
+for X3, Y3 in segs:
+    if len(X3) < 2: continue
+    Y3 = np.abs(np.array(Y3) - Y3[0]); Vv = Y3.max(); Hh = np.trapezoid(Y3, X3)
+    if Vv > 0 and Hh / Vv > FH: oh += Hh - Vv * FH
+report("overhaul (segment method beyond free haul) (m³·m)", EW["overhaul_m3m"], oh, 1e-6)
+
+# ---------- 12. profile optimiser result: grades / crest lengths re-checked, objective improved ----------
+OP = [e for e in LOG if e["tool"] == "optimize_profile"][-1]["result"]
+vp = np.array(OP["vpis_after"]); cl = OP["curve_lengths_after"]
+g_ = np.diff(vp[:, 1]) / np.diff(vp[:, 0]) * 100
+report("optimised profile: max |grade| ≤ max grade (%)", basis["max_grade_pct"] - np.abs(g_).max(), 0, 1e9, "%", rel=False)
+worst_k = 9e9
+for k_ in range(1, len(vp) - 1):
+    A_ = g_[k_] - g_[k_ - 1]
+    if A_ < 0:
+        S_ = ssd_ref; L_ = abs(A_) * S_ * S_ / 658 if abs(A_) * S_ * S_ / 658 >= S_ else max(0, 2 * S_ - 658 / abs(A_))
+        worst_k = min(worst_k, cl[k_ - 1] - L_)
+report("optimised profile: crest length − AASHTO minimum (m, ≥ 0)", worst_k if worst_k < 9e9 else 0.0, 0, 1e9, "m", rel=False)
+report("optimiser objective after ≤ before", OP["objective_before"] - OP["objective_after"], 0, 1e12, "", rel=False)
+
+# ---------- 13. setting-out: FG elevations vs independent parabola evaluation ----------
+def zprof(s_):
+    for k_ in range(1, len(vp) - 1):
+        L_ = cl[k_ - 1]
+        if L_ > 0 and vp[k_][0] - L_ / 2 <= s_ <= vp[k_][0] + L_ / 2:
+            x = s_ - (vp[k_][0] - L_ / 2); g1, g2 = g_[k_ - 1] / 100, g_[k_] / 100
+            return vp[k_][1] - g1 * L_ / 2 + g1 * x + (g2 - g1) * x * x / (2 * L_)
+    k_ = max(0, min(len(vp) - 2, int(np.searchsorted(vp[:, 0], s_) - 1)))
+    return vp[k_][1] + g_[k_] / 100 * (s_ - vp[k_][0])
+so = [l.split(",") for l in open(f"{out}/setting-out.csv").read().split("# Centreline")[1].splitlines()[2:] if l and not l.startswith("#")]
+report("setting-out FG vs independent parabola, max abs diff (m)", max(abs(float(r_[4]) - zprof(float(r_[0]))) for r_ in so), 0, 6e-4, "m", rel=False)  # CSV writes 3 decimals (±0.0005 m) plus station rounding
+
+# ---------- 14. bill of quantities ties to the design ----------
+bq = [l.split(",") for l in open(f"{out}/boq.csv") if l[0] != "#" and not l.startswith("code")]
+gq = lambda key: sum(float(r_[-2]) for r_ in bq if key in ",".join(r_))
+report("BoQ roadway excavation = corridor cut (m³)", gq("Roadway excavation"), corr["cut_m3"], 0.05, "m³", rel=False)  # CSV writes 1 decimal
+report("BoQ embankment = corridor fill (m³)", gq("Embankment construction"), corr["fill_m3"], 0.01, "m³", rel=False)
+pl = sum(p["length"] for n_ in nets.values() for p in n_["pipes"])
+report("BoQ pipe length = network pipe lengths (m)", sum(float(r_[-2]) for r_ in bq if " pipe " in r_[1]), pl, 0.2, "m", rel=False)
+report("BoQ barrier length = barrier runs (m)", sum(float(r_[-2]) for r_ in bq if "guardrail" in r_[1].lower()), sum(b_["length_m"] for b_ in PR["barriers"]), 0.2, "m", rel=False)
 
 json.dump([dict(zip(["check", "civil_mcp", "independent", "diff", "unit", "ok"], r_)) for r_ in rows], open(f"{out}/independent-checks.json", "w"), ensure_ascii=False, indent=1)
 print(f"\n{len(rows)} checks, {len(fails)} failed")

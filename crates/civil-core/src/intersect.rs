@@ -164,7 +164,7 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
         for (k, (lsg, w2)) in [(1.0, w2l), (-1.0, w2r)].into_iter().enumerate() {
             let up_station = (lsg > 0.0) == (sg < 0.0);
             let r = if up_station { leg.return_radii_m[0] } else { leg.return_radii_m[1] };
-            checks.push(chk("I-RETURN", "Curb return radius ≥ design-vehicle minimum / 转角半径", format!("{} {} corner", leg.name, if up_station { "up-station" } else { "down-station" }), r, input.min_return_radius_m, "m", "min", "mandatory", "fillet tangent to main-road edge and leg edge".into(), "design basis (engineer-set for the design vehicle); AASHTO 2018 §9.6 / JTG D20-2017 平面交叉".into()));
+            checks.push(chk("I-RETURN", "Curb return radius ≥ design-vehicle minimum", format!("{} {} corner", leg.name, if up_station { "up-station" } else { "down-station" }), r, input.min_return_radius_m, "m", "min", "mandatory", "fillet tangent to main-road edge and leg edge".into(), "design basis (engineer-set for the design vehicle); AASHTO 2018 §9.6".into()));
             let mo: Vec<[f64; 2]> = edge(main_al, s0, sg * (w1 + r), 80.0 + r).iter().map(|p| p.0).collect();
             let lp = add(p0, nrm, lsg * (w2 + r));
             let (c, _, _) = line_poly(lp, dir, &mo).ok_or("return radius too large for the edges")?;
@@ -202,7 +202,7 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
         let g = leg.grade_pct / 100.0;
         let lpr = Profile::build(ProfileInput { name: format!("{} FG", leg.name), vpis: vec![[s_edge, tie_z], [leg.length_m, tie_z + g * (leg.length_m - s_edge)]], curve_lengths: vec![] })?;
         let lc = corridor::build(eg, &lal, &lpr, None, &leg.assembly, 10.0)?;
-        checks.push(chk("I-GRADE", "Approach grade ≤ limit / 引道纵坡", format!("leg {}", leg.name), leg.grade_pct.abs(), input.max_approach_grade_pct, "%", "max", "mandatory", "|grade| of the leg profile from the tie-in".into(), "design basis (engineer-set); AASHTO 2018 §9.5 / JTG D20-2017 平面交叉".into()));
+        checks.push(chk("I-GRADE", "Approach grade ≤ limit", format!("leg {}", leg.name), leg.grade_pct.abs(), input.max_approach_grade_pct, "%", "max", "mandatory", "|grade| of the leg profile from the tie-in".into(), "design basis (engineer-set); AASHTO 2018 §9.5".into()));
         // returns: elevations interpolated main edge → leg start section edge
         let first = &lc.sections[0];
         let zl = |left: bool| { let sd = if left { &first.left } else { &first.right }; corridor::interp(&sd.fg, sd.paved_width) };
@@ -293,7 +293,7 @@ pub fn design(input: &IntersectionInput, main_al: &Alignment, main_pr: &Profile,
                 }
             }
             let clear = worst.0 <= 0.0;
-            checks.push(chk("I-ISD", "Intersection sight triangle clear (stop control, case B1) / 视距三角区通视", format!("{} looking {}", leg.name, name), worst.0.max(-9.99), 0.0, "m above sight line", "max", "mandatory", format!("ISD = 0.278·V·t_g = 0.278·{}·{} = {:.1} m; eye 1.08 m at 4.4 m from edge, object 1.08 m", input.major_speed_kmh, input.time_gap_s, isd), "AASHTO 2018 §9.5.3 Case B1 (stop control on the minor road)".into()));
+            checks.push(chk("I-ISD", "Intersection sight triangle clear (stop control, case B1)", format!("{} looking {}", leg.name, name), worst.0.max(-9.99), 0.0, "m above sight line", "max", "mandatory", format!("ISD = 0.278·V·t_g = 0.278·{}·{} = {:.1} m; eye 1.08 m at 4.4 m from edge, object 1.08 m", input.major_speed_kmh, input.time_gap_s, isd), "AASHTO 2018 §9.5.3 Case B1 (stop control on the minor road)".into()));
             sight.push(SightLine { direction: name.into(), eye: [lane_c[0], lane_c[1], ez], target: [tp[0], tp[1], tz], leg_m: eye_t, along_major_m: (st - s0).abs(), max_obstruction_m: worst.0, obstruction_at: worst.1, triangle: [lane_c, pe, tp], clear });
         }
         legs.push(LegResult { name: leg.name.clone(), cl: [p0, pb], edge_left: [add(p0, nrm, w2l), add(pb, nrm, w2l)], edge_right: [add(p0, nrm, -w2r), add(pb, nrm, -w2r)], returns: rets, sight, corridor: lc, patch: poly, patch_faces: faces, patch_cut_m3: pc, patch_fill_m3: pf, tie_in_elev: tie_z, tie_in_station: s_edge });

@@ -1,9 +1,9 @@
-//! Bundled CJK font (Noto Sans SC, SIL OFL 1.1, subset to GB2312 + ASCII) and a
+//! Bundled Latin font (DejaVu Sans, Bitstream Vera / DejaVu free licence, see assets/DejaVuSans-LICENSE.txt) and a
 //! minimal TrueType glyph subsetter for PDF embedding.
 use std::collections::BTreeSet;
 
-pub const FONT: &[u8] = include_bytes!("../assets/NotoSansSC-Regular-GB2312.ttf");
-pub const FONT_FILE_NAME: &str = "NotoSansSC-Regular-GB2312.ttf";
+pub const FONT: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
+pub const FONT_FILE_NAME: &str = "DejaVuSans.ttf";
 
 pub struct Font {
     face: ttf_parser::Face<'static>,

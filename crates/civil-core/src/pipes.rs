@@ -5,10 +5,34 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PipeStandard {
-    #[serde(rename = "GB50014_2021")]
-    Gb50014,
+    /// FHWA HEC-22 storm-drain criteria (US; public domain).
     #[serde(rename = "FHWA_HEC22")]
     Hec22,
+    /// Engineer-entered criteria from the governing local standard (e.g. Sewers for Adoption / Design and
+    /// Construction Guidance, a provincial or state agency sewer standard, Ten States Standards).
+    #[serde(rename = "ENGINEER")]
+    Engineer,
+}
+
+/// Engineer-entered pipe criteria (required for ENGINEER; optional overrides for HEC-22).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LocalCriteria {
+    #[serde(default)]
+    pub min_velocity_mps: Option<f64>,
+    #[serde(default)]
+    pub max_velocity_mps: Option<f64>,
+    /// sanitary: maximum design depth ratio h/D at peak flow
+    #[serde(default)]
+    pub max_depth_ratio: Option<f64>,
+    #[serde(default)]
+    pub min_diameter_m: Option<f64>,
+    /// "harmon" | "ten_states" | "fixed"
+    #[serde(default)]
+    pub peaking: Option<String>,
+    #[serde(default)]
+    pub peak_factor: Option<f64>,
+    #[serde(default)]
+    pub citation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +56,8 @@ pub struct PipeCriteria {
     /// Required freeboard between structure HGL and rim (m).
     #[serde(default = "d_fb")]
     pub freeboard_m: f64,
+    #[serde(default)]
+    pub local: LocalCriteria,
 }
 fn d_fb() -> f64 {
     0.3
@@ -107,9 +133,9 @@ pub struct PipeResult {
     pub v_design: f64,
     pub cover_up: f64,
     pub cover_dn: f64,
-    /// Sanitary only: average dry-weather flow (m³/s) and GB 50014 peaking factor Kz.
+    /// Sanitary only: average dry-weather flow (m³/s) and peaking factor.
     pub q_avg: f64,
-    pub kz: f64,
+    pub peak_factor: f64,
     pub hgl_up: f64,
     pub hgl_dn: f64,
     pub egl_up: f64,
@@ -141,18 +167,14 @@ pub struct Network {
 
 pub const G: f64 = 9.80665;
 
-/// GB 50014-2021 综合生活污水量总变化系数 Kz vs average flow (L/s), linear between rows.
-pub fn gb_kz(q_avg_ls: f64) -> f64 {
-    let t = [(5.0, 2.7), (15.0, 2.4), (40.0, 2.1), (70.0, 2.0), (100.0, 1.9), (200.0, 1.8), (500.0, 1.6), (1000.0, 1.5)];
-    if q_avg_ls <= t[0].0 {
-        return t[0].1;
-    }
-    for w in t.windows(2) {
-        if q_avg_ls <= w[1].0 {
-            return w[0].1 + (w[1].1 - w[0].1) * (q_avg_ls - w[0].0) / (w[1].0 - w[0].0);
-        }
-    }
-    1.5
+/// Harmon peaking factor, P = population in thousands: PF = 1 + 14/(4 + √P).
+pub fn harmon_pf(p_thousands: f64) -> f64 {
+    1.0 + 14.0 / (4.0 + p_thousands.sqrt())
+}
+/// Ten States Standards (Recommended Standards for Wastewater Facilities, 2014) Figure 1:
+/// PF = (18 + √P)/(4 + √P), P = population in thousands.
+pub fn ten_states_pf(p_thousands: f64) -> f64 {
+    (18.0 + p_thousands.sqrt()) / (4.0 + p_thousands.sqrt())
 }
 
 /// HEC-22 approximate method, manhole loss coefficient vs deflection angle
@@ -239,20 +261,6 @@ pub fn depth_for(d: f64, n: f64, s: f64, q: f64) -> Option<f64> {
     Some((lo + hi) / 2.0)
 }
 
-/// GB 50014-2021 maximum design depth ratio for sanitary sewers by diameter.
-pub fn gb_max_depth_ratio(d: f64) -> f64 {
-    if d <= 0.3 {
-        0.55
-    } else if d <= 0.45 {
-        0.65
-    } else if d <= 0.9 {
-        0.70
-    } else {
-        0.75
-    }
-}
-
-const GB: &str = "GB 50014-2021 室外排水设计标准";
 const HEC: &str = "FHWA HEC-22 Urban Drainage Design Manual (3rd ed.)";
 
 pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> crate::Result<Network> {
@@ -304,9 +312,11 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
     let mut ca = vec![0.0; ns];
     let mut base = vec![0.0; ns];
     let mut avg = vec![0.0; ns];
+    let mut pop = vec![0.0; ns];
     for i in 0..ns {
         ca[i] = input.structures[i].c * input.structures[i].area_ha;
         base[i] = input.structures[i].inflow_m3s;
+        pop[i] = input.structures[i].population;
         avg[i] = input.structures[i].population * input.structures[i].per_capita_lpd / 1000.0 / 86400.0;
     }
     let storm = cr.system == "storm";
@@ -322,12 +332,22 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
         let j = idx(&p.to)?;
         let (s0, s1) = (&input.structures[i], &input.structures[j]);
         let len = ((s1.x - s0.x).powi(2) + (s1.y - s0.y).powi(2)).sqrt();
-        let kz = if avg[i] > 0.0 { gb_kz(avg[i] * 1000.0) } else { 0.0 };
+        let kz = if avg[i] > 0.0 {
+            match cr.local.peaking.as_deref() {
+                Some("harmon") => harmon_pf(pop[i] / 1000.0),
+                Some("ten_states") => ten_states_pf(pop[i] / 1000.0),
+                Some("fixed") => cr.local.peak_factor.ok_or("peaking 'fixed' needs peak_factor")?,
+                _ => return Err("sanitary flows need criteria.local.peaking = harmon | ten_states | fixed (engineer choice)".into()),
+            }
+        } else {
+            0.0
+        };
         let q = ca[i] * cr.intensity_mm_h.unwrap_or(0.0) / 360.0 + base[i] + kz * avg[i];
         let q_avg = avg[i];
         ca[j] += ca[i];
         base[j] += base[i];
         avg[j] += avg[i];
+        pop[j] += pop[i];
         let inv_up = (rim[i] - cr.min_cover_m - p.diameter_m).min(lowest_in[i] - cr.structure_drop_m);
         let smin = p.min_slope.unwrap_or(cr.min_slope);
         let inv_dn = (inv_up - smin * len).min(rim[j] - cr.min_cover_m - p.diameter_m);
@@ -342,23 +362,30 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
         let (qf, vf) = manning_full(p.diameter_m, p.n, slope);
         let y = depth_for(p.diameter_m, p.n, slope, q);
         let vd = y.map_or(vf, |y| manning_partial(p.diameter_m, p.n, slope, y).1);
-        let r = PipeResult { id: p.id.clone(), from: p.from.clone(), to: p.to.clone(), length: len, diameter_m: p.diameter_m, material: p.material.clone(), invert_up: inv_up, invert_dn: inv_dn, slope, q_design: q, q_full: qf, v_full: vf, depth_ratio: y.unwrap_or(f64::INFINITY), v_design: vd, cover_up: rim[i] - inv_up - p.diameter_m, cover_dn: rim[j] - inv_dn - p.diameter_m, q_avg, kz, hgl_up: f64::NAN, hgl_dn: f64::NAN, egl_up: f64::NAN, egl_dn: f64::NAN, regime: String::new() };
+        let r = PipeResult { id: p.id.clone(), from: p.from.clone(), to: p.to.clone(), length: len, diameter_m: p.diameter_m, material: p.material.clone(), invert_up: inv_up, invert_dn: inv_dn, slope, q_design: q, q_full: qf, v_full: vf, depth_ratio: y.unwrap_or(f64::INFINITY), v_design: vd, cover_up: rim[i] - inv_up - p.diameter_m, cover_dn: rim[j] - inv_dn - p.diameter_m, q_avg, peak_factor: kz, hgl_up: f64::NAN, hgl_dn: f64::NAN, egl_up: f64::NAN, egl_dn: f64::NAN, regime: String::new() };
         let el = format!("pipe {}", p.id);
         let mf = format!("Manning (SI): Q = (1/n)·A·R^(2/3)·S^(1/2), n={}, S={:.5}, D={} m", p.n, slope, p.diameter_m);
         checks.push(chk("P-COVER", "Minimum cover", el.clone(), r.cover_up.min(r.cover_dn), cr.min_cover_m, "m", "min", "mandatory", "rim − invert − D at both ends".into(), "design basis (engineer-set)".into()));
         checks.push(chk("P-SLOPE", "Minimum slope", el.clone(), slope, cr.min_slope, "m/m", "min", "mandatory", "(inv_up − inv_dn)/L".into(), "design basis (engineer-set)".into()));
         match (&cr.standard, storm) {
-            (PipeStandard::Gb50014, true) => {
-                checks.push(chk("P-CAP", "管道满流能力 ≥ 设计流量", el.clone(), qf, q, "m³/s", "min", "mandatory", format!("{mf}; Q_design = Σ(C·A)·i/360 + base"), format!("{GB}, 雨水管道按满流计算")));
-                checks.push(chk("P-VMIN", "雨水管满流最小流速", el.clone(), vf, 0.75, "m/s", "min", "mandatory", mf.clone(), format!("{GB}, 最小设计流速")));
-                checks.push(chk("P-VMAX", "非金属管最大流速", el.clone(), vf, 5.0, "m/s", "max", "mandatory", mf.clone(), format!("{GB}, 最大设计流速")));
-            }
-            (PipeStandard::Gb50014, false) => {
-                let lim = gb_max_depth_ratio(p.diameter_m);
-                checks.push(chk("P-DEPTH", "污水管最大设计充满度", el.clone(), r.depth_ratio, lim, "h/D", "max", "mandatory", format!("{mf}; depth solved for Q={q:.4} m³/s"), format!("{GB}, 最大设计充满度表")));
-                checks.push(chk("P-VMIN", "污水管设计充满度下最小流速", el.clone(), vd, 0.6, "m/s", "min", "mandatory", mf.clone(), format!("{GB}, 最小设计流速")));
-                checks.push(chk("P-VMAX", "非金属管最大流速", el.clone(), vd, 5.0, "m/s", "max", "mandatory", mf.clone(), format!("{GB}, 最大设计流速")));
-                checks.push(chk("P-DMIN", "污水管最小管径", el.clone(), p.diameter_m, 0.3, "m", "min", "mandatory", "D".into(), format!("{GB}, 最小管径（污水管 300 mm）")));
+            (PipeStandard::Engineer, _) => {
+                let lc = &cr.local;
+                let cite = if lc.citation.is_empty() { "engineer-entered criteria (no citation given)".to_string() } else { lc.citation.clone() };
+                let (vchk, vname) = if storm { (vf, "full-flow") } else { (vd, "design-flow") };
+                if storm {
+                    checks.push(chk("P-CAP", "Full-flow capacity ≥ design flow", el.clone(), qf, q, "m³/s", "min", "mandatory", format!("{mf}; Q = C·i·A/360 (SI rational)"), cite.clone()));
+                } else {
+                    let lim = lc.max_depth_ratio.ok_or("sanitary ENGINEER criteria need local.max_depth_ratio")?;
+                    checks.push(chk("P-DEPTH", "Maximum depth ratio at peak flow", el.clone(), r.depth_ratio, lim, "h/D", "max", "mandatory", format!("{mf}; depth solved for Q={q:.4} m³/s"), cite.clone()));
+                }
+                let vmin = lc.min_velocity_mps.ok_or("ENGINEER criteria need local.min_velocity_mps")?;
+                checks.push(chk("P-VMIN", &format!("Minimum {vname} velocity (self-cleansing)"), el.clone(), vchk, vmin, "m/s", "min", "mandatory", mf.clone(), cite.clone()));
+                if let Some(vmax) = lc.max_velocity_mps {
+                    checks.push(chk("P-VMAX", &format!("Maximum {vname} velocity"), el.clone(), vchk, vmax, "m/s", "max", "mandatory", mf.clone(), cite.clone()));
+                }
+                if let Some(dm) = lc.min_diameter_m {
+                    checks.push(chk("P-DMIN", "Minimum diameter", el.clone(), p.diameter_m, dm, "m", "min", "mandatory", "D".into(), cite.clone()));
+                }
             }
             (PipeStandard::Hec22, _) => {
                 checks.push(chk("P-CAP", "Full-flow capacity ≥ design flow", el.clone(), qf, q, "m³/s", "min", "mandatory", format!("{mf}; Q = C·i·A/360 (SI rational)"), format!("{HEC}, Ch.6 storm drain hydraulics")));
@@ -441,7 +468,7 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
     let mut hyd = Vec::new();
     for i in 0..ns {
         let id = input.structures[i].id.clone();
-        checks.push(chk("P-HGL", "Structure HGL below rim minus freeboard / 检查井水位低于井盖减安全高", format!("structure {id}"), s_hgl[i], rim[i] - cr.freeboard_m, "m", "max", "mandatory", format!("HGL_s = EGL_out + K·Vo²/2g, K={:.2}; freeboard {} m", s_k[i], cr.freeboard_m), format!("{HEC}, energy grade line evaluation (approximate method)")));
+        checks.push(chk("P-HGL", "Structure HGL below rim minus freeboard", format!("structure {id}"), s_hgl[i], rim[i] - cr.freeboard_m, "m", "max", "mandatory", format!("HGL_s = EGL_out + K·Vo²/2g, K={:.2}; freeboard {} m", s_k[i], cr.freeboard_m), format!("{HEC}, energy grade line evaluation (approximate method)")));
         hyd.push(StructHydraulics { id, rim: rim[i], hgl: s_hgl[i], egl: s_egl[i], k: s_k[i], deflection_deg: s_def[i], loss_m: s_loss[i] });
     }
     for r in &results {
@@ -471,10 +498,10 @@ mod tests {
         assert!((y - 0.5).abs() < 1e-6);
     }
     #[test]
-    fn kz_table_and_hgl_full_flow() {
-        assert_eq!(gb_kz(5.0), 2.7);
-        assert!((gb_kz(10.0) - 2.55).abs() < 1e-12);
-        assert_eq!(gb_kz(2000.0), 1.5);
+    fn peaking_and_hgl_full_flow() {
+        assert!((harmon_pf(1.0) - 3.8).abs() < 1e-12);
+        assert!((ten_states_pf(1.0) - 3.8).abs() < 1e-12);
+        assert!((ten_states_pf(100.0) - 2.0).abs() < 1e-12);
         assert_eq!(hec22_k(0.0), 0.15);
         assert!((hec22_k(30.0) - (0.45 + 0.30 * 7.5 / 22.5)).abs() < 1e-12);
         // one pipe, tailwater 1 m above the outlet crown → full flow; HGL_up = TW + Sf·L

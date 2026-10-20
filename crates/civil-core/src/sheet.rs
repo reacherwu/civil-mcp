@@ -92,34 +92,34 @@ fn title_block(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, page: usize
     for line in wrap(&info.project, 26.0) {
         t(d, &line, 4.0, "TITLE");
     }
-    t(d, &format!("图名 Sheet: {sheet_title}"), 3.0, "TITLE");
-    t(d, &format!("图号 {page}/{pages}"), 2.5, "TITLE");
-    t(d, &format!("规范 Std: {}", info.standard), 2.5, "TITLE");
-    t(d, &format!("设计速度 Design speed: {:.0} km/h", info.design_speed), 2.5, "TITLE");
-    t(d, &format!("检查 Checks: {}/{} 通过 pass", info.checks_total - info.checks_failed, info.checks_total), 2.5, "TITLE");
-    t(d, "审计日志 Audit log head:", 2.5, "TITLE");
+    t(d, &format!("Sheet: {sheet_title}"), 3.0, "TITLE");
+    t(d, &format!("Sheet {page} of {pages}"), 2.5, "TITLE");
+    t(d, &format!("Standards: {}", info.standard), 2.5, "TITLE");
+    t(d, &format!("Design speed: {:.0} km/h", info.design_speed), 2.5, "TITLE");
+    t(d, &format!("Checks: {}/{} pass", info.checks_total - info.checks_failed, info.checks_total), 2.5, "TITLE");
+    t(d, "Audit log head:", 2.5, "TITLE");
     let h = info.audit_head.clone();
     t(d, &h[..32.min(h.len())], 2.0, "TITLE");
     t(d, &h[32.min(h.len())..], 2.0, "TITLE");
-    t(d, "编制 Prepared by: civil-mcp agent tools", 2.5, "TITLE");
-    t(d, &format!("负责工程师 Engineer in responsible charge:"), 2.5, "TITLE");
+    t(d, "Prepared by: civil-mcp agent tools", 2.5, "TITLE");
+    t(d, &format!("Engineer in responsible charge:"), 2.5, "TITLE");
     t(d, &info.engineer, 2.5, "TITLE");
     match info.approved_seq {
         Some(seq) if info.checks_failed == 0 => {
-            t(d, "工程师已在审计日志中批准", 3.0, "STAMP");
+            t(d, "APPROVED IN AUDIT LOG", 3.0, "STAMP");
             t(d, &format!("Approved in audit log, entry #{seq}"), 2.5, "STAMP");
-            t(d, "盖章由工程师本人完成 Seal applied by engineer only", 2.2, "STAMP");
+            t(d, "Seal applied by the engineer only", 2.2, "STAMP");
         }
         _ => {
-            t(d, "初步设计 PRELIMINARY", 6.0, "STAMP");
-            t(d, "不得用于施工", 5.0, "STAMP");
+            t(d, "PRELIMINARY", 6.0, "STAMP");
+            t(d, "NOT FOR CONSTRUCTION", 5.0, "STAMP");
             t(d, "NOT FOR CONSTRUCTION", 4.0, "STAMP");
-            t(d, "未经注册工程师审核盖章", 2.5, "STAMP");
+            t(d, "Not reviewed or sealed by a licensed engineer", 2.5, "STAMP");
             t(d, "Not reviewed or sealed by a licensed engineer.", 2.2, "STAMP");
         }
     }
     d.rect("TITLE", tx0 + 10.0, ty0 + 10.0, tx1 - 10.0, ty0 + 90.0);
-    d.text("TITLE", [tx0 + 14.0, ty0 + 13.0], 2.2, "注册工程师签章 ENGINEER SEAL / SIGNATURE");
+    d.text("TITLE", [tx0 + 14.0, ty0 + 13.0], 2.2, "ENGINEER SEAL / SIGNATURE");
 }
 
 pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) -> Drawing {
@@ -204,7 +204,7 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         let txt = if c.ls_in > 0.0 { format!("JD{} R={:.0} Ls={:.0} α={:.2}°", c.index, c.radius, c.ls_in, c.delta_deg.abs()) } else { format!("JD{} R={:.0} L={:.1} α={:.2}°", c.index, c.radius, c.arc_len, c.delta_deg.abs()) };
         d.text("TEXT", [p[0] + 3.0, p[1] - 6.0], 2.2, &txt);
     }
-    d.text("TEXT", [px0 + 4.0, py1 - 7.0], 4.0, &format!("平面图 PLAN  1:{n:.0}   等高线 1 m（计曲线 5 m）  N↑"));
+    d.text("TEXT", [px0 + 4.0, py1 - 7.0], 4.0, &format!("PLAN  1:{n:.0}   contours 1 m (index 5 m)  N↑"));
     d.poly("TEXT", vec![[px1 - 15.0, py1 - 25.0], [px1 - 12.0, py1 - 10.0], [px1 - 9.0, py1 - 25.0]]);
     // profile
     let (qx0, qy0, qx1, qy1) = (20.0, 20.0, SHEET_W - 160.0, 290.0);
@@ -242,8 +242,8 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         d.line("GRID", tq(st, zmin), tq(st, zmax));
         d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 14.0], 2.0, &sta_label(st));
         if let (Some(zd), Some(zg)) = (pr.elevation_at(st), al.point_at(st).and_then(|(x, y, _)| tin.elevation_at(x, y))) {
-            d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 9.0], 1.8, &format!("设计 {zd:.2}"));
-            d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 5.0], 1.8, &format!("地面 {zg:.2}"));
+            d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 9.0], 1.8, &format!("FG {zd:.2}"));
+            d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 5.0], 1.8, &format!("EG {zg:.2}"));
         }
         st += 100.0;
     }
@@ -258,11 +258,11 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         let v = pr.input.vpis[c.vpi_index];
         let p = tq(v[0], v[1]);
         d.poly("PROFILE-DESIGN", vec![[p[0], p[1]], [p[0], p[1] + 12.0]]);
-        d.text("TEXT", [p[0] - 10.0, p[1] + 14.0], 2.0, &format!("变坡点 {} 高程 {:.2}", sta_label(v[0]), v[1]));
-        d.text("TEXT", [p[0] - 10.0, p[1] + 17.0], 2.0, &format!("{} R={:.0} L={:.0}", if c.crest { "凸" } else { "凹" }, c.length / (c.a_pct.abs() / 100.0).max(1e-9), c.length));
+        d.text("TEXT", [p[0] - 10.0, p[1] + 14.0], 2.0, &format!("VPI {} EL {:.2}", sta_label(v[0]), v[1]));
+        d.text("TEXT", [p[0] - 10.0, p[1] + 17.0], 2.0, &format!("{} R={:.0} L={:.0}", if c.crest { "CREST" } else { "SAG" }, c.length / (c.a_pct.abs() / 100.0).max(1e-9), c.length));
     }
-    d.text("TEXT", [qx0 + 4.0, qy1 - 7.0], 4.0, &format!("纵断面图 PROFILE  H 1:{:.0}  V 1:{:.0}（地面线棕色，设计线红色）", 1000.0 / hs, 1000.0 / vs));
-    title_block(&mut d, info, "平纵面图 Plan & Profile", page, pages);
+    d.text("TEXT", [qx0 + 4.0, qy1 - 7.0], 4.0, &format!("PROFILE  H 1:{:.0}  V 1:{:.0}  (existing ground brown, finished grade red)", 1000.0 / hs, 1000.0 / vs));
+    title_block(&mut d, info, "Plan and profile", page, pages);
     d
 }
 
@@ -312,7 +312,7 @@ fn plan_intersection(d: &mut Drawing, x: &Intersection, tp: &dyn Fn(f64, f64) ->
     }
     if label {
         let p = tp(x.point[0], x.point[1]);
-        d.text("TEXT", [p[0] + 3.0, p[1] + 3.0], 2.2, &format!("{} {} 平交 at-grade", x.name, sta_label(x.main_station)));
+        d.text("TEXT", [p[0] + 3.0, p[1] + 3.0], 2.2, &format!("{} {} at-grade intersection", x.name, sta_label(x.main_station)));
     }
 }
 
@@ -385,7 +385,7 @@ pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) 
                 d.line("STRUCTURE", tp(c, h.rim), tp(c, p.invert_up.min(p.invert_dn) - 0.3));
                 d.line("HGL", [tp(c, h.hgl)[0] - 1.5, tp(c, h.hgl)[1]], [tp(c, h.hgl)[0] + 1.5, tp(c, h.hgl)[1]]);
                 if c == ca {
-                    d.text("STRUCTURE", [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} 井顶 {:.2} HGL {:.2} K={:.2}", id, h.rim, h.hgl, h.k));
+                    d.text("STRUCTURE", [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} RIM {:.2} HGL {:.2} K={:.2}", id, h.rim, h.hgl, h.k));
                 }
             }
         }
@@ -393,21 +393,21 @@ pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) 
     if let Some(p) = best.last() {
         if let Some(h) = hyd(&p.to) {
             let c = total;
-            d.text("STRUCTURE", [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} 出口 outfall HGL {:.2}", p.to, h.hgl));
+            d.text("STRUCTURE", [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} OUTFALL HGL {:.2}", p.to, h.hgl));
         }
     }
     d.poly("PROFILE-GROUND", rim);
-    d.text("TEXT", [x0 + 4.0, y1 - 7.0], 4.0, &format!("管道纵断面 PIPE PROFILE — {}  H 1:{:.0} V 1:{:.0}", net.name, 1000.0 / hs, 1000.0 / vs));
-    d.text("TEXT", [x0 + 4.0, y1 - 13.0], 2.2, &format!("青=水力坡降线 HGL，红=能量线 EGL，棕=井顶 rim；方法 {}", net.hgl_method));
+    d.text("TEXT", [x0 + 4.0, y1 - 7.0], 4.0, &format!("PIPE PROFILE - {}  H 1:{:.0} V 1:{:.0}", net.name, 1000.0 / hs, 1000.0 / vs));
+    d.text("TEXT", [x0 + 4.0, y1 - 13.0], 2.2, &format!("cyan = HGL, red = EGL, brown = rim; method {}", net.hgl_method));
     let mut y = y0 - 8.0;
     for c in net.checks.iter().filter(|c| !c.pass) {
-        d.text("TEXT", [x0, y], 2.0, &format!("{} {} {} {}: {:.3} vs {} {:.3} {}", c.id, if c.severity == "mandatory" { "强制" } else { "提示 advisory" }, c.element, c.item, c.value, c.kind, c.limit, c.unit));
+        d.text("TEXT", [x0, y], 2.0, &format!("{} {} {} {}: {:.3} vs {} {:.3} {}", c.id, if c.severity == "mandatory" { "mandatory" } else { "advisory" }, c.element, c.item, c.value, c.kind, c.limit, c.unit));
         y -= 4.0;
         if y < 14.0 {
             break;
         }
     }
-    title_block(&mut d, info, &format!("管道纵断面 Pipe profile {}", net.name), page, pages);
+    title_block(&mut d, info, &format!("Pipe profile {}", net.name), page, pages);
     d
 }
 
@@ -469,16 +469,16 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
                     d.fill("WALL", vec![tp(o, zt), tp(o, zbt), tp(o + back * wd.stem_bot, zbt), tp(o + back * wd.stem_top, zt)], [0.7, 0.7, 0.75]);
                     let (a, b) = (o - back * wd.toe, o - back * wd.toe + back * wd.base_b);
                     d.fill("WALL", vec![tp(a, zb), tp(b, zb), tp(b, zbt), tp(a, zbt)], [0.7, 0.7, 0.75]);
-                    d.text("TEXT", [tp(o, zt)[0] - 6.0, tp(o, zt)[1] + 2.0], 1.5, &format!("挡墙 H={:.1} B={:.2}", wd.h, wd.base_b));
+                    d.text("TEXT", [tp(o, zt)[0] - 6.0, tp(o, zt)[1] + 2.0], 1.5, &format!("WALL H={:.1} B={:.2}", wd.h, wd.base_b));
                 }
             }
             d.line("GRID", tp(0.0, zlo), tp(0.0, zlo + hmax - 2.0));
-            d.text("TEXT", [x0 + 4.0, y1 - 7.0], 2.5, &format!("桩号 {}", sta_label(s.station)));
-            d.text("TEXT", [x0 + 4.0, y0 + 7.0], 1.8, &format!("设计 {:.2} 地面 {:.2}  挖 {:.1} m² 填 {:.1} m²", s.cl_elev, s.ground_cl, s.cut_area, s.fill_area));
-            d.text("TEXT", [x0 + 4.0, y0 + 3.5], 1.6, &format!("横坡 左 {:+.2}% 右 {:+.2}%  坡脚/坡顶 左 {:.1} 右 {:.1} m", s.slope_left * 100.0, s.slope_right * 100.0, s.left.daylight, s.right.daylight));
+            d.text("TEXT", [x0 + 4.0, y1 - 7.0], 2.5, &format!("STA {}", sta_label(s.station)));
+            d.text("TEXT", [x0 + 4.0, y0 + 7.0], 1.8, &format!("FG {:.2} EG {:.2}  cut {:.1} m² fill {:.1} m²", s.cl_elev, s.ground_cl, s.cut_area, s.fill_area));
+            d.text("TEXT", [x0 + 4.0, y0 + 3.5], 1.6, &format!("cross slope L {:+.2}% R {:+.2}%  daylight L {:.1} R {:.1} m", s.slope_left * 100.0, s.slope_right * 100.0, s.left.daylight, s.right.daylight));
         }
-        d.text("TEXT", [20.0, 12.0], 2.5, &format!("横断面图 CROSS SECTIONS 1:{nice:.0}（红=挖方 cut，绿=填方 fill，绿线=路基设计线 datum）"));
-        title_block(&mut d, info, "横断面图 Cross sections", first_page + pi, pages);
+        d.text("TEXT", [20.0, 12.0], 2.5, &format!("CROSS SECTIONS 1:{nice:.0}  (red = cut, green = fill, green line = subgrade datum)"));
+        title_block(&mut d, info, "Cross sections", first_page + pi, pages);
         out.push(d);
     }
     out
@@ -509,9 +509,9 @@ pub fn mass_haul_sheet(mh: &MassHaul, rows: &[MaterialRow], c: &Corridor, nets: 
     for b in &mh.balance_stations {
         let p = tp(*b, 0.0);
         d.line("ALIGNMENT", [p[0], p[1] - 4.0], [p[0], p[1] + 4.0]);
-        d.text("TEXT", [p[0] + 1.0, p[1] + 5.0], 1.8, &format!("平衡点 {}", sta_label(*b)));
+        d.text("TEXT", [p[0] + 1.0, p[1] + 5.0], 1.8, &format!("BAL {}", sta_label(*b)));
     }
-    d.text("TEXT", [x0 + 4.0, y1 - 7.0], 4.0, &format!("土方调配图 MASS HAUL (m³)  挖方系数 cut factor {:.2}  终点累计 {:.0} m³", mh.cut_factor, mh.final_ordinate));
+    d.text("TEXT", [x0 + 4.0, y1 - 7.0], 4.0, &format!("MASS HAUL (m³)  cut factor {:.2}  final ordinate {:.0} m³", mh.cut_factor, mh.final_ordinate));
     // material table
     let mut y = y0 - 12.0;
     let row = |d: &mut Drawing, cols: &[String], y: f64, h: f64| {
@@ -520,7 +520,7 @@ pub fn mass_haul_sheet(mh: &MassHaul, rows: &[MaterialRow], c: &Corridor, nets: 
             d.text("TEXT", [xs[i.min(7)], y], h, c);
         }
     };
-    let mut head = vec!["桩号范围 Station".to_string(), "挖方 Cut m³".into(), "填方 Fill m³".into()];
+    let mut head = vec!["Station range".to_string(), "Cut m³".into(), "Fill m³".into()];
     head.extend(c.assembly.pavement.iter().map(|l| format!("{} m³", l.name)));
     row(&mut d, &head, y, 2.5);
     y -= 6.0;
@@ -533,12 +533,12 @@ pub fn mass_haul_sheet(mh: &MassHaul, rows: &[MaterialRow], c: &Corridor, nets: 
             break;
         }
     }
-    let mut tot = vec!["合计 Total".to_string(), format!("{:.0}", c.cut_m3), format!("{:.0}", c.fill_m3)];
+    let mut tot = vec!["Total".to_string(), format!("{:.0}", c.cut_m3), format!("{:.0}", c.fill_m3)];
     tot.extend(c.layer_m3.iter().map(|v| format!("{:.1}", v.1)));
     row(&mut d, &tot, y, 2.5);
     y -= 10.0;
     for n in nets {
-        d.text("TEXT", [20.0, y], 3.0, "管道材料表 Pipe schedule");
+        d.text("TEXT", [20.0, y], 3.0, "Pipe schedule");
         y -= 6.0;
         let mut by: std::collections::BTreeMap<(String, i64), f64> = Default::default();
         for p in &n.pipes {
@@ -548,14 +548,14 @@ pub fn mass_haul_sheet(mh: &MassHaul, rows: &[MaterialRow], c: &Corridor, nets: 
             d.text("TEXT", [20.0, y], 2.0, &format!("{m} DN{dmm}: {l:.1} m"));
             y -= 4.5;
         }
-        d.text("TEXT", [20.0, y], 2.0, &format!("检查井 Structures: {}", n.structures.len()));
+        d.text("TEXT", [20.0, y], 2.0, &format!("Structures: {}", n.structures.len()));
         y -= 8.0;
     }
     for g in grads {
-        d.text("TEXT", [20.0, y], 2.0, &format!("场平 Grading {}: 挖 {:.0} m³  填 {:.0} m³ (方格网 {} m)", g.name, g.cut_m3, g.fill_m3, g.cell_m));
+        d.text("TEXT", [20.0, y], 2.0, &format!("Grading {}: cut {:.0} m³  fill {:.0} m³ (grid {} m)", g.name, g.cut_m3, g.fill_m3, g.cell_m));
         y -= 4.5;
     }
-    title_block(&mut d, info, "土方调配及工程量 Mass haul & quantities", page, pages);
+    title_block(&mut d, info, "Mass haul and quantities", page, pages);
     d
 }
 
@@ -576,7 +576,7 @@ pub fn model(ds: &Design, contour_interval: f64) -> Drawing {
         let (x, y, h) = ds.al.point_at(st).unwrap();
         let (nx, ny) = (-h.sin(), h.cos());
         d.line("TEXT", [x - 5.0 * nx, y - 5.0 * ny], [x + 5.0 * nx, y + 5.0 * ny]);
-        d.text("TEXT", [x + 7.0 * nx, y + 7.0 * ny], 4.0, &format!("桩号 {}", sta_label(st)));
+        d.text("TEXT", [x + 7.0 * nx, y + 7.0 * ny], 4.0, &format!("STA {}", sta_label(st)));
         st += 100.0;
     }
     if let Some(c) = ds.corridor {

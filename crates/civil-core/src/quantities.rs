@@ -70,3 +70,79 @@ pub fn material_table(c: &Corridor, step: f64) -> Vec<MaterialRow> {
     }
     rows
 }
+
+/// Earthwork summary with shrinkage, bulking, free haul / overhaul and borrow / waste.
+#[derive(Debug, Clone, Serialize)]
+pub struct Earthwork {
+    pub cut_bank_m3: f64,
+    pub fill_compacted_m3: f64,
+    /// compacted-volume factor applied to cut (e.g. 0.90 = 10 % shrinkage)
+    pub shrink_factor: f64,
+    /// loose-volume factor for haulage (e.g. 1.25 = 25 % bulking)
+    pub bulking_factor: f64,
+    pub usable_cut_compacted_m3: f64,
+    pub borrow_compacted_m3: f64,
+    pub waste_bank_m3: f64,
+    pub waste_loose_m3: f64,
+    pub haul_loose_m3: f64,
+    pub free_haul_m: f64,
+    /// per balanced segment: (from, to, volume m³, haul moment m³·m, average haul m, overhaul m³·m)
+    pub segments: Vec<[f64; 6]>,
+    pub overhaul_m3m: f64,
+    pub method: String,
+}
+
+pub fn earthwork(c: &Corridor, mh: &MassHaul, bulking: f64) -> Earthwork {
+    let o = &mh.ordinates;
+    // split at zero crossings
+    let mut segs = Vec::new();
+    let mut cur: Vec<[f64; 2]> = vec![o[0]];
+    for w in o.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if (a[1] > 0.0 && b[1] < 0.0) || (a[1] < 0.0 && b[1] > 0.0) {
+            let t = a[1] / (a[1] - b[1]);
+            let z = [a[0] + t * (b[0] - a[0]), 0.0];
+            cur.push(z);
+            segs.push(std::mem::replace(&mut cur, vec![z]));
+        }
+        cur.push(b);
+    }
+    segs.push(cur);
+    let mut rows = Vec::new();
+    let mut over = 0.0;
+    for s in &segs {
+        if s.len() < 2 {
+            continue;
+        }
+        // volume moved inside a segment = peak |M| relative to the segment's end ordinates
+        let base = s[0][1];
+        let v = s.iter().map(|p| (p[1] - base).abs()).fold(0.0, f64::max);
+        let mut h = 0.0;
+        for w in s.windows(2) {
+            h += ((w[0][1] - base).abs() + (w[1][1] - base).abs()) / 2.0 * (w[1][0] - w[0][0]);
+        }
+        let avg = if v > 0.0 { h / v } else { 0.0 };
+        let oh = if avg > mh.free_haul_m { h - v * mh.free_haul_m } else { 0.0 };
+        over += oh;
+        rows.push([s[0][0], s.last().unwrap()[0], v, h, avg, oh]);
+    }
+    let usable = c.cut_m3 * mh.cut_factor;
+    let borrow = (c.fill_m3 - usable).max(0.0);
+    let waste_c = (usable - c.fill_m3).max(0.0);
+    let waste_bank = waste_c / mh.cut_factor;
+    Earthwork {
+        cut_bank_m3: c.cut_m3,
+        fill_compacted_m3: c.fill_m3,
+        shrink_factor: mh.cut_factor,
+        bulking_factor: bulking,
+        usable_cut_compacted_m3: usable,
+        borrow_compacted_m3: borrow,
+        waste_bank_m3: waste_bank,
+        waste_loose_m3: waste_bank * bulking,
+        haul_loose_m3: c.cut_m3 * bulking,
+        free_haul_m: mh.free_haul_m,
+        segments: rows,
+        overhaul_m3m: over,
+        method: "Mass ordinates M = Σ(cut·shrink − fill). The diagram is split at balance points; in each segment V = peak |M − M_start| and H = ∫|M − M_start| ds. Average haul = H/V; overhaul = H − V·free-haul when the average haul exceeds free haul (approximation of the free-haul-band method). The end ordinate gives borrow (−) or waste (+).".into(),
+    }
+}

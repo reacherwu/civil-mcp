@@ -33,40 +33,26 @@ pub struct Superelevation {
     pub curves: Vec<SuperCurve>,
 }
 
-/// AASHTO 2018 metric maximum relative gradient (%), by design speed (Table 3-15 values).
-pub fn aashto_max_rel_gradient_pct(v: f64) -> f64 {
-    let t = [(20.0, 0.80), (30.0, 0.75), (40.0, 0.70), (50.0, 0.65), (60.0, 0.60), (70.0, 0.55), (80.0, 0.50), (90.0, 0.47), (100.0, 0.44), (110.0, 0.41), (120.0, 0.38), (130.0, 0.35)];
-    let mut best = t[0];
-    for r in t {
-        if (r.0 - v).abs() < (best.0 - v).abs() {
-            best = r
-        }
-    }
-    best.1
-}
-
 pub fn design(b: &DesignBasis, al: &Alignment) -> crate::Result<Superelevation> {
+    let r0 = standards::resolve(b)?;
     let nc = b.normal_crown;
     let w = b.lane_width_m * b.lanes_rotated_per_side;
     let v = b.design_speed_kmh;
     let emax = b.e_max.ok_or("e_max must be set by the engineer")?;
-    let f = b.f_max.ok_or("f_max (side friction / JTG μ) must be set by the engineer")?;
     let mut out = Vec::new();
     for c in al.curves() {
         let r = c.radius;
         let (e, method) = match b.standard {
-            Standard::Aashto2018 => {
-                let rmin = v * v / (127.0 * (emax + f));
-                (emax * rmin / r, format!("AASHTO Method 1: e = emax·Rmin/R = {emax}·{rmin:.1}/{r:.1}"))
-            }
-            Standard::JtgD20_2017 => {
-                let row = standards::jtg_row(v).ok_or("unsupported JTG speed")?;
-                if r >= row.no_super_radius {
-                    (0.0, format!("R ≥ 不设超高最小半径 {} m", row.no_super_radius))
+            Standard::Uk => {
+                let row = standards::cd109_row(v).unwrap();
+                if r >= row[3] {
+                    (0.0, format!("CD 109 §4.1: R ≥ {} m (adverse camber permitted), normal camber retained", row[3]))
                 } else {
-                    (v * v / (127.0 * r) - f, format!("i = V²/(127R) − μ = {v}²/(127·{r:.1}) − {f}"))
+                    let s = v * v / (2.828 * r) / 100.0;
+                    (s.max(0.025), format!("CD 109 Eq 4.2: S = V²/(2.828R) = {v}²/(2.828·{r:.1}) % (min 2.5 % once adverse camber is removed)"))
                 }
             }
+            _ => (emax * r0.r_min / r, format!("proportional distribution (AASHTO Method 1): e = emax·Rmin/R = {emax}·{:.1}/{r:.1}; engineer to confirm against the jurisdiction's e/R table", r0.r_min)),
         };
         let (e, note) = if e <= nc + 1e-12 {
             if e > 0.0 {
@@ -83,24 +69,13 @@ pub fn design(b: &DesignBasis, al: &Alignment) -> crate::Result<Superelevation> 
             out.push(SuperCurve { curve: c.index, radius: r, dir: c.dir, e, method, required_length: 0.0, a_in: c.sta_start, b_in: c.sta_start, b_out: c.sta_end, a_out: c.sta_end, relative_gradient: 0.0, note });
             continue;
         }
-        // required transition length (edge rise / allowed relative gradient)
-        let req = match b.standard {
-            Standard::Aashto2018 => w * (e + nc) / (aashto_max_rel_gradient_pct(v) / 100.0),
-            Standard::JtgD20_2017 => w * (e + nc) * standards::jtg_row(v).unwrap().rel_gradient_inv,
-        };
+        // required development length (edge rise / allowed relative gradient)
+        let req = w * (e + nc) / (r0.rel_grad_pct / 100.0);
         let spiral = c.ls_in > 0.0;
         let (lin, lout) = if spiral { (c.ls_in.max(req), c.ls_out.max(req)) } else { (req, req) };
-        // where the full superelevation is reached (B) on entry/exit
-        let (b_in, b_out) = if spiral {
-            (c.sta_cs_start, c.sta_cs_end)
-        } else {
-            match b.standard {
-                // AASHTO: ~2/3 of runoff (here: of the transition) on the tangent
-                Standard::Aashto2018 => (c.sta_start + lin / 3.0, c.sta_end - lout / 3.0),
-                // JTG: simple curve, transition placed on the tangent, full e from PC
-                Standard::JtgD20_2017 => (c.sta_start, c.sta_end),
-            }
-        };
+        // where full superelevation is reached (B): on a spiral at the SC/CS; on a simple curve
+        // two-thirds of the development lies on the tangent (AASHTO practice; engineer may vary).
+        let (b_in, b_out) = if spiral { (c.sta_cs_start, c.sta_cs_end) } else { (c.sta_start + lin / 3.0, c.sta_end - lout / 3.0) };
         let (b_in, b_out) = if b_in > b_out { let m = (c.sta_start + c.sta_end) / 2.0; (m, m) } else { (b_in, b_out) };
         let a_in = b_in - lin;
         let a_out = b_out + lout;

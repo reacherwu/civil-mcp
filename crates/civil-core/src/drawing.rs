@@ -1,6 +1,6 @@
 //! Drawing model with DXF (R12 ASCII) and PDF (vector, multi-page) writers.
-//! Text uses the bundled Noto Sans SC font: embedded as a subset TrueType
-//! (CIDFontType2, Identity-H, ToUnicode) in PDF; in DXF a CJK text style
+//! Text uses the bundled DejaVu Sans font: embedded as a subset TrueType
+//! (CIDFontType2, Identity-H, ToUnicode) in PDF; in DXF a text style "SANS"
 //! referencing the font file, with non-ASCII characters as \U+XXXX escapes.
 use crate::font::{self, Font};
 use std::collections::BTreeSet;
@@ -65,7 +65,7 @@ impl Drawing {
         let mut g = |c: i32, v: &str| {
             let _ = writeln!(o, "{c}\n{v}");
         };
-        for (c, v) in [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1009"), (9, "$DWGCODEPAGE"), (3, "ANSI_936"), (9, "$INSUNITS"), (70, if self.units_mm { "4" } else { "6" }), (9, "$TEXTSTYLE"), (7, "CJK"), (0, "ENDSEC")] {
+        for (c, v) in [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1009"), (9, "$DWGCODEPAGE"), (3, "ANSI_1252"), (9, "$INSUNITS"), (70, if self.units_mm { "4" } else { "6" }), (9, "$TEXTSTYLE"), (7, "SANS"), (0, "ENDSEC")] {
             g(c, v);
         }
         for (c, v) in [(0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "LTYPE"), (70, "1"), (0, "LTYPE"), (2, "CONTINUOUS"), (70, "0"), (3, "Solid line"), (72, "65"), (73, "0"), (40, "0.0"), (0, "ENDTAB")] {
@@ -85,7 +85,7 @@ impl Drawing {
         g(0, "TABLE");
         g(2, "STYLE");
         g(70, "2");
-        for (name, file) in [("STANDARD", "txt"), ("CJK", font::FONT_FILE_NAME)] {
+        for (name, file) in [("STANDARD", "txt"), ("SANS", font::FONT_FILE_NAME)] {
             g(0, "STYLE");
             g(2, name);
             g(70, "0");
@@ -140,7 +140,7 @@ impl Drawing {
                     g(30, "0.0");
                     g(40, &f(*h));
                     g(1, &dxf_text(s));
-                    g(7, "CJK");
+                    g(7, "SANS");
                 }
             }
         }
@@ -210,8 +210,8 @@ pub fn to_pdf(pages: &[(&Drawing, f64, f64)]) -> Vec<u8> {
                         uni.entry(gid).or_insert(ch);
                         let _ = write!(hex, "{gid:04X}");
                     }
-                    // h is the cap height in mm; Noto cap height ≈ 0.733 em
-                    let _ = writeln!(c, "{} {} {} rg BT /F1 {:.2} Tf {:.2} {:.2} Td <{}> Tj ET", r[0], r[1], r[2], h / 0.733 * k, p[0] * k, p[1] * k, hex);
+                    // h is the cap height in mm; DejaVu Sans cap height ≈ 0.729 em
+                    let _ = writeln!(c, "{} {} {} rg BT /F1 {:.2} Tf {:.2} {:.2} Td <{}> Tj ET", r[0], r[1], r[2], h / 0.729 * k, p[0] * k, p[1] * k, hex);
                 }
             }
         }
@@ -223,13 +223,13 @@ pub fn to_pdf(pages: &[(&Drawing, f64, f64)]) -> Vec<u8> {
     let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 8 + 2 * i)).collect();
     objs.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
     objs.push(format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), n).into_bytes());
-    objs.push(b"<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+NotoSansSC-Regular /Encoding /Identity-H /DescendantFonts [4 0 R] /ToUnicode 7 0 R >>".to_vec());
+    objs.push(b"<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+DejaVuSans /Encoding /Identity-H /DescendantFonts [4 0 R] /ToUnicode 7 0 R >>".to_vec());
     let mut w = String::new();
     for g in &used {
         let _ = write!(w, "{} [{:.0}] ", g, font.advance(*g) * 1000.0 / upm);
     }
-    objs.push(format!("<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+NotoSansSC-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 5 0 R /CIDToGIDMap /Identity /DW 1000 /W [{w}] >>").into_bytes());
-    objs.push(b"<< /Type /FontDescriptor /FontName /AAAAAA+NotoSansSC-Regular /Flags 4 /FontBBox [-1000 -300 2000 1100] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 733 /StemV 80 /FontFile2 6 0 R >>".to_vec());
+    objs.push(format!("<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+DejaVuSans /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 5 0 R /CIDToGIDMap /Identity /DW 1000 /W [{w}] >>").into_bytes());
+    objs.push(b"<< /Type /FontDescriptor /FontName /AAAAAA+DejaVuSans /Flags 4 /FontBBox [-1000 -300 2000 1100] /ItalicAngle 0 /Ascent 928 /Descent -236 /CapHeight 729 /StemV 80 /FontFile2 6 0 R >>".to_vec());
     let sub = deflate(&font::subset(&used));
     let mut ff = format!("<< /Length {} /Filter /FlateDecode >>\nstream\n", sub.len()).into_bytes();
     ff.extend_from_slice(&sub);

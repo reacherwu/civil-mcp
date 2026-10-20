@@ -21,11 +21,11 @@ fn roundtrip_alignment_profile_surface_points() {
     let prof = Profile::build(ProfileInput { name: "FG".into(), vpis: vec![[0.0, 100.0], [300.0, 106.0], [al.length, 98.0]], curve_lengths: vec![120.0] }).unwrap();
     let pts: Vec<[f64; 3]> = (0..60).map(|i| { let (x, y) = ((i * 37 % 100) as f64, (i * 61 % 90) as f64); [x, y, 50.0 + 0.1 * x - 0.05 * y] }).collect();
     let (tin, st) = Tin::build(&pts, None).unwrap();
-    let sp = vec![SurveyPoint { id: "1".into(), e: 1.5, n: 2.5, z: 3.25, desc: "道路 & <edge>".into() }];
+    let sp = vec![SurveyPoint { id: "1".into(), e: 1.5, n: 2.5, z: 3.25, desc: "road & <edge> é".into() }];
     let x = write(&Export { points: &sp, surfaces: vec![("EG", &tin)], alignment: Some(&al), profiles: vec![&prof], networks: vec![] });
     let d = read(&x).unwrap();
     assert_eq!(d.points.len(), 1);
-    assert_eq!(d.points[0].desc, "道路 & <edge>");
+    assert_eq!(d.points[0].desc, "road & <edge> é");
     assert!((d.points[0].e - 1.5).abs() < 1e-9 && (d.points[0].n - 2.5).abs() < 1e-9);
     let s = &d.surfaces[0];
     assert_eq!(s.faces.len(), st.triangles);

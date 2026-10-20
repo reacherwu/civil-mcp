@@ -69,15 +69,15 @@ pub struct SideCfg {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WideningSpec {
-    /// "JTG" or "AASHTO"
+    /// "AASHTO" (off-tracking formula; Green Book §3.3.10) or "TABLE" (engineer-entered radius → widening table)
     pub method: String,
-    #[serde(default = "d_cls")]
-    pub jtg_class: u8,
+    /// engineer table for method TABLE: [[radius_upper_m, widening_m], ...]
+    #[serde(default)]
+    pub table: Vec<[f64; 2]>,
+    #[serde(default)]
+    pub table_citation: String,
     #[serde(default)]
     pub vehicle: Option<Vehicle>,
-}
-fn d_cls() -> u8 {
-    1
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -355,7 +355,7 @@ fn intersect(g: &dyn Fn(f64) -> Option<f64>, a: [f64; 2], b: [f64; 2]) -> Option
     None
 }
 
-fn side(cfg: &SideCfg, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>, extra_w: f64, std_jtg: bool) -> SideSection {
+fn side(cfg: &SideCfg, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>, extra_w: f64, wc: Option<&crate::walls::Criteria>) -> SideSection {
     let mut fg = vec![[0.0, cl]];
     let mut codes = vec!["CL".to_string()];
     let mut o = 0.0;
@@ -436,7 +436,7 @@ fn side(cfg: &SideCfg, slope: f64, cl: f64, g: &dyn Fn(f64) -> Option<f64>, extr
                 let exposed = if cut { gz - start[1] } else { start[1] - gz };
                 if exposed > 0.0 {
                     let h = exposed + rule.embedment_m;
-                    let cr = crate::walls::criteria(std_jtg);
+                    let cr = wc.cloned().ok_or("retaining wall needed but no wall criteria for this standards profile (enter design_basis.wall_criteria)").unwrap_or_else(|e| crate::walls::Criteria { fs_sliding: f64::INFINITY, fs_overturning: f64::INFINITY, e_frac: 0.0, qmax_factor: 0.0, citation: e.to_string() });
                     let mut d = crate::walls::proportion(&rule.kind, h, &rule.soil, &cr);
                     d.exposed_h = exposed;
                     let trigger = if trig_off { format!("daylight {:.1} m > ROW {:.1} m", last[0], rule.max_daylight_offset_m.unwrap()) } else { format!("slope height {:.1} m > {:.1} m", height, rule.max_slope_height_m.unwrap()) };
@@ -580,11 +580,12 @@ pub fn sample_stations(al: &Alignment, pr: &Profile, se: Option<&Superelevation>
 }
 
 pub fn section_at(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, s: f64) -> crate::Result<Section> {
-    section_at_opts(tin, al, pr, se, asm, s, (0.0, 0.0), true)
+    let wc = crate::walls::criteria(crate::standards::Standard::Us, None)?;
+    section_at_opts(tin, al, pr, se, asm, s, (0.0, 0.0), Some(&wc))
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn section_at_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, s: f64, widen: (f64, f64), std_jtg: bool) -> crate::Result<Section> {
+pub fn section_at_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, s: f64, widen: (f64, f64), wc: Option<&crate::walls::Criteria>) -> crate::Result<Section> {
     let (x, y, h) = al.point_at(s).ok_or("station off alignment")?;
     let cl = pr.elevation_at(s).ok_or("station off profile")?;
     let (nx, ny) = (-h.sin(), h.cos());
@@ -592,8 +593,8 @@ pub fn section_at_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Supe
     let (sl, sr) = se.map_or((-0.02, -0.02), |e| e.slopes_at(s));
     let gl = |o: f64| ground_at(tin, x, y, nx, ny, o);
     let gr = |o: f64| ground_at(tin, x, y, nx, ny, -o);
-    let left = side(&asm.side_cfg(true), sl, cl, &gl, widen.0, std_jtg);
-    let right = side(&asm.side_cfg(false), sr, cl, &gr, widen.1, std_jtg);
+    let left = side(&asm.side_cfg(true), sl, cl, &gl, widen.0, wc);
+    let right = side(&asm.side_cfg(false), sr, cl, &gr, widen.1, wc);
     let (cl_, fl) = side_areas(&left.datum, &gl, left.daylight);
     let (cr, fr) = side_areas(&right.datum, &gr, right.daylight);
     let pw = left.paved_width + right.paved_width;
@@ -611,7 +612,8 @@ pub fn section_at_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Supe
 }
 
 pub fn build(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, interval: f64) -> crate::Result<Corridor> {
-    build_opts(tin, al, pr, se, asm, interval, None, 0.0, true)
+    let wc = crate::walls::criteria(crate::standards::Standard::Us, None)?;
+    build_opts(tin, al, pr, se, asm, interval, None, 0.0, Some(&wc))
 }
 
 /// Widening at a station: (left, right). Full value on the arc, linear over the
@@ -632,7 +634,7 @@ pub fn widening_at(al: &Alignment, w: &[f64], s: f64) -> (f64, f64) {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, interval: f64, widening: Option<&WideningSpec>, speed: f64, std_jtg: bool) -> crate::Result<Corridor> {
+pub fn build_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelevation>, asm: &Assembly, interval: f64, widening: Option<&WideningSpec>, speed: f64, wc: Option<&crate::walls::Criteria>) -> crate::Result<Corridor> {
     asm.validate()?;
     if !(interval > 0.0) {
         return Err("interval must be > 0".into());
@@ -643,12 +645,12 @@ pub fn build_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelev
         let lw = asm.lanes_m.iter().sum::<f64>() / asm.lanes_m.len() as f64;
         for c in al.curves() {
             let r = match ws.method.as_str() {
-                "JTG" => crate::widening::jtg(c.radius, ws.jtg_class),
+                "TABLE" => crate::widening::table(c.radius, &ws.table, &ws.table_citation),
                 "AASHTO" => crate::widening::aashto(c.radius, speed, lanes, lw, ws.vehicle.as_ref().ok_or("AASHTO widening needs a design vehicle")?),
                 m => return Err(format!("unknown widening method {m}")),
             };
             if r.widening_m.is_nan() {
-                return Err(format!("radius {:.1} m is below the JTG widening table for this vehicle class", c.radius));
+                return Err(format!("radius {:.1} m is below the smallest radius in the widening table", c.radius));
             }
             wres.push(r);
         }
@@ -669,7 +671,7 @@ pub fn build_opts(tin: &Tin, al: &Alignment, pr: &Profile, se: Option<&Superelev
     st.dedup_by(|a, b| (*a - *b).abs() < 0.01);
     let mut secs = Vec::new();
     for &s in &st {
-        secs.push(section_at_opts(tin, al, pr, se, asm, s, widening_at(al, &wv, s), std_jtg)?);
+        secs.push(section_at_opts(tin, al, pr, se, asm, s, widening_at(al, &wv, s), wc)?);
     }
     let (mut cut, mut fill) = (0.0, 0.0);
     let mut layers = vec![0.0; asm.pavement.len()];
