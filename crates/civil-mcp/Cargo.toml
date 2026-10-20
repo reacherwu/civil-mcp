@@ -1,0 +1,9 @@
+[package]
+name = "civil-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+civil-core = { path = "../civil-core" }
+serde_json.workspace = true

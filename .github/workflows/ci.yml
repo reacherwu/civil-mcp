@@ -1,0 +1,27 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --release
+      - run: cargo run --release -p civil-demo -- demo-out
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install numpy scipy ezdxf pypdf
+      - name: DXF audit (ezdxf)
+        run: |
+          python - <<'PY'
+          from ezdxf import recover
+          for f in ["demo-out/model.dxf", "demo-out/sheet.dxf"]:
+              doc, aud = recover.readfile(f)
+              a = doc.audit()
+              print(f, len(doc.modelspace()), "entities, audit errors", len(a.errors), "recover fixes", len(aud.fixes))
+              assert len(a.errors) == 0 and len(aud.fixes) == 0
+          PY
+      - name: PDF parses
+        run: python -c "import pypdf; r=pypdf.PdfReader('demo-out/sheet.pdf'); assert len(r.pages)==1; print(r.pages[0].mediabox)"
+      - name: Independent earthwork check (grid method)
+        run: python scripts/independent_check.py demo-out data/usgs3dep_palo_alto_points.csv data/dem.npy 573453.1190335779 4140465.753309465 4.476935297746677
