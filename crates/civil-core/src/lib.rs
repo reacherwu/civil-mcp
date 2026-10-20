@@ -1,6 +1,14 @@
 #![recursion_limit = "512"]
 //! civil-core: survey points, TIN surfaces, alignments, profiles, design-standard
 //! checks, earthwork, drawings, and an append-only audit log.
+pub mod hydrology;
+pub mod culvert;
+pub mod slope;
+pub mod subsurface;
+pub mod mech;
+pub mod reinforce;
+pub mod traffic;
+pub mod landuse;
 pub mod align;
 pub mod landxml;
 pub mod superelev;
