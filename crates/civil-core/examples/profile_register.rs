@@ -27,7 +27,7 @@ fn main() {
                 }
             }
         };
-        let c = |k: &str| r.params.iter().filter(|p| p.status.to_string() == k).count();
+        let c = |k: &str| r.params.iter().filter(|p| p.status.to_string().as_str() == k).count();
         println!("{s},{},{},{},{},{}", c("verified"), c("formula"), c("engineer"), r.params.len(), added.join(" "));
         for p in &r.params {
             eprintln!("{s}|{}|{}|{}", p.name, p.status, p.source);
