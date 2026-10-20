@@ -21,8 +21,12 @@ pub struct RebarInput {
     pub surcharge_kpa: f64,
     #[serde(default)]
     pub source: String,
+    /// bars per bundle (1 = single bars; bundles up to the agency limit, e.g. AASHTO LRFD 5.10.3.1.5)
+    #[serde(default = "d_one")]
+    pub bars_per_bundle: f64,
 }
 fn d_phi() -> f64 { 0.9 }
+fn d_one() -> f64 { 1.0 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RebarResult { pub station: f64, pub side: String, pub stem_h_m: f64, pub t_m: f64, pub mu_knm: f64, pub d_m: f64, pub as_req_mm2: f64, pub as_min_mm2: f64, pub as_mm2: f64, pub spacing_mm: f64, pub ok: bool, pub note: String }
@@ -42,7 +46,7 @@ pub fn stem(inp: &RebarInput, hs: f64, t: f64) -> (f64, f64, f64, f64, f64, f64,
     let as_req = if ok { (-qb - disc.sqrt()) / (2.0 * qa) } else { f64::NAN };
     let as_min = inp.min_ratio * b * t;
     let as_ = as_req.max(as_min);
-    let ab = std::f64::consts::PI * (inp.bar_d_mm / 1000.0).powi(2) / 4.0;
+    let ab = inp.bars_per_bundle.max(1.0) * std::f64::consts::PI * (inp.bar_d_mm / 1000.0).powi(2) / 4.0;
     let sp = (ab / as_ * 1000.0 / 5.0).floor() * 5.0 * 1000.0 / 1000.0;
     (mu, d, as_req * 1e6, as_min * 1e6, as_ * 1e6, sp.min(450.0), ok)
 }

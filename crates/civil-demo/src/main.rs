@@ -233,6 +233,60 @@ pub fn run(out: &str) -> Session {
     println!("protection: {} hazards, {} barrier runs ({:.0} m), {} ditch reaches ({}), mandatory failures {}", res["hazards"], res["barriers"].as_array().unwrap().len(), res["barriers"].as_array().unwrap().iter().map(|b| b["length_m"].as_f64().unwrap()).sum::<f64>(), res["ditches"].as_array().unwrap().len(), res["ditches"].as_array().unwrap().iter().map(|d| d["lining"].as_str().unwrap().to_string()).collect::<Vec<_>>().join("; "), res["mandatory_failures"]);
     let v = r.call("compute_quantities", json!({"cut_factor":0.9,"bulking_factor":1.25,"free_haul_m":150.0,"table_step_m":100.0}));
     println!("mass haul: final ordinate {:.0} m3, balance points {}, borrow {:.0} m3, waste {:.0} m3 (bank), overhaul {:.0} m3·m", v["result"]["final_ordinate_m3"].as_f64().unwrap(), v["result"]["balance_stations"], v["result"]["borrow_compacted_m3"].as_f64().unwrap(), v["result"]["waste_bank_m3"].as_f64().unwrap(), v["result"]["overhaul_m3m"].as_f64().unwrap());
+    // ---- v5: hydrology, culverts, geotechnical, subsurface drainage, traffic, land and utilities
+    let demo = "DEMO VALUE - engineer to replace";
+    let v = r.call("design_hydrology", json!({"idf": {"label": "10-yr illustrative IDF", "points": [[5.0, 86.0], [10.0, 62.0], [15.0, 51.0], [30.0, 35.0], [60.0, 24.0], [120.0, 16.0], [360.0, 8.8], [1440.0, 3.9]], "source": "DEMO VALUES - not NOAA Atlas 14; engineer to enter the PFDS table for the site"}, "method": "rational", "c": 0.35, "cell_m": 10.0, "min_area_ha": 2.0}));
+    println!("hydrology: {} crossings; Q = {}", v["result"]["crossings"].as_array().unwrap().len(), v["result"]["catchments"].as_array().unwrap().iter().map(|c| format!("{}:{:.3}", c["id"].as_str().unwrap(), c["q_m3s"].as_f64().unwrap())).collect::<Vec<_>>().join(", "));
+    let v = r.call("design_culverts", json!({"inlet": "concrete_groove_headwall", "n": 0.012, "sizes_m": [0.45, 0.6, 0.75, 0.9, 1.05, 1.2, 1.5, 1.8, 2.1, 2.4], "hw_d_max": 1.2, "freeboard_m": 0.5, "min_cover_m": 0.3, "v_out_max_ms": 4.5, "tailwater_m": 0.0, "source": demo}));
+    println!("culverts: {}", v["result"]["culverts"].as_array().unwrap().iter().map(|c| if c["hyd"].is_object() { format!("{} D{:.2} HW/D {:.2} {}", c["id"].as_str().unwrap(), c["hyd"]["d_m"].as_f64().unwrap(), c["hyd"]["hw_m"].as_f64().unwrap() / c["hyd"]["d_m"].as_f64().unwrap(), c["hyd"]["control"].as_str().unwrap()) } else { format!("{} in cut", c["id"].as_str().unwrap()) }).collect::<Vec<_>>().join("; "));
+    let v = r.call("check_slope_stability", json!({"soil": {"c_kpa": 8.0, "phi_deg": 30.0, "gamma_knm3": 19.0, "ru": 0.1, "source": demo}, "fs_min": 1.3, "geotech_report_ref": "GEOTECH REPORT PLACEHOLDER (no site investigation in the demo)"}));
+    println!("slope stability: {}", v["result"]["sections"].as_array().unwrap().iter().map(|s| format!("{} {} {:.2}/{:.2}", s["kind"].as_str().unwrap(), s["station"].as_f64().unwrap() as i64, s["circle"]["fs_bishop"].as_f64().unwrap(), s["circle"]["fs_spencer"].as_f64().unwrap())).collect::<Vec<_>>().join("; "));
+    let v = r.call("design_subsurface_drainage", json!({"crack_spacing_m": 12.0, "k_layer_m_day": 300.0, "layer_thickness_m": 0.1, "porosity": 0.25, "pipe_d_m": 0.1, "max_outlet_spacing_m": 150.0, "m_coefficient": 1.0, "t50_target_h": 24.0, "source": demo}));
+    println!("subsurface drainage: t50 {:.2} h, outlet spacing {:.0} m", v["result"]["result"]["t50_hours"].as_f64().unwrap(), v["result"]["result"]["outlet_spacing_m"].as_f64().unwrap());
+    let v = r.call("check_pavement_mechanistic", json!({"layers": [{"name": "asphalt", "h_m": 0.1, "e_mpa": 3000.0}, {"name": "base", "h_m": 0.3, "e_mpa": 300.0}], "subgrade_e_mpa": 50.0, "vb_pct": 11.0, "rf": 1.0, "design_esa": 1.0e6}));
+    println!("mechanistic screening: subgrade N {:.3e}, asphalt N {:.3e}", v["result"]["result"]["n_sub"].as_f64().unwrap(), v["result"]["result"]["n_ac"].as_f64().unwrap());
+    // the agent steps the bar size (then bundles) until every wall fits; each attempt is logged
+    for (bar, bundle) in [(16.0, 1.0), (20.0, 1.0), (25.0, 1.0), (32.0, 1.0), (32.0, 2.0)] {
+        let v = r.call("design_wall_reinforcement", json!({"fc_mpa": 28.0, "fy_mpa": 420.0, "phi": 0.9, "load_factor": 1.5, "cover_m": 0.05, "bar_d_mm": bar, "bars_per_bundle": bundle, "min_ratio": 0.0018, "gamma_knm3": 19.0, "phi_soil_deg": 30.0, "surcharge_kpa": 10.0, "source": demo}));
+        let fails = v["result"]["checks"].as_array().unwrap().iter().filter(|c| !c["pass"].as_bool().unwrap()).count();
+        println!("wall stem reinforcement: {} mm bars x{bundle}: {} sections, {fails} walls failing bar spacing", bar, v["result"]["sections"].as_array().unwrap().len());
+        if fails == 0 { break; }
+    }
+    let v = r.call("design_marking_signing", json!({"eye_h_m": 1.08, "min_zone_m": 150.0, "curve_warning_r_m": 300.0, "lateral_clear_m": 8.0}));
+    println!("marking: {} no-passing zones, {} signs", v["result"]["no_passing"].as_array().unwrap().len(), v["result"]["signs"].as_array().unwrap().len());
+    let v = r.call("design_lighting", json!({"lumens": 20000.0, "cu": 0.45, "llf": 0.8, "e_avg_lux": 9.0, "mounting_h_m": 12.0, "arrangement": "single_side", "max_spacing_to_height": 4.0, "source": demo}));
+    println!("lighting: spacing {:.1} m, {} poles", v["result"]["spacing_m"].as_f64().unwrap(), v["result"]["poles"].as_array().unwrap().len());
+    r.call("plan_traffic_management", json!({"existing_speed_kmh": 72.0, "lane_w_m": 3.6}));
+    // synthetic utility records and parcels for the demo (no real records are used)
+    let (utils, parcels) = {
+        let al = r.s.alignment.as_ref().unwrap();
+        let (s0, s1) = (al.start_station(), al.end_station());
+        let mut u = vec![];
+        for (k, (frac, kind, depth, dia)) in [(0.3, "water main", 1.2, 0.3), (0.55, "gas", 0.9, 0.15), (0.8, "telecom duct", 0.6, 0.1)].iter().enumerate() {
+            let (x, y, h) = al.point_at(s0 + (s1 - s0) * frac).unwrap();
+            let (nx, ny) = (-h.sin(), h.cos());
+            let sk: f64 = 0.3;
+            let (dx, dy) = (nx * sk.cos() + h.cos() * sk.sin(), ny * sk.cos() + h.sin() * sk.sin());
+            u.push(json!({"id": format!("U{}", k + 1), "kind": kind, "owner": "DEMO UTILITY OWNER", "polyline": [[x - 120.0 * dx, y - 120.0 * dy], [x + 120.0 * dx, y + 120.0 * dy]], "depth_m": depth, "diameter_m": dia, "quality_level": "QL-D (synthetic demo record)"}));
+        }
+        let pts: Vec<[f64; 2]> = (0..=40).filter_map(|i| al.point_at(s0 + (s1 - s0) * i as f64 / 40.0).map(|p| [p.0, p.1])).collect();
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for p in &pts { x0 = x0.min(p[0]); y0 = y0.min(p[1]); x1 = x1.max(p[0]); y1 = y1.max(p[1]); }
+        let (x0, y0, x1, y1) = (x0 - 80.0, y0 - 80.0, x1 + 80.0, y1 + 80.0);
+        let (xm, ym) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        let pc: Vec<Value> = [(x0, y0, xm, ym), (xm, y0, x1, ym), (x0, ym, xm, y1), (xm, ym, x1, y1)].iter().enumerate().map(|(i, b)| json!({"id": format!("LOT-{}", i + 1), "owner": "DEMO PARCEL", "polygon": [[b.0, b.1], [b.2, b.1], [b.2, b.3], [b.0, b.3]]})).collect();
+        (u, pc)
+    };
+    let v = r.call("register_utilities", json!({"utilities": utils, "clearance_m": 0.3, "max_cover_m": 3.0, "source": demo}));
+    println!("utilities: {} register rows", v["result"]["conflicts"].as_array().unwrap().len());
+    let v = r.call("land_requirements", json!({"buffer_m": 3.0, "parcels": parcels, "cell_m": 1.0, "source": demo}));
+    println!("land: footprint {:.0} m2; takes {}", v["result"]["footprint_area_m2"].as_f64().unwrap(), v["result"]["takes"].as_array().unwrap().iter().map(|t| format!("{} {:.0} m2", t["parcel"].as_str().unwrap(), t["take_m2"].as_f64().unwrap())).collect::<Vec<_>>().join(", "));
+    let v = r.call("locality_plan", json!({"utm_zone": 10, "north": true}));
+    println!("locality: start {:.6},{:.6}", v["result"]["start"]["lat"].as_f64().unwrap(), v["result"]["start"]["lon"].as_f64().unwrap());
+    let v = r.call("check_intersection_sight", json!({"time_gap_s": 7.5, "eye_h_m": 1.08, "object_h_m": 1.08, "source": "AASHTO 2018 Table 9-6 passenger car left turn from stop (verify)"}));
+    println!("intersection sight: required {:.1} m", v["result"]["required_m"].as_f64().unwrap());
+    r.call("cost_plan", json!({"contingency_pct": 30.0, "risks": [{"name": "unknown utilities (demo)", "p50": null, "p90": null}]}));
+    r.call("specialist_handoffs", json!({}));
     let c = r.call("check_standards", json!({}));
     println!("all checks: {} total, {} mandatory failures, {} advisory", c["result"]["total"], c["result"]["mandatory_failures"], c["result"]["advisory"]);
     r.call("export_landxml", json!({"file":"design.xml"}));

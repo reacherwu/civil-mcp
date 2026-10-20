@@ -49,6 +49,7 @@ pub struct Session {
     pub earthwork: Option<quantities::Earthwork>,
     pub departures: Vec<Value>,
     pub traffic: Option<Value>,
+    pub ext: std::collections::BTreeMap<String, crate::ext::ExtOut>,
 }
 
 fn obj(props: Value, req: &[&str]) -> Value {
@@ -62,7 +63,7 @@ pub fn tool_list() -> Value {
     let xy = json!({"type":"array","items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}});
     let xyz = json!({"type":"array","items":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}});
     let arr = |t: Value| json!({"type":"array","items":t});
-    json!([
+    let mut v = json!([
       {"name":"open_project","description":"Open (or create) a project directory. The audit log lives at <dir>/audit.jsonl and is verified on open.","inputSchema":obj(json!({"dir":s}),&["dir"])},
       {"name":"set_design_basis","description":"Record the design basis chosen by the engineer in responsible charge: the standards profile (US/CA/UK/AU/NZ) and design parameters. Values the profile cannot ship (copyrighted or unverified tables) must be entered here; the call fails and lists them otherwise. Returns the parameter register with the provenance of every value. actor must be 'engineer:<name>'.","inputSchema":obj(json!({"actor":s,"basis":{"type":"object","properties":{"project":s,"engineer_of_record":s,"standard":{"type":"string","enum":["US_AASHTO_2018","CA_TAC_2017","UK_DMRB","AU_AUSTROADS","NZ_AUSTROADS_NZTA"]},"design_speed_kmh":num,"e_max":num,"f_max":num,"max_grade_pct":num,"road_type":{"type":"string","enum":["motorway","dual","single"]},"perception_reaction_s":num,"deceleration_mps2":num,"deceleration_coeff":num,"eye_height_m":num,"object_height_m":num,"sag_k_min":num,"max_relative_gradient_pct":num,"transition_q":num,"wall_criteria":{"type":"object"},"normal_crown":num,"lane_width_m":num,"lanes_rotated_per_side":num},"required":["project","engineer_of_record","standard","design_speed_kmh","e_max"]}}),&["actor","basis"])},
       {"name":"load_points","description":"Load survey points from CSV (id,easting,northing,elevation,desc) or LandXML CgPoints. Rejected rows are reported.","inputSchema":obj(json!({"path":s,"format":{"type":"string","enum":["csv","landxml"]}}),&["path"])},
@@ -94,7 +95,9 @@ pub fn tool_list() -> Value {
       {"name":"record_departure","description":"Add an entry to the departures / design-exceptions / relaxations register (UK GG 101 departure, US design exception, AU/NZ design exception). Failing checks are added automatically at generate_deliverables. The engineer's justification is recorded here.","inputSchema":obj(json!({"actor":s,"check_id":s,"element":s,"kind":s,"justification":s}),&["actor","check_id","element","justification"])},
       {"name":"generate_deliverables","description":"Write the design-stage deliverables: design report, drainage report, pavement design report, parameter register (verified vs engineer input), departures register, bill of quantities grouped by the profile's measurement method, setting-out report, cost-proxy estimate and deliverables matrix status (Markdown/CSV).","inputSchema":obj(json!({"stage":s}),&[])},
       {"name":"get_state","description":"Summary of what is loaded/designed.","inputSchema":obj(json!({}),&[])}
-    ])
+    ]);
+    if let Some(a) = v.as_array_mut() { a.extend(crate::ext::tool_list()); }
+    v
 }
 
 fn f(v: &Value, k: &str) -> Option<f64> {
@@ -104,16 +107,16 @@ fn f(v: &Value, k: &str) -> Option<f64> {
 const DESIGN_TOOLS: &[&str] = &["set_design_basis", "design_pavement", "select_route", "optimize_profile", "design_protection", "load_points", "import_landxml", "build_surface", "create_alignment", "create_profile", "design_superelevation", "create_assembly", "build_corridor", "design_intersection", "grade", "design_pipe_network"];
 
 impl Session {
-    fn dir(&self) -> crate::Result<PathBuf> {
+    pub(crate) fn dir(&self) -> crate::Result<PathBuf> {
         self.dir.clone().ok_or_else(|| "call open_project first".to_string())
     }
-    fn log(&mut self, actor: &str, tool: &str, inputs: &Value, outputs: &Value, rules: &[String]) -> crate::Result<Value> {
+    pub(crate) fn log(&mut self, actor: &str, tool: &str, inputs: &Value, outputs: &Value, rules: &[String]) -> crate::Result<Value> {
         self.log.as_mut().ok_or("call open_project first")?.append(actor, tool, inputs, outputs, rules)
     }
-    fn need_basis(&self) -> crate::Result<&DesignBasis> {
+    pub(crate) fn need_basis(&self) -> crate::Result<&DesignBasis> {
         self.basis.as_ref().ok_or_else(|| "no design basis: the engineer must call set_design_basis first".to_string())
     }
-    fn write(&mut self, name: &str, bytes: &[u8]) -> crate::Result<String> {
+    pub(crate) fn write(&mut self, name: &str, bytes: &[u8]) -> crate::Result<String> {
         let p = self.dir()?.join(name);
         std::fs::write(&p, bytes).map_err(|e| e.to_string())?;
         let h = sha256_hex(bytes);
@@ -123,6 +126,7 @@ impl Session {
     }
     pub fn all_checks(&self) -> Vec<Check> {
         let mut c = self.checks.clone();
+        c.extend(self.ext_checks());
         for n in &self.networks {
             c.extend(n.checks.iter().cloned());
         }
@@ -183,8 +187,8 @@ impl Session {
     }
 
     pub fn call(&mut self, name: &str, a: &Value) -> crate::Result<Value> {
-        let r = self.call_inner(name, a);
-        if r.is_ok() && DESIGN_TOOLS.contains(&name) {
+        let r = match self.call_ext(name, a) { Some(r) => r, None => self.call_inner(name, a) };
+        if r.is_ok() && (DESIGN_TOOLS.contains(&name) || crate::ext::TOOLS.contains(&name)) {
             self.approved_seq = None;
         }
         r
@@ -512,6 +516,8 @@ impl Session {
                 for n in &self.networks { titles.push(format!("Pipe plan/profile {}", n.name)); }
                 if !self.networks.is_empty() { titles.push("Drainage details and structure schedule".into()); }
                 if self.corridor.is_some() && self.mass_haul.is_some() { titles.push("Mass haul and quantities".into()); }
+                let exts = self.ext_sheets();
+                for e in &exts { titles.push(e.title.clone()); }
                 titles.push("Standard details atlas (references)".into());
                 let pages = titles.len();
                 let index: Vec<(String, String)> = titles.iter().enumerate().map(|(i, t)| (t.clone(), format!("sheet-{:02}.dxf", i + 1))).collect();
@@ -544,6 +550,7 @@ impl Session {
                         sheets.push(sheet::mass_haul_sheet(mh, &self.materials, c, &self.networks, &self.gradings, &info, pg, pages)); pg += 1;
                     }
                 }
+                for e in &exts { sheets.push(crate::ext::render(e, &info, pg, pages)); pg += 1; }
                 sheets.push(crate::sheetset::details_atlas(b.standard, &info, pg, pages));
                 debug_assert_eq!(sheets.len(), pages);
                 let model = sheet::model(&ds, 1.0).to_dxf();

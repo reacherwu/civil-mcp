@@ -47,6 +47,28 @@ pub fn sight_vertical(pr: &Profile, s: f64, s_end: f64, h: f64, step: f64) -> f6
     s_end - s
 }
 
+/// Vertical sight distance in direction dir (+1 up-station, -1 down-station), limited at s_lim.
+pub fn sight_vertical_dir(pr: &Profile, s: f64, s_lim: f64, h: f64, step: f64, dir: f64) -> f64 {
+    let z0 = pr.elevation_at(s).unwrap_or(0.0) + h;
+    let avail = (s_lim - s) * dir;
+    let mut d = step;
+    while d <= avail {
+        let z1 = pr.elevation_at(s + dir * d).unwrap_or(0.0) + h;
+        let mut k = step;
+        while k < d {
+            if pr.elevation_at(s + dir * k).unwrap_or(0.0) > z0 + (z1 - z0) * k / d { return d - step; }
+            k += step;
+        }
+        d += step;
+    }
+    avail
+}
+
+/// Horizontal sightline offset needed for sight distance S on radius R: M = R(1 - cos(S/2R)).
+pub fn hso_m(r: f64, s: f64) -> f64 {
+    r * (1.0 - (s / (2.0 * r)).min(std::f64::consts::PI).cos())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Zone { pub from: f64, pub to: f64, pub direction: String }
 
@@ -64,7 +86,7 @@ pub struct Marking {
     pub notes: Vec<String>,
 }
 
-pub fn marking(std: Standard, al: &Alignment, pr: &Profile, v_kmh: f64, psd_engineer: Option<f64>, h: f64, min_npz_m: f64, curve_warning_r_m: f64) -> crate::Result<Marking> {
+pub fn marking(std: Standard, al: &Alignment, pr: &Profile, v_kmh: f64, psd_engineer: Option<f64>, h: f64, min_npz_m: f64, curve_warning_r_m: f64, lateral_clear_m: Option<f64>) -> crate::Result<Marking> {
     let (psd, src) = match (std, psd_engineer) {
         (_, Some(p)) => (p, "engineer input".to_string()),
         (Standard::Us, None) => (psd_mutcd_m(v_kmh), "MUTCD Table 3B-1 (2009 ed.; verify numbering in the 11th ed.), ft→m".to_string()),
@@ -72,22 +94,36 @@ pub fn marking(std: Standard, al: &Alignment, pr: &Profile, v_kmh: f64, psd_engi
     };
     let (s0, s1) = (al.start_station(), al.end_station());
     let step = 5.0;
-    let mut np_up = vec![];
-    let mut s = s0;
-    while s < s1 - step {
-        let sd = sight_vertical(pr, s, s1, h, step);
-        np_up.push((s, sd < psd && s1 - s > psd));
-        s += step;
-    }
-    // horizontal curves: no-passing where sight around the curve is limited is judged by the
-    // engineer; the tool marks curves with R below the warning radius
     let mut zones = vec![];
-    let mut cur: Option<f64> = None;
-    for (st, np) in np_up.iter().chain(std::iter::once(&(s1, false))) {
-        match (cur, *np) {
-            (None, true) => cur = Some(*st),
-            (Some(a), false) => { if st - a >= min_npz_m { zones.push(Zone { from: a, to: *st, direction: "up-station".into() }); } cur = None; }
-            _ => {}
+    for (dir, lim, name) in [(1.0, s1, "up-station"), (-1.0, s0, "down-station")] {
+        let mut flags = vec![];
+        let mut s = s0;
+        while s <= s1 {
+            let sd = sight_vertical_dir(pr, s, lim, h, step, dir);
+            let room = (lim - s) * dir;
+            let mut np = sd < psd && room > psd;
+            // horizontal curves: sight line offset needed vs the engineer's lateral clearance
+            if let Some(clear) = lateral_clear_m {
+                for c in al.curves() {
+                    if s >= c.sta_start && s <= c.sta_end && hso_m(c.radius, psd) > clear { np = true; }
+                }
+            }
+            flags.push((s, np));
+            s += step;
+        }
+        if dir < 0.0 { flags.reverse(); }
+        let mut cur: Option<f64> = None;
+        for (st, np) in flags.iter().chain(std::iter::once(&(f64::NAN, false))) {
+            match (cur, *np) {
+                (None, true) => cur = Some(*st),
+                (Some(a), false) => {
+                    let b = if st.is_nan() { if dir > 0.0 { s1 } else { s0 } } else { *st };
+                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                    if hi - lo >= min_npz_m { zones.push(Zone { from: lo, to: hi, direction: name.into() }); }
+                    cur = None;
+                }
+                _ => {}
+            }
         }
     }
     let (cc, ec) = match std { Standard::Us | Standard::Ca => ("yellow", "white"), _ => ("white", "white") };
@@ -101,10 +137,10 @@ pub fn marking(std: Standard, al: &Alignment, pr: &Profile, v_kmh: f64, psd_engi
     }
     signs.push(Sign { code: code("R2-1", "Rb-1", "diag. 670", "R4-1", "R1-1"), name: "Speed limit".into(), station: s0 + 20.0, side: "right".into(), reason: format!("start of project, {v_kmh:.0} km/h design speed (posted limit set by the road authority)") });
     for z in &zones {
-        if std == Standard::Us { signs.push(Sign { code: "W14-3".into(), name: "No passing zone pennant".into(), station: z.from, side: "left".into(), reason: "start of no-passing zone".into() }); }
+        if std == Standard::Us { signs.push(Sign { code: "W14-3".into(), name: "No passing zone pennant".into(), station: if z.direction == "up-station" { z.from } else { z.to }, side: "left".into(), reason: format!("start of no-passing zone ({})", z.direction) }); }
     }
     Ok(Marking { psd_m: psd, psd_source: src, centre_colour: cc.into(), edge_colour: ec.into(), no_passing: zones, signs,
-        notes: vec![format!("Manual: {}", manual(std)), "No-passing zones from vertical sight distance (eye and object height per the manual) on the design profile, up-station direction; repeat for down-station. Horizontal sight lines around curves and intersection signing to be added by the engineer.".into(), "Sign codes are the usual designations in each manual and must be confirmed against the current edition.".into()] })
+        notes: vec![format!("Manual: {}", manual(std)), "No-passing zones in both directions from vertical sight distance on the design profile (eye = object height, per the manual) and, where lateral_clear_m is given, from the horizontal sight-line offset M = R(1 - cos(PSD/2R)) on curves. Intersection signing is added by the engineer.".into(), "Sign codes are the usual designations in each manual and must be confirmed against the current edition.".into()] })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

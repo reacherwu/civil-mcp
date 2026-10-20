@@ -152,7 +152,7 @@ pub fn critical(p: &[[f64; 2]], s: &Soil, toe_x: f64, crest_x: f64) -> Option<Ci
             let zc = zc_top + 0.2 * w + 2.0 * w * j as f64 / 12.0;
             for k in 1..=15 {
                 // radii so the circle bottom lies between 0.2 m above and 0.5·w below the toe level
-                let r = (zc - zt) + (-0.2 + (0.5 * w + 0.2) * k as f64 / 15.0);
+                let r = (zc - zt) + (-0.2 + (1.0 * w + 0.2) * k as f64 / 15.0);
                 if r <= 0.5 { continue; }
                 let Some((sl, a, b)) = slices(p, xc, zc, r, n) else { continue };
                 if sl.len() < n / 2 || (b - a) < 0.5 * w { continue; }
@@ -160,6 +160,34 @@ pub fn critical(p: &[[f64; 2]], s: &Soil, toe_x: f64, crest_x: f64) -> Option<Ci
                 if f.is_finite() && best.as_ref().map_or(true, |c| f < c.fs_bishop) {
                     best = Some(Circle { xc, zc, r, fs_bishop: f, fs_spencer: f64::NAN, theta_deg: 0.0, x_entry: a, x_exit: b, slices: sl.len() });
                 }
+            }
+        }
+    }
+    // local refinement: pattern search on (xc, zc, r) from the best grid circle, halving steps
+    if let Some(c0) = best.clone() {
+        let (mut xc, mut zc, mut r, mut fbest) = (c0.xc, c0.zc, c0.r, c0.fs_bishop);
+        let mut step = [w / 6.0, w / 6.0, w / 10.0];
+        let eval = |xc: f64, zc: f64, r: f64| -> Option<(f64, f64, f64, usize)> {
+            if r <= 0.5 { return None; }
+            let (sl, a, b) = slices(p, xc, zc, r, n)?;
+            if sl.len() < n / 2 || (b - a) < 0.5 * w { return None; }
+            let f = fs_bishop(&sl, s);
+            if f.is_finite() { Some((f, a, b, sl.len())) } else { None }
+        };
+        for _ in 0..200 {
+            let mut improved = false;
+            for (dx, dz, dr) in [(1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, -1.0), (0.0, 1.0, 1.0), (0.0, -1.0, -1.0), (1.0, 0.0, 1.0), (-1.0, 0.0, -1.0)] {
+                let (x2, z2, r2) = (xc + dx * step[0], zc + dz * step[1], r + dr * step[2]);
+                if let Some((f, a, b, ns)) = eval(x2, z2, r2) {
+                    if f < fbest - 1e-9 {
+                        fbest = f; xc = x2; zc = z2; r = r2; improved = true;
+                        best = Some(Circle { xc, zc, r, fs_bishop: f, fs_spencer: f64::NAN, theta_deg: 0.0, x_entry: a, x_exit: b, slices: ns });
+                    }
+                }
+            }
+            if !improved {
+                for q in step.iter_mut() { *q *= 0.5; }
+                if step[0] < 0.01 { break; }
             }
         }
     }

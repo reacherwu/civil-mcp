@@ -13,3 +13,5 @@ jobs:
       - run: pip install numpy scipy ezdxf pypdf xmlschema matplotlib
       - name: Independent checks (second method, no shared code) + XSD + DXF audit + PDF
         run: python scripts/independent_check.py demo-out --xsd schema/LandXML-1.2.xsd
+      - name: independent re-checks of the v5 calculations (hydrology, culverts, slope, subsurface, mechanistic, walls, land, locality)
+        run: python scripts/independent_check_v5.py demo-out
