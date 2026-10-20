@@ -141,7 +141,22 @@ pub fn read(text: &str) -> crate::Result<LandXmlData> {
                         Element { kind: Kind::Line, sta: 0.0, len, start: st, az0: (en[1] - st[1]).atan2(en[0] - st[0]), k0: 0.0, k1: 0.0 }
                     }
                     "Curve" => {
-                        let c = ne(child(g, "Center")).ok_or("Curve without Center")?;
+                        let c = match ne(child(g, "Center")) {
+                            Some(c) => c,
+                            None => {
+                                // derive the centre from chord + radius attribute + rotation (minor arc)
+                                let r = attr_f(g, "radius").ok_or("Curve without Center or radius")?;
+                                let (dx, dy) = (en[0] - st[0], en[1] - st[1]);
+                                let ch = (dx * dx + dy * dy).sqrt();
+                                if ch > 2.0 * r {
+                                    return Err(format!("Curve chord {ch:.3} exceeds diameter {:.3}", 2.0 * r));
+                                }
+                                let h = (r * r - ch * ch / 4.0).sqrt();
+                                let m = [st[0] + dx / 2.0, st[1] + dy / 2.0];
+                                warn.push("Curve without Center: centre derived from radius and chord".into());
+                                [m[0] - sign * dy / ch * h, m[1] + sign * dx / ch * h]
+                            }
+                        };
                         let r = ((st[0] - c[0]).powi(2) + (st[1] - c[1]).powi(2)).sqrt();
                         let ra = (st[1] - c[1]).atan2(st[0] - c[0]);
                         let az0 = ra + sign * std::f64::consts::FRAC_PI_2;

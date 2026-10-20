@@ -30,10 +30,16 @@ impl Run {
     }
 }
 
+#[allow(dead_code)]
 fn main() {
+    let out = std::env::args().nth(1).unwrap_or_else(|| "demo-out".into());
+    run(&out);
+}
+
+/// Runs the whole demo into `out` and returns the live session.
+pub fn run(out: &str) -> Session {
     let root = env!("CARGO_MANIFEST_DIR");
     let data = format!("{root}/../../data/usgs3dep_palo_alto_points.csv");
-    let out = std::env::args().nth(1).unwrap_or_else(|| "demo-out".into());
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
     let log = std::fs::File::create(format!("{out}/run-log.jsonl")).unwrap();
@@ -107,4 +113,5 @@ fn main() {
     let v = r.call("generate_review_report", json!({}));
     println!("review report: {}", v["result"]["audit"]);
     println!("outputs in {out}/");
+    r.s
 }
