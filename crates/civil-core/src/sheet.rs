@@ -61,6 +61,22 @@ fn base(d: &mut Drawing) {
 /// Title block at the right; stamp logic: PRELIMINARY unless the engineer approved
 /// with zero mandatory failures. Even then the sheet only says "approved in audit
 /// log"; sealing is the engineer's act.
+/// Greedy wrap by estimated width in ems (CJK = 1 em, other = 0.55 em).
+fn wrap(s: &str, max_em: f64) -> Vec<String> {
+    let mut out = vec![String::new()];
+    let mut w = 0.0;
+    for word in s.split_inclusive(' ') {
+        let ww: f64 = word.chars().map(|c| if (c as u32) > 0x2E80 { 1.0 } else { 0.62 }).sum();
+        if w + ww > max_em && !out.last().unwrap().is_empty() {
+            out.push(String::new());
+            w = 0.0;
+        }
+        out.last_mut().unwrap().push_str(word);
+        w += ww;
+    }
+    out.into_iter().map(|l| l.trim_end().to_string()).collect()
+}
+
 fn title_block(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, page: usize, pages: usize) {
     let (tx0, ty0, tx1, ty1) = (SHEET_W - 150.0, 20.0, SHEET_W - 20.0, SHEET_H - 20.0);
     d.rect("TITLE", tx0, ty0, tx1, ty1);
@@ -70,7 +86,9 @@ fn title_block(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, page: usize
         d.text(layer, [tx0 + 4.0, y], h, s);
         y -= h * 0.9;
     };
-    t(d, &info.project, 4.0, "TITLE");
+    for line in wrap(&info.project, 26.0) {
+        t(d, &line, 4.0, "TITLE");
+    }
     t(d, &format!("图名 Sheet: {sheet_title}"), 3.0, "TITLE");
     t(d, &format!("图号 {page}/{pages}"), 2.5, "TITLE");
     t(d, &format!("规范 Std: {}", info.standard), 2.5, "TITLE");
@@ -246,18 +264,20 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
 pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: usize) -> Vec<Drawing> {
     let per = 12;
     let mut out = Vec::new();
-    let (mut wmax, mut hmax): (f64, f64) = (10.0, 5.0);
-    for s in &c.sections {
-        wmax = wmax.max(s.left.daylight + 5.0).max(s.right.daylight + 5.0);
-        let zs: Vec<f64> = s.left.fg.iter().chain(s.right.fg.iter()).map(|p| p[1]).chain(s.ground.iter().map(|p| p[1])).collect();
-        let (lo, hi) = zs.iter().fold((f64::MAX, f64::MIN), |a, z| (a.0.min(*z), a.1.max(*z)));
-        hmax = hmax.max(hi - lo + 4.0);
-    }
     let (cw, ch) = ((SHEET_W - 180.0) / 4.0, (SHEET_H - 40.0) / 3.0);
-    let scale_h = ((cw - 10.0) / (2.0 * wmax)).min((ch - 20.0) / hmax);
-    let nice = [100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0].into_iter().find(|n| 1000.0 / n <= scale_h).unwrap_or(2000.0);
-    let sc = 1000.0 / nice;
     for (pi, chunk) in c.sections.chunks(per).enumerate() {
+        // scale chosen per sheet from the sections on it (true 1:1 H:V)
+        let (mut wmax, mut hmax): (f64, f64) = (10.0, 5.0);
+        for s in chunk {
+            let w = s.left.daylight.max(s.right.daylight) + 3.0;
+            wmax = wmax.max(w);
+            let zs: Vec<f64> = s.left.fg.iter().chain(s.right.fg.iter()).map(|p| p[1]).chain(s.ground.iter().filter(|p| p[0].abs() <= w).map(|p| p[1])).collect();
+            let (lo, hi) = zs.iter().fold((f64::MAX, f64::MIN), |a, z| (a.0.min(*z), a.1.max(*z)));
+            hmax = hmax.max(hi - lo + 3.0);
+        }
+        let scale_h = ((cw - 10.0) / (2.0 * wmax)).min((ch - 26.0) / hmax);
+        let nice = [50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0].into_iter().find(|n| 1000.0 / n <= scale_h).unwrap_or(2000.0);
+        let sc = 1000.0 / nice;
         let mut d = Drawing::default();
         base(&mut d);
         for (i, s) in chunk.iter().enumerate() {
@@ -265,10 +285,9 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
             let (x0, y1) = (20.0 + col as f64 * cw, SHEET_H - 20.0 - row as f64 * ch);
             let y0 = y1 - ch;
             d.rect("GRID", x0 + 2.0, y0 + 2.0, x0 + cw - 2.0, y1 - 2.0);
-            let zs: Vec<f64> = s.left.fg.iter().chain(s.right.fg.iter()).map(|p| p[1]).chain(s.ground.iter().map(|p| p[1])).collect();
-            let zlo = zs.iter().cloned().fold(f64::MAX, f64::min) - 1.0;
+            let zlo = s.left.fg.iter().chain(s.right.fg.iter()).map(|p| p[1]).chain(s.ground.iter().filter(|p| p[0].abs() <= wmax).map(|p| p[1])).fold(f64::MAX, f64::min) - 1.0;
             let xc = x0 + cw / 2.0;
-            let tp = |o: f64, z: f64| [xc + o * sc, y0 + 12.0 + (z - zlo) * sc];
+            let tp = |o: f64, z: f64| [xc + o * sc, y0 + 14.0 + (z - zlo) * sc];
             // cut / fill fills between datum and ground (sampled)
             for (left, sd) in [(true, &s.left), (false, &s.right)] {
                 let sg = if left { 1.0 } else { -1.0 };

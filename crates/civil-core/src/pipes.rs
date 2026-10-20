@@ -58,6 +58,10 @@ pub struct Pipe {
     pub n: f64,
     #[serde(default)]
     pub material: String,
+    /// Optional engineer-set maximum slope; when the ground is steeper the pipe is
+    /// lowered at its upstream structure (drop manhole) instead of following the ground.
+    #[serde(default)]
+    pub max_slope: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +227,12 @@ pub fn design(input: &NetworkInput, surface: &Tin, fallback: Option<&Tin>) -> cr
         base[j] += base[i];
         let inv_up = (rim[i] - cr.min_cover_m - p.diameter_m).min(lowest_in[i] - cr.structure_drop_m);
         let inv_dn = (inv_up - cr.min_slope * len).min(rim[j] - cr.min_cover_m - p.diameter_m);
+        let mut inv_up = inv_up;
+        if let Some(ms) = p.max_slope {
+            if (inv_up - inv_dn) / len > ms {
+                inv_up = inv_dn + ms * len;
+            }
+        }
         let slope = (inv_up - inv_dn) / len;
         lowest_in[j] = lowest_in[j].min(inv_dn);
         let (qf, vf) = manning_full(p.diameter_m, p.n, slope);
