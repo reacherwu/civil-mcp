@@ -4,7 +4,7 @@ use crate::tools::Session;
 use serde_json::Value;
 use std::fmt::Write;
 
-/// Deliverables matrix: (category, item, status, output). Status is implemented | partial | gap.
+/// Deliverables matrix: (category, item, status, output). Status is implemented | partial | interface (licensed specialist hand-off only) | gap.
 pub const MATRIX: &[(&str, &str, &str, &str)] = &[
     ("calc", "Route / corridor options and selection (options report)", "implemented", "route-alternatives.json, design-report.md §2"),
     ("calc", "Horizontal alignment geometry and standards checks", "implemented", "setting-out.csv, design-report.md §3, review.html"),
@@ -13,36 +13,36 @@ pub const MATRIX: &[(&str, &str, &str, &str)] = &[
     ("calc", "Lane widening on curves", "implemented", "AASHTO off-tracking formula or engineer table"),
     ("calc", "Earthwork volumes, mass haul, free haul/overhaul, borrow/waste, shrink/bulk", "implemented", "quantities.json, design-report.md §5, mass-haul sheet"),
     ("calc", "Profile optimisation for earthwork balance under standards", "implemented", "profile-optimisation.json"),
-    ("calc", "Pavement thickness design", "partial", "US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer. Gaps: AASHTOWare ME, CIRCLY mechanistic, AU/NZ rigid"),
+    ("calc", "Pavement thickness design", "partial", "US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer; mechanistic screening (Odemark-Boussinesq + AGPT02 transfer functions). Gaps: AASHTOWare ME, full CIRCLY layered-elastic analysis, AU/NZ rigid"),
     ("calc", "Subgrade / foundation design (CD 225, subgrade improvement)", "partial", "design CBR/Mr inputs and subgrade sheet; foundation design itself is a gap"),
     ("calc", "Storm drainage network hydraulics with HGL/EGL", "implemented", "drainage-report.md, pipe profile sheets"),
-    ("calc", "Hydrology (IFD/IDF, ARR 2019, FEH/ReFH, peak flow methods)", "gap", "design rainfall intensity is an engineer input"),
+    ("calc", "Hydrology (IFD/IDF, ARR 2019, FEH/ReFH, peak flow methods)", "implemented", "design_hydrology: TIN catchments (priority-flood + D8), rational (US/CA), NRCS TR-55 Type II, ARR 2019 rational-type with Bransby-Williams tc (AU/NZ); UK FEH/ReFH2 peak entered by the engineer with rational sense check. IFD tables are engineer inputs. hydrology.csv, drainage area map sheet"),
     ("calc", "Roadside ditch / channel lining (HEC-15 shear)", "implemented", "protection.json, drainage-report.md"),
-    ("calc", "Culvert hydraulics (HDS-5) and structural design", "gap", ""),
+    ("calc", "Culvert hydraulics (HDS-5) and structural design", "implemented", "design_culverts: HDS-5 inlet and outlet control, size selection by HW/D, freeboard, cover; culverts.csv and culvert sheet. Structural class by agency standard drawings; large culverts go to the structures hand-off"),
     ("calc", "Sanitary sewer design (peaking, depth ratio, velocity)", "implemented", "drainage-report.md"),
-    ("calc", "Retaining wall external stability", "partial", "US global factors; other profiles need engineer criteria; structural design of stem/reinforcement is a gap"),
-    ("calc", "Barrier need and length of need, clear zone", "partial", "geometric hazard screening with engineer clear zone; UK RRRAP not implemented"),
-    ("calc", "Intersection geometry, returns, sight triangles", "partial", "US Case B1 implemented; CD 123 / Austroads SISD via engineer distances not yet separate"),
-    ("calc", "Slope stability / geotechnical design", "gap", ""),
-    ("calc", "Subsurface (pavement) drainage", "gap", ""),
-    ("calc", "Traffic capacity / LOS, signals, signing, markings, lighting", "gap", ""),
-    ("calc", "Noise, air, environmental assessment", "gap", ""),
-    ("calc", "Utilities conflicts, right-of-way / land requirements", "gap", ""),
-    ("calc", "Bridges and major structures", "gap", ""),
-    ("calc", "Temporary traffic management / staging", "gap", ""),
+    ("calc", "Retaining wall external stability", "partial", "US global factors; other profiles need engineer criteria; stem flexural reinforcement (design_wall_reinforcement). Gaps: shear, crack control, footing structural design, detailing"),
+    ("calc", "Barrier need and length of need, clear zone", "implemented", "geometric hazard screening with engineer clear zone, length of need; UK: rrrap-inputs.csv for the National Highways RRRAP tool (the risk assessment is run in RRRAP)"),
+    ("calc", "Intersection geometry, returns, sight triangles", "implemented", "US Case B1 / CA time gap / AU-NZ Austroads SISD / UK CD 123 y-distance (check_intersection_sight); intersection layout sheet"),
+    ("calc", "Slope stability / geotechnical design", "implemented", "check_slope_stability: Bishop simplified + Spencer, critical circle search, parameters from the geotechnical report; slope-sections.csv for the geotechnical designer. Homogeneous soil only"),
+    ("calc", "Subsurface (pavement) drainage", "implemented", "design_subsurface_drainage: Cedergren infiltration, layer capacity, t50, edge drain capacity and outlet spacing; AASHTO m by engineer"),
+    ("calc", "Traffic capacity / LOS, signals, signing, markings, lighting", "partial", "concept signing and marking (no-passing zones vertical + horizontal), lighting by the lumen method. Gaps: capacity / LOS, signal design, photometric lighting design"),
+    ("calc", "Noise, air, environmental assessment", "interface", "LICENSED SPECIALIST: handoff-environmental.json + checklist by profile (specialist_handoffs); assessment not produced by this software"),
+    ("calc", "Utilities conflicts, right-of-way / land requirements", "implemented", "register_utilities (utility-register.csv), land_requirements (footprint, parcel takes)"),
+    ("calc", "Bridges and major structures", "interface", "LICENSED SPECIALIST: handoff-bridge-structures.json + checklist by profile; design not produced by this software"),
+    ("calc", "Temporary traffic management / staging", "implemented", "plan_traffic_management: concept staging; MUTCD taper formula (US), engineer tapers elsewhere"),
     ("report", "Design report / basis of design / design criteria", "implemented", "design-report.md, parameter-register.csv"),
     ("report", "Drainage report", "implemented", "drainage-report.md"),
     ("report", "Pavement design report", "implemented", "pavement-report.md"),
-    ("report", "Geotechnical interface (inputs needed from the geotechnical report)", "partial", "design-report.md §12 lists inputs; the geotechnical report itself is a gap"),
+    ("report", "Geotechnical interface (inputs needed from the geotechnical report)", "implemented", "design-report.md §12 lists inputs; slope stability takes the report reference and parameters and returns slope-sections.csv. The geotechnical report itself is by the geotechnical engineer"),
     ("report", "Departures / design exceptions / relaxations register", "implemented", "departures-register.csv"),
     ("report", "Road safety audit hooks (brief for the independent auditor)", "implemented", "rsa-brief.md (the audit itself is done by people)"),
-    ("report", "Quantities / bill of quantities by measurement method", "partial", "boq.csv (US FP-14 sections, UK SHW/MMHW series; CA/AU/NZ generic groups to map to agency items)"),
-    ("report", "Cost estimate", "partial", "cost-estimate.csv: quantities with blank rates for the estimator; route cost proxy in relative units"),
+    ("report", "Quantities / bill of quantities by measurement method", "implemented", "boq.csv: US FP-14 sections, UK SHW series + CESMM4 class, CA OPSS, AU TfNSW, NZ NZTA references per work group (marked verify for the estimator)"),
+    ("report", "Cost estimate", "implemented", "cost-plan.csv structure: base, contingency, risk P50/P90, optimism bias (UK); rates blank by design (no market prices shipped)"),
     ("report", "Setting-out / alignment report", "implemented", "setting-out.csv"),
     ("report", "Checks / design review report with audit trail", "implemented", "review.html"),
-    ("report", "Environmental, constructability, utilities reports", "gap", ""),
+    ("report", "Environmental, constructability, utilities reports", "partial", "utility conflict register; environmental hand-off (licensed specialist). Gap: constructability report"),
     ("drawing", "Title sheet, sheet index, general notes and legend", "implemented", "sheets.pdf / sheet-NN.dxf"),
-    ("drawing", "Key plan / location plan", "partial", "route alternatives sheet shows the corridor on contours; no separate location map at small scale"),
+    ("drawing", "Key plan / location plan", "implemented", "locality plan sheet (UTM grid, lat/long); no base mapping shipped"),
     ("drawing", "Route alternatives plan", "implemented", "sheets.pdf"),
     ("drawing", "Typical sections", "implemented", "sheets.pdf"),
     ("drawing", "Plan and profile", "implemented", "sheets.pdf"),
@@ -55,12 +55,12 @@ pub const MATRIX: &[(&str, &str, &str, &str)] = &[
     ("drawing", "Barrier / protection layout and ditch lining schedule", "implemented", "sheets.pdf"),
     ("drawing", "Quantity summary sheet", "implemented", "mass haul and quantities sheet; full BoQ in boq.csv"),
     ("drawing", "Standard details atlas (curb, gutter, barrier, trench bedding, manhole)", "implemented", "sheets.pdf (schematic details with the agency standard drawing / specification reference per profile; CA/AU/NZ references are engineer-to-cite)"),
-    ("drawing", "Intersection layout", "partial", "shown on the plan sheet; no separate layout sheet"),
-    ("drawing", "Signing, pavement marking, lighting, signals", "gap", ""),
-    ("drawing", "Traffic management / staging plans", "gap", ""),
-    ("drawing", "Utilities, right-of-way / land plans", "gap", ""),
-    ("drawing", "Erosion and sediment control plan, landscaping", "partial", "slope protection areas only"),
-    ("drawing", "Structures (bridges, culverts, wall structural)", "gap", ""),
+    ("drawing", "Intersection layout", "implemented", "intersection layout and sight distance sheet"),
+    ("drawing", "Signing, pavement marking, lighting, signals", "partial", "concept signing/marking and lighting sheets; signals gap"),
+    ("drawing", "Traffic management / staging plans", "implemented", "concept staging sheet"),
+    ("drawing", "Utilities, right-of-way / land plans", "implemented", "utility plan + register sheet, land requirement plan sheet"),
+    ("drawing", "Erosion and sediment control plan, landscaping", "partial", "concept ESC plan sheet (sediment fence, check dams at L = h/S, culvert protection, entrances) and slope protection areas; landscaping plan is a gap"),
+    ("drawing", "Structures (bridges, culverts, wall structural)", "partial", "culvert layout/section sheet, wall stem reinforcement sheet; bridges by licensed specialist (hand-off)"),
 ];
 
 fn csv(s: &str) -> String {
@@ -103,14 +103,54 @@ pub struct BoqRow {
     pub basis: String,
 }
 
+/// CESMM4 class shown with the UK SHW series (for civil engineering contracts measured by CESMM).
+fn cesmm(group: &str) -> &'static str {
+    match group {
+        "Earthworks" => " / CESMM4 Class E",
+        "Pavements" | "Kerbs and footpaths" => " / CESMM4 Class R",
+        "Drainage" => " / CESMM4 Classes I, K",
+        "Retaining walls" => " / CESMM4 Classes F, G",
+        "Road safety barriers" => " / CESMM4 Class X (verify)",
+        "Landscaping and erosion control" => " / CESMM4 Class E",
+        _ => "",
+    }
+}
+
+/// Default agency specification references by work group for CA / AU / NZ (to be confirmed by the estimator).
+fn agency(std: Standard, group: &str) -> String {
+    let r = match (std, group) {
+        (Standard::Ca, "Earthworks") => "OPSS 206 (verify)",
+        (Standard::Ca, "Pavements") => "OPSS 310 / 314 (verify)",
+        (Standard::Ca, "Kerbs and footpaths") => "OPSS 353 / 351 (verify)",
+        (Standard::Ca, "Drainage") => "OPSS 410 / 407 / 421 (verify)",
+        (Standard::Ca, "Retaining walls") => "OPSS 904 / 905 (verify)",
+        (Standard::Ca, "Road safety barriers") => "OPSS 721 (verify)",
+        (Standard::Ca, "Landscaping and erosion control") => "OPSS 802 / 804 / 805 (verify)",
+        (Standard::Ca, "Lighting") => "OPSS 617 (verify)",
+        (Standard::Ca, "Signs and markings") => "OPSS 710 / 2001 (verify)",
+        (Standard::Au, "Earthworks") => "TfNSW R44 (verify)",
+        (Standard::Au, "Pavements") => "TfNSW R71 / R116 (verify)",
+        (Standard::Au, "Drainage") => "TfNSW R11 (verify)",
+        (Standard::Au, "Road safety barriers") => "TfNSW R132 (verify)",
+        (Standard::Au, "Landscaping and erosion control") => "TfNSW R178 / G38 (verify)",
+        (Standard::Nz, "Earthworks") => "NZTA F/1 (verify)",
+        (Standard::Nz, "Pavements") => "NZTA B/2 / M/4 (verify)",
+        (Standard::Nz, "Drainage") => "NZTA F/2 / F/3 (verify)",
+        (Standard::Nz, "Road safety barriers") => "NZTA M/23 (verify)",
+        (Standard::Nz, "Signs and markings") => "NZTA P/12 / P/22 (verify)",
+        _ => "map to agency item",
+    };
+    format!("{group}: {r}")
+}
+
 pub fn boq(s: &Session) -> (Vec<BoqRow>, String) {
     let std = s.basis.as_ref().map_or(Standard::Us, |b| b.standard);
     let mut rows = Vec::new();
     let code = |us: &str, uk: &str, generic: &str| -> String {
         match std {
             Standard::Us => us.into(),
-            Standard::Uk => uk.into(),
-            _ => generic.into(),
+            Standard::Uk => format!("{uk}{}", cesmm(generic)),
+            _ => agency(std, generic),
         }
     };
     let mut add = |c: String, i: &str, u: &str, q: f64, b: &str| {
@@ -163,10 +203,40 @@ pub fn boq(s: &Session) -> (Vec<BoqRow>, String) {
             add(code(if a.class.starts_with("topsoil") { "FP-14 625" } else { "FP-14 629" }, "SHW Series 3000 / 600", "Landscaping and erosion control"), &format!("Slope protection: {}", a.class), "m²", a.area_m2, "slope area by class");
         }
     }
+    // v5 items from the extension tools
+    if let Some(e) = s.ext.get("design_culverts") {
+        let mut by: std::collections::BTreeMap<String, (f64, usize)> = Default::default();
+        for c in e.result["culverts"].as_array().cloned().unwrap_or_default() {
+            if let (Some(d), Some(l)) = (c["hyd"]["d_m"].as_f64(), c["length_m"].as_f64()) { let k = format!("{:.0} mm", d * 1000.0); let v = by.entry(k).or_default(); v.0 += l; v.1 += 1; }
+        }
+        for (k, (l, n)) in by {
+            add(code("FP-14 602", "SHW Series 500", "Drainage"), &format!("Culvert pipe {k}"), "m", l, "HDS-5 culvert design");
+            add(code("FP-14 602", "SHW Series 500", "Drainage"), &format!("Culvert headwalls / end treatments {k}"), "each", 2.0 * n as f64, "two ends per culvert");
+        }
+    }
+    if let (Some(_), Some(al)) = (s.ext.get("design_subsurface_drainage"), &s.alignment) {
+        add(code("FP-14 605", "SHW Series 500", "Drainage"), "Pavement edge drain (both sides)", "m", 2.0 * (al.end_station() - al.start_station()), "subsurface drainage design");
+    }
+    if let Some(e) = s.ext.get("design_lighting") {
+        add(code("FP-14 636 (verify)", "SHW Series 1300", "Lighting"), "Lighting column with luminaire", "each", e.result["poles"].as_array().map_or(0, |v| v.len()) as f64, "lighting layout");
+    }
+    if let Some(e) = s.ext.get("design_marking_signing") {
+        add(code("FP-14 633 (verify)", "SHW Series 1200", "Signs and markings"), "Permanent signs", "each", e.result["signs"].as_array().map_or(0, |v| v.len()) as f64, "sign schedule");
+        if let Some(al) = &s.alignment {
+            add(code("FP-14 634 (verify)", "SHW Series 1200", "Signs and markings"), "Longitudinal pavement marking (centre + 2 edge lines)", "m", 3.0 * (al.end_station() - al.start_station()), "marking layout");
+        }
+    }
+    if let Some(e) = s.ext.get("plan_erosion_control") {
+        add(code("FP-14 157 (verify)", "SHW Series 600 (verify)", "Landscaping and erosion control"), "Sediment fence", "m", e.result["sediment_fence_m"].as_f64().unwrap_or(0.0), "ESC plan");
+        add(code("FP-14 157 (verify)", "SHW Series 600 (verify)", "Landscaping and erosion control"), "Ditch check dams", "each", e.result["check_dams"].as_f64().unwrap_or(0.0), "ESC plan");
+    }
     let method = match std {
         Standard::Us => "Items grouped by FHWA FP-14 Standard Specifications section (204 earthwork, 251 riprap, 258 RC walls, 301 aggregate, 401 asphalt, 602 culverts and drains, 604 manholes and inlets, 609 curb and gutter, 615 sidewalks, 617 guardrail, 625 turf, 629 RECP). State DOT item numbers must be mapped by the estimator.",
         Standard::Uk => "Items grouped by Specification for Highway Works series (MCHW Vol 1) as used by the Method of Measurement for Highway Works (MCHW Vol 4): 400 road restraint systems, 500 drainage, 600 earthworks, 800 unbound and hydraulically bound, 900 bituminous, 1000 concrete, 1100 kerbs and footways, 3000 landscape. Item coding to MMHW is for the quantity surveyor.",
-        _ => "Generic work groups. Map to the agency's item codes (e.g. MTO OPSS, TfNSW / Main Roads specifications, NZTA specifications) before tender.",
+        Standard::Ca => "Items mapped to Ontario Provincial Standard Specifications (OPSS) construction specifications as the default Canadian reference (marked verify); other provinces map to their own item lists (e.g. BC MoTI SS). Item numbers are for the estimator to confirm.",
+        Standard::Au => "Items mapped to TfNSW QA specification series as an example state schedule (marked verify); Queensland (MRTS), Victoria (DoT Section) and other states map to their own specifications.",
+        Standard::Nz => "Items mapped to NZTA (Waka Kotahi) specifications (marked verify) for the schedule of quantities.",
+        _ => "Generic work groups.",
     };
     (rows, method.into())
 }

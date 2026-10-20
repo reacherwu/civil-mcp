@@ -285,6 +285,8 @@ pub fn run(out: &str) -> Session {
     println!("locality: start {:.6},{:.6}", v["result"]["start"]["lat"].as_f64().unwrap(), v["result"]["start"]["lon"].as_f64().unwrap());
     let v = r.call("check_intersection_sight", json!({"time_gap_s": 7.5, "eye_h_m": 1.08, "object_h_m": 1.08, "source": "AASHTO 2018 Table 9-6 passenger car left turn from stop (verify)"}));
     println!("intersection sight: required {:.1} m", v["result"]["required_m"].as_f64().unwrap());
+    let v = r.call("plan_erosion_control", json!({"check_dam_h_m": 0.6, "fence_offset_m": 1.0, "source": demo}));
+    println!("ESC: sediment fence {:.0} m, {} check dams", v["result"]["sediment_fence_m"].as_f64().unwrap(), v["result"]["check_dams"]);
     r.call("cost_plan", json!({"contingency_pct": 30.0, "risks": [{"name": "unknown utilities (demo)", "p50": null, "p90": null}]}));
     r.call("specialist_handoffs", json!({}));
     let c = r.call("check_standards", json!({}));

@@ -35,7 +35,7 @@ pub struct ExtOut {
     pub sheets: Vec<ExtSheet>,
 }
 
-pub const TOOLS: &[&str] = &["design_hydrology", "design_culverts", "check_slope_stability", "design_subsurface_drainage", "check_pavement_mechanistic", "design_wall_reinforcement", "design_marking_signing", "design_lighting", "plan_traffic_management", "register_utilities", "land_requirements", "locality_plan", "check_intersection_sight", "export_rrrap_inputs", "cost_plan", "specialist_handoffs"];
+pub const TOOLS: &[&str] = &["design_hydrology", "design_culverts", "check_slope_stability", "design_subsurface_drainage", "check_pavement_mechanistic", "design_wall_reinforcement", "design_marking_signing", "design_lighting", "plan_traffic_management", "register_utilities", "land_requirements", "locality_plan", "check_intersection_sight", "export_rrrap_inputs", "cost_plan", "specialist_handoffs", "plan_erosion_control"];
 
 pub fn tool_list() -> Vec<Value> {
     let o = |n: &str, d: &str, req: &[&str]| json!({"name": n, "description": d, "inputSchema": {"type": "object", "properties": {}, "required": req, "additionalProperties": true}});
@@ -55,6 +55,7 @@ pub fn tool_list() -> Vec<Value> {
         o("check_intersection_sight", "Intersection sight distance by profile: US Case B1 / CA TAC time gap; AU/NZ Austroads SISD with engineer RT and d; UK CD 123 y-distance. Available = vertical sight line on the major road. Inputs: time_gap_s, reaction_s, decel_coeff, grade_pct, y_distance_m, eye_h_m, object_h_m, source.", &["eye_h_m", "object_h_m"]),
         o("export_rrrap_inputs", "UK only: rrrap-inputs.csv hazard list for the National Highways RRRAP tool (CD 377). Inputs: aadt, hgv_pct.", &["aadt", "hgv_pct"]),
         o("cost_plan", "Cost plan structure: BoQ quantities with blank rates, contingency_pct, risks [{name,p50,p90}], optimism_bias_pct (UK). No market prices supplied.", &["contingency_pct"]),
+        o("plan_erosion_control", "Concept erosion and sediment control plan: perimeter sediment fence along fill toes, check dams in cut ditches at spacing L = h_dam / S (toe of the upstream dam level with the crest of the next), inlet/outlet protection at culverts, stabilised construction entrances at the tie-ins. Inputs: check_dam_h_m, fence_offset_m, source. Agency ESC manual governs (EPA CGP/SWPPP, provincial ESC guides, CIRIA C648/C532, IECA / Blue Book, regional council guidelines).", &["check_dam_h_m"]),
         o("specialist_handoffs", "Hand-off packages (data templates + deliverable checklists) for environmental assessment and bridges/major structures. LICENSED SPECIALIST - NOT PRODUCED BY THIS SOFTWARE.", &[]),
     ]
 }
@@ -302,7 +303,7 @@ type B = crate::standards::DesignBasis;
 impl Session {
     pub fn ext_checks(&self) -> Vec<Check> { self.ext.values().flat_map(|e| e.checks.iter().cloned()).collect() }
     pub fn ext_sheets(&self) -> Vec<ExtSheet> {
-        let order = ["locality_plan", "check_intersection_sight", "design_hydrology", "design_culverts", "check_slope_stability", "design_subsurface_drainage", "design_wall_reinforcement", "design_marking_signing", "design_lighting", "register_utilities", "land_requirements", "plan_traffic_management"];
+        let order = ["locality_plan", "check_intersection_sight", "design_hydrology", "design_culverts", "check_slope_stability", "design_subsurface_drainage", "design_wall_reinforcement", "design_marking_signing", "design_lighting", "register_utilities", "land_requirements", "plan_erosion_control", "plan_traffic_management"];
         order.iter().filter_map(|k| self.ext.get(*k)).flat_map(|e| e.sheets.iter().cloned()).collect()
     }
 
@@ -332,6 +333,7 @@ impl Session {
             "export_rrrap_inputs" => self.x_rrrap(a, &b, &mut o, &mut files)?,
             "cost_plan" => self.x_cost(a, &mut o, &mut files)?,
             "specialist_handoffs" => self.x_handoffs(&b, &mut o, &mut files)?,
+            "plan_erosion_control" => self.x_esc(a, &mut o, &mut files)?,
             _ => return Err(format!("unknown tool {name}")),
         }
         let mut fl = json!({});
@@ -954,5 +956,75 @@ mod tests {
     fn horizontal_sight_offset() {
         // M = R(1 - cos(S/2R)); R 200, S 160 -> 200(1 - cos 0.4) = 15.7878
         assert!((crate::traffic::hso_m(200.0, 160.0) - 15.7878).abs() < 1e-3);
+    }
+}
+
+impl Session {
+    fn x_esc(&self, a: &Value, o: &mut ExtOut, files: &mut Files) -> crate::Result<()> {
+        let c = self.corridor.as_ref().ok_or("build_corridor first")?;
+        let hd = req(a, "check_dam_h_m")?;
+        let fo = f(a, "fence_offset_m").unwrap_or(1.0);
+        let src = a["source"].as_str().unwrap_or("engineer");
+        let mut p = cl_panel(self, "Erosion and sediment control (concept)");
+        let mut fence_len = 0.0;
+        let mut rows = vec![hdr(&["Item", "Location", "Quantity", "Basis"])];
+        let mut qc = String::from("item,side,from_station,to_station,quantity,unit,basis\n");
+        for left in [true, false] {
+            // runs of consecutive fill sections on this side -> sediment fence at daylight + offset
+            let mut run: Vec<(f64, [f64; 2])> = vec![];
+            let flush = |run: &mut Vec<(f64, [f64; 2])>, p: &mut Panel, fence_len: &mut f64, rows: &mut Vec<Vec<String>>, qc: &mut String| {
+                if run.len() >= 2 {
+                    let l: f64 = run.windows(2).map(|w| (w[1].1[0] - w[0].1[0]).hypot(w[1].1[1] - w[0].1[1])).sum();
+                    *fence_len += l;
+                    p.polys.push(("ROW".into(), run.iter().map(|q| q.1).collect()));
+                    let side = if left { "L" } else { "R" };
+                    rows.push(vec!["Sediment fence".into(), format!("{side} {} - {}", sta_label(run[0].0), sta_label(run[run.len() - 1].0)), format!("{l:.0} m"), "fill toe + offset".into()]);
+                    let _ = writeln!(qc, "sediment fence,{side},{:.2},{:.2},{l:.2},m,fill toe + {fo} m", run[0].0, run[run.len() - 1].0);
+                }
+                run.clear();
+            };
+            for q in &c.sections {
+                let sd = if left { &q.left } else { &q.right };
+                if !sd.cut && sd.wall.is_none() {
+                    let off = (sd.daylight + fo) * if left { 1.0 } else { -1.0 };
+                    run.push((q.station, [q.x - off * q.heading.sin(), q.y + off * q.heading.cos()]));
+                } else { flush(&mut run, &mut p, &mut fence_len, &mut rows, &mut qc); }
+            }
+            flush(&mut run, &mut p, &mut fence_len, &mut rows, &mut qc);
+        }
+        // check dams in cut ditches
+        let mut dams = 0usize;
+        if let Some(pr) = &self.profile {
+            for left in [true, false] {
+                let mut sec_run: Vec<f64> = vec![];
+                let mut runs = vec![];
+                for q in &c.sections { let sd = if left { &q.left } else { &q.right }; if sd.cut && sd.codes.iter().any(|k| k.contains("DITCH")) { sec_run.push(q.station); } else if !sec_run.is_empty() { runs.push(std::mem::take(&mut sec_run)); } }
+                if !sec_run.is_empty() { runs.push(sec_run); }
+                for r in runs {
+                    let (s0, s1) = (r[0], r[r.len() - 1]);
+                    if s1 - s0 < 10.0 { continue; }
+                    let g = ((pr.elevation_at(s1).unwrap_or(0.0) - pr.elevation_at(s0).unwrap_or(0.0)) / (s1 - s0)).abs().max(0.005);
+                    let sp = hd / g;
+                    let n = ((s1 - s0) / sp).floor() as usize + 1;
+                    dams += n;
+                    let side = if left { "L" } else { "R" };
+                    rows.push(vec!["Check dams".into(), format!("{side} ditch {} - {}", sta_label(s0), sta_label(s1)), format!("{n} @ {sp:.0} m"), format!("L = h/S = {hd}/{g:.4}")]);
+                    let _ = writeln!(qc, "check dam,{side},{s0:.2},{s1:.2},{n},each,spacing {sp:.2} m = {hd}/{g:.5}");
+                    let mut st = s0;
+                    while st <= s1 { if let Some(q) = c.sections.iter().min_by(|a, b| (a.station - st).abs().partial_cmp(&(b.station - st).abs()).unwrap()) { let sd = if left { &q.left } else { &q.right }; let off = sd.fg.iter().zip(sd.codes.iter()).find(|(_, k)| k.contains("DITCH")).map_or(sd.daylight, |(v, _)| v[0]) * if left { 1.0 } else { -1.0 }; let xy = [q.x - off * q.heading.sin(), q.y + off * q.heading.cos()]; p.polys.push(("SLIP".into(), vec![[xy[0] - 1.5, xy[1] - 1.5], [xy[0] + 1.5, xy[1] + 1.5]])); } st += sp; }
+                }
+            }
+        }
+        let mut n_cul = 0;
+        if let Some(e) = self.ext.get("design_culverts") {
+            for cv in e.result["culverts"].as_array().cloned().unwrap_or_default() { if cv["hyd"].is_object() { n_cul += 1; } }
+            if n_cul > 0 { rows.push(vec!["Culvert inlet / outlet protection".into(), format!("{n_cul} culverts"), format!("{} each", 2 * n_cul), "both ends".into()]); let _ = writeln!(qc, "culvert inlet/outlet protection,,,,{},each,both ends of each culvert", 2 * n_cul); }
+        }
+        rows.push(vec!["Stabilised construction entrance".into(), "start and end tie-ins".into(), "2 each".into(), "site access".into()]);
+        let _ = writeln!(qc, "stabilised construction entrance,,,,2,each,tie-ins");
+        files.push(("esc-quantities.csv".into(), qc.into_bytes()));
+        o.sheets.push(ExtSheet { title: "Erosion and sediment control plan (concept)".into(), panels: vec![p], tables: vec![(vec![60.0, 80.0, 30.0, 60.0], rows)], notes: vec![format!("Concept ESC plan: sediment fence at fill toes + {fo} m, check dams at L = h/S (h = {hd} m), protection at culvert ends, stabilised entrances. Devices, spacing and inspection regime per the agency ESC manual and permit ({src}); the SWPPP / ESC plan is completed by the qualified ESC designer.")] });
+        o.result = json!({"sediment_fence_m": fence_len, "check_dams": dams, "culvert_protection_each": 2 * n_cul});
+        Ok(())
     }
 }

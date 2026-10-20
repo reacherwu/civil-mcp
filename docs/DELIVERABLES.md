@@ -30,9 +30,9 @@ Abbreviations: C = concept / preliminary (US 30%, MTO preliminary, PCF options/p
 | Retaining walls / earth structures (geotechnical interface) | ✓ | ✓ | ✓ CD 622, CG 300 | ✓ | ✓ Bridge Manual §6 | D | see §3 |
 | Road restraint: clear zone, barrier need and length | ✓ RDG | ✓ | ✓ CD 377 (RRRAP) | ✓ AGRD6 | ✓ AGRD6 | C, D | see §3 |
 | Intersections: geometry, sight distance, turning paths | ✓ | ✓ | ✓ CD 123 | ✓ AGRD4/4A | ✓ | C, D | see §3 |
-| Traffic signals / signing / markings / lighting | ✓ | ✓ | ✓ | ✓ | ✓ | D | ❌ gap |
-| Traffic management / staging | ✓ | ✓ | ✓ | ✓ | ✓ | D | ❌ gap |
-| Structures (bridges, culverts > threshold) | ✓ | ✓ | ✓ | ✓ | ✓ Bridge Manual | C, D | ❌ gap |
+| Traffic signals / signing / markings / lighting | ✓ | ✓ | ✓ | ✓ | ✓ | D | see §3 |
+| Traffic management / staging | ✓ | ✓ | ✓ | ✓ | ✓ | D | see §3 |
+| Structures (bridges, culverts > threshold) | ✓ | ✓ | ✓ | ✓ | ✓ Bridge Manual | C, D | see §3 |
 | Cost estimate (parametric at C, unit cost at D) | ✓ | ✓ MTO estimating guide [8] | ✓ | ✓ | ✓ | C, D | see §3 |
 
 ### 2b. Reports and registers
@@ -42,7 +42,7 @@ Abbreviations: C = concept / preliminary (US 30%, MTO preliminary, PCF options/p
 | Design report / design philosophy statement | ✓ | ✓ | ✓ | ✓ AGRD1 App A, TfNSW (major WAD) [15] | ✓ | see §3 |
 | Drainage report | ✓ | ✓ | ✓ | ✓ TfNSW detailed [15] | ✓ | see §3 |
 | Pavement design report | ✓ | ✓ | ✓ | ✓ TfNSW detailed [15] | ✓ | see §3 |
-| Geotechnical report (interface: inputs CBR/Mr, slope/wall parameters) | ✓ | ✓ | ✓ | ✓ | ✓ | input only; geotech report ❌ gap (needs site investigation) |
+| Geotechnical report (interface: inputs CBR/Mr, slope/wall parameters) | ✓ | ✓ | ✓ | ✓ | ✓ | interface: inputs + slope-sections.csv; the report itself needs site investigation (see §3) |
 | Departures / design exceptions register | ✓ | ✓ | ✓ GG 101 | ✓ AGRD1 §4.6 | ✓ | see §3 |
 | Road safety audit / Safe System audit hooks | opt. | ✓ | ✓ GG 119, GG 104 SRA | ✓ RSA3 | ✓ SSA | see §3 (hooks only; audit is independent and human) |
 | Quantities / BoQ by measurement method | state pay items | OPSS tender items | MCHW Vol 4 MMHW Series 500/600/700 [16] | agency spec items | NZTA items | see §3 |
@@ -72,11 +72,11 @@ TxDOT standard sheet sequence [1]: title, index, project layout, roadway typical
 | Misc. drainage details (bedding, manholes, inlets) and standard details | D | ✓ | ✓ OPSD | ✓ HCD | ✓ | ✓ | see §3 |
 | Road restraint / barrier layout | D | ✓ | ✓ | ✓ | ✓ | ✓ | see §3 |
 | Quantity summary sheets | D | ✓ | ✓ | ✓ | ✓ | ✓ | see §3 |
-| Traffic control, signing, markings, signals, lighting, utilities, ROW/land, environmental, landscaping, structures | D | ✓ | ✓ | ✓ | ✓ | ✓ | ❌ gap |
+| Traffic control, signing, markings, signals, lighting, utilities, ROW/land, environmental, landscaping, structures | D | ✓ | ✓ | ✓ | ✓ | ✓ | see §3 |
 
-## 3. civil-mcp v4 coverage (generated from `deliverables-status.csv`, written by `generate_deliverables`)
+## 3. civil-mcp v5 coverage (generated from `deliverables-status.csv`, written by `generate_deliverables`)
 
-Totals: 30 implemented, 11 partial, 14 gap (of 55 items). "Implemented" means the software produces the item for the preliminary design stage; every item still needs review and sealing by the engineer in responsible charge.
+Totals: 45 implemented, 8 partial, 2 interface (licensed-specialist hand-off only), 0 gap (of 55 items). "Implemented" means the software produces the item for the preliminary / concept design stage; every item still needs review and sealing by the engineer in responsible charge. "Interface" means the software writes a data hand-off template and a deliverables checklist for a licensed specialist and does not produce the item itself.
 
 ### 3a. Calculations
 
@@ -89,23 +89,23 @@ Totals: 30 implemented, 11 partial, 14 gap (of 55 items). "Implemented" means th
 | Lane widening on curves | implemented | AASHTO off-tracking formula or engineer table |
 | Earthwork volumes, mass haul, free haul/overhaul, borrow/waste, shrink/bulk | implemented | quantities.json, design-report.md §5, mass-haul sheet |
 | Profile optimisation for earthwork balance under standards | implemented | profile-optimisation.json |
-| Pavement thickness design | partial | US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer. Gaps: AASHTOWare ME, CIRCLY mechanistic, AU/NZ rigid |
+| Pavement thickness design | partial | US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer; mechanistic screening (Odemark-Boussinesq + AGPT02 transfer functions). Gaps: AASHTOWare ME, full CIRCLY layered-elastic analysis, AU/NZ rigid |
 | Subgrade / foundation design (CD 225, subgrade improvement) | partial | design CBR/Mr inputs and subgrade sheet; foundation design itself is a gap |
 | Storm drainage network hydraulics with HGL/EGL | implemented | drainage-report.md, pipe profile sheets |
-| Hydrology (IFD/IDF, ARR 2019, FEH/ReFH, peak flow methods) | gap | design rainfall intensity is an engineer input |
+| Hydrology (IFD/IDF, ARR 2019, FEH/ReFH, peak flow methods) | implemented | design_hydrology: TIN catchments (priority-flood + D8), rational (US/CA), NRCS TR-55 Type II, ARR 2019 rational-type with Bransby-Williams tc (AU/NZ); UK FEH/ReFH2 peak entered by the engineer with rational sense check. IFD tables are engineer inputs. hydrology.csv, drainage area map sheet |
 | Roadside ditch / channel lining (HEC-15 shear) | implemented | protection.json, drainage-report.md |
-| Culvert hydraulics (HDS-5) and structural design | gap |  |
+| Culvert hydraulics (HDS-5) and structural design | implemented | design_culverts: HDS-5 inlet and outlet control, size selection by HW/D, freeboard, cover; culverts.csv and culvert sheet. Structural class by agency standard drawings; large culverts go to the structures hand-off |
 | Sanitary sewer design (peaking, depth ratio, velocity) | implemented | drainage-report.md |
-| Retaining wall external stability | partial | US global factors; other profiles need engineer criteria; structural design of stem/reinforcement is a gap |
-| Barrier need and length of need, clear zone | partial | geometric hazard screening with engineer clear zone; UK RRRAP not implemented |
-| Intersection geometry, returns, sight triangles | partial | US Case B1 implemented; CD 123 / Austroads SISD via engineer distances not yet separate |
-| Slope stability / geotechnical design | gap |  |
-| Subsurface (pavement) drainage | gap |  |
-| Traffic capacity / LOS, signals, signing, markings, lighting | gap |  |
-| Noise, air, environmental assessment | gap |  |
-| Utilities conflicts, right-of-way / land requirements | gap |  |
-| Bridges and major structures | gap |  |
-| Temporary traffic management / staging | gap |  |
+| Retaining wall external stability | partial | US global factors; other profiles need engineer criteria; stem flexural reinforcement (design_wall_reinforcement). Gaps: shear, crack control, footing structural design, detailing |
+| Barrier need and length of need, clear zone | implemented | geometric hazard screening with engineer clear zone, length of need; UK: rrrap-inputs.csv for the National Highways RRRAP tool (the risk assessment is run in RRRAP) |
+| Intersection geometry, returns, sight triangles | implemented | US Case B1 / CA time gap / AU-NZ Austroads SISD / UK CD 123 y-distance (check_intersection_sight); intersection layout sheet |
+| Slope stability / geotechnical design | implemented | check_slope_stability: Bishop simplified + Spencer, critical circle search, parameters from the geotechnical report; slope-sections.csv for the geotechnical designer. Homogeneous soil only |
+| Subsurface (pavement) drainage | implemented | design_subsurface_drainage: Cedergren infiltration, layer capacity, t50, edge drain capacity and outlet spacing; AASHTO m by engineer |
+| Traffic capacity / LOS, signals, signing, markings, lighting | partial | concept signing and marking (no-passing zones vertical + horizontal), lighting by the lumen method. Gaps: capacity / LOS, signal design, photometric lighting design |
+| Noise, air, environmental assessment | interface | LICENSED SPECIALIST: handoff-environmental.json + checklist by profile (specialist_handoffs); assessment not produced by this software |
+| Utilities conflicts, right-of-way / land requirements | implemented | register_utilities (utility-register.csv), land_requirements (footprint, parcel takes) |
+| Bridges and major structures | interface | LICENSED SPECIALIST: handoff-bridge-structures.json + checklist by profile; design not produced by this software |
+| Temporary traffic management / staging | implemented | plan_traffic_management: concept staging; MUTCD taper formula (US), engineer tapers elsewhere |
 
 ### 3b. Reports and registers
 
@@ -114,21 +114,21 @@ Totals: 30 implemented, 11 partial, 14 gap (of 55 items). "Implemented" means th
 | Design report / basis of design / design criteria | implemented | design-report.md, parameter-register.csv |
 | Drainage report | implemented | drainage-report.md |
 | Pavement design report | implemented | pavement-report.md |
-| Geotechnical interface (inputs needed from the geotechnical report) | partial | design-report.md §12 lists inputs; the geotechnical report itself is a gap |
+| Geotechnical interface (inputs needed from the geotechnical report) | implemented | design-report.md §12 lists inputs; slope stability takes the report reference and parameters and returns slope-sections.csv. The geotechnical report itself is by the geotechnical engineer |
 | Departures / design exceptions / relaxations register | implemented | departures-register.csv |
 | Road safety audit hooks (brief for the independent auditor) | implemented | rsa-brief.md (the audit itself is done by people) |
-| Quantities / bill of quantities by measurement method | partial | boq.csv (US FP-14 sections, UK SHW/MMHW series; CA/AU/NZ generic groups to map to agency items) |
-| Cost estimate | partial | cost-estimate.csv: quantities with blank rates for the estimator; route cost proxy in relative units |
+| Quantities / bill of quantities by measurement method | implemented | boq.csv: US FP-14 sections, UK SHW series + CESMM4 class, CA OPSS, AU TfNSW, NZ NZTA references per work group (marked verify for the estimator) |
+| Cost estimate | implemented | cost-plan.csv structure: base, contingency, risk P50/P90, optimism bias (UK); rates blank by design (no market prices shipped) |
 | Setting-out / alignment report | implemented | setting-out.csv |
 | Checks / design review report with audit trail | implemented | review.html |
-| Environmental, constructability, utilities reports | gap |  |
+| Environmental, constructability, utilities reports | partial | utility conflict register; environmental hand-off (licensed specialist). Gap: constructability report |
 
 ### 3c. Drawings
 
 | Item | Status | Output / note |
 |---|---|---|
 | Title sheet, sheet index, general notes and legend | implemented | sheets.pdf / sheet-NN.dxf |
-| Key plan / location plan | partial | route alternatives sheet shows the corridor on contours; no separate location map at small scale |
+| Key plan / location plan | implemented | locality plan sheet (UTM grid, lat/long); no base mapping shipped |
 | Route alternatives plan | implemented | sheets.pdf |
 | Typical sections | implemented | sheets.pdf |
 | Plan and profile | implemented | sheets.pdf |
@@ -141,48 +141,42 @@ Totals: 30 implemented, 11 partial, 14 gap (of 55 items). "Implemented" means th
 | Barrier / protection layout and ditch lining schedule | implemented | sheets.pdf |
 | Quantity summary sheet | implemented | mass haul and quantities sheet; full BoQ in boq.csv |
 | Standard details atlas (curb, gutter, barrier, trench bedding, manhole) | implemented | sheets.pdf (schematic details with the agency standard drawing / specification reference per profile; CA/AU/NZ references are engineer-to-cite) |
-| Intersection layout | partial | shown on the plan sheet; no separate layout sheet |
-| Signing, pavement marking, lighting, signals | gap |  |
-| Traffic management / staging plans | gap |  |
-| Utilities, right-of-way / land plans | gap |  |
-| Erosion and sediment control plan, landscaping | partial | slope protection areas only |
-| Structures (bridges, culverts, wall structural) | gap |  |
+| Intersection layout | implemented | intersection layout and sight distance sheet |
+| Signing, pavement marking, lighting, signals | partial | concept signing/marking and lighting sheets; signals gap |
+| Traffic management / staging plans | implemented | concept staging sheet |
+| Utilities, right-of-way / land plans | implemented | utility plan + register sheet, land requirement plan sheet |
+| Erosion and sediment control plan, landscaping | partial | concept ESC plan sheet (sediment fence, check dams at L = h/S, culvert protection, entrances) and slope protection areas; landscaping plan is a gap |
+| Structures (bridges, culverts, wall structural) | partial | culvert layout/section sheet, wall stem reinforcement sheet; bridges by licensed specialist (hand-off) |
 
-### 3d. Explicit gaps (not produced by the software)
+### 3d. Remaining gaps, interfaces and partial items
 
-- Hydrology (IFD/IDF, ARR 2019, FEH/ReFH, peak flow methods)
-- Culvert hydraulics (HDS-5) and structural design
-- Slope stability / geotechnical design
-- Subsurface (pavement) drainage
-- Traffic capacity / LOS, signals, signing, markings, lighting
-- Noise, air, environmental assessment
-- Utilities conflicts, right-of-way / land requirements
-- Bridges and major structures
-- Temporary traffic management / staging
-- Environmental, constructability, utilities reports
-- Signing, pavement marking, lighting, signals
-- Traffic management / staging plans
-- Utilities, right-of-way / land plans
-- Structures (bridges, culverts, wall structural)
+Gaps (not produced by the software):
+
+- none at item level; see the partial items below
+
+Licensed-specialist interfaces (hand-off template + checklist only):
+
+- Noise, air, environmental assessment: LICENSED SPECIALIST: handoff-environmental.json + checklist by profile (specialist_handoffs); assessment not produced by this software
+- Bridges and major structures: LICENSED SPECIALIST: handoff-bridge-structures.json + checklist by profile; design not produced by this software
 
 Partial items and what is missing:
 
-- Pavement thickness design: US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer. Gaps: AASHTOWare ME, CIRCLY mechanistic, AU/NZ rigid
+- Pavement thickness design: US/CA AASHTO 1993 flexible+rigid; AU/NZ AGPT02 empirical granular; UK CD 226 Eq 2.24/2.43 with Fig 2.20 values by engineer; mechanistic screening (Odemark-Boussinesq + AGPT02 transfer functions). Gaps: AASHTOWare ME, full CIRCLY layered-elastic analysis, AU/NZ rigid
 - Subgrade / foundation design (CD 225, subgrade improvement): design CBR/Mr inputs and subgrade sheet; foundation design itself is a gap
-- Retaining wall external stability: US global factors; other profiles need engineer criteria; structural design of stem/reinforcement is a gap
-- Barrier need and length of need, clear zone: geometric hazard screening with engineer clear zone; UK RRRAP not implemented
-- Intersection geometry, returns, sight triangles: US Case B1 implemented; CD 123 / Austroads SISD via engineer distances not yet separate
-- Geotechnical interface (inputs needed from the geotechnical report): design-report.md §12 lists inputs; the geotechnical report itself is a gap
-- Quantities / bill of quantities by measurement method: boq.csv (US FP-14 sections, UK SHW/MMHW series; CA/AU/NZ generic groups to map to agency items)
-- Cost estimate: cost-estimate.csv: quantities with blank rates for the estimator; route cost proxy in relative units
-- Key plan / location plan: route alternatives sheet shows the corridor on contours; no separate location map at small scale
-- Intersection layout: shown on the plan sheet; no separate layout sheet
-- Erosion and sediment control plan, landscaping: slope protection areas only
+- Retaining wall external stability: US global factors; other profiles need engineer criteria; stem flexural reinforcement (design_wall_reinforcement). Gaps: shear, crack control, footing structural design, detailing
+- Traffic capacity / LOS, signals, signing, markings, lighting: concept signing and marking (no-passing zones vertical + horizontal), lighting by the lumen method. Gaps: capacity / LOS, signal design, photometric lighting design
+- Environmental, constructability, utilities reports: utility conflict register; environmental hand-off (licensed specialist). Gap: constructability report
+- Signing, pavement marking, lighting, signals: concept signing/marking and lighting sheets; signals gap
+- Erosion and sediment control plan, landscaping: concept ESC plan sheet (sediment fence, check dams at L = h/S, culvert protection, entrances) and slope protection areas; landscaping plan is a gap
+- Structures (bridges, culverts, wall structural): culvert layout/section sheet, wall stem reinforcement sheet; bridges by licensed specialist (hand-off)
 
 ### 3e. Standards: verified vs engineer input
 
 - Verified from the published source and coded: DMRB CD 109 Table 2.10 (UK design speed related parameters, OGL); CD 109 Eq 4.2 superelevation; CD 226 Eq 2.24, 2.43a/b and foundation-class limits (§2.4, §2.5, §2.19); AASHTO 1993 flexible and rigid design equations (worked examples reproduced); AASHTO 2018 metric SSD, minimum-radius, crest/sag curve formulas; FHWA HEC-15 (2005) Table 2.1/2.3 values, Eq 6.1 and 6.8 with Table 6.1; HEC-22 HGL approximate method; Ten States and Harmon peaking; FHWA FP-14 section numbers for the BoQ.
 - Engineer input (copyrighted/paywalled tables or project-specific): e_max and side friction, maximum grades, relative gradients for non-UK profiles, TAC/Austroads tables (minimum radii, K values where tabulated), CD 226 Figure 2.20 nomograph values, AGPT02 chart readings where outside the coded equation, clear-zone widths (RDG Table 3-1 / CD 377 / AGRD06), wall factors of safety for CA/UK/AU/NZ, local sewer criteria, rainfall intensity. These are marked `engineer` in parameter-register.csv and in the design report.
+
+- v5 formulas coded from the published source: rational method; NRCS TR-55 runoff equation and Type II unit peak discharge (Table F-1 coefficients only); Kirpich and Bransby-Williams tc; FHWA HDS-5 inlet-control forms (Table A.1 coefficients for six concrete/CMP inlets) and outlet-control energy equation with ke (Table C.2); Bishop simplified and Spencer limit equilibrium; Cedergren infiltration, Darcy layer capacity and Casagrande-Shannon t50 (FHWA subsurface drainage manual); Boussinesq/Odemark strains with AGPT02 transfer functions (screening); rectangular-stress-block flexure; MUTCD Table 3B-1 PSD and Part 6 taper formulas; lumen-method spacing; horizontal sight-line offset M = R(1 - cos(S/2R)); Austroads SISD formula; UTM inverse (Snyder 1987).
+- v5 engineer inputs: IFD/IDF tables (NOAA Atlas 14, ECCC, BoM, FEH DDF), C and CN, UK FEH/ReFH2 peaks, culvert sizes / HW/D / freeboard / cover, soil parameters and FS criterion from the geotechnical report, AASHTO drainage coefficient m, asphalt Vb / RF, wall material and load factors, non-US passing sight distances and taper lengths, Austroads RT and d, CD 123 y-distance, TAC time gap, luminaire data, utility records and quality levels, parcel boundaries, contingency / optimism bias. Item codes for CA/AU/NZ BoQ mapping and some US/UK series are marked (verify).
 
 ## Sources
 [1] TxDOT PS&E Preparation Manual, Ch. 3 Table 3-1 (traditional plan sheet sequence), https://www.txdot.gov/content/dam/txdotoms/des/pse/pse.pdf

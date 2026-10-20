@@ -251,6 +251,14 @@ MK = last("design_marking_signing")["result"]
 mph = math.ceil(50 / 1.609344 / 5) * 5  # design speed rounded up to the next 5 mph row
 report(f"MUTCD Table 3B-1 PSD at {mph} mph = {dict([(25, 450), (30, 500), (35, 550), (40, 600)])[mph]} ft (m)", MK["psd_m"], dict([(25, 450), (30, 500), (35, 550), (40, 600)])[mph] * 0.3048, 1e-6)
 
+# ---------- E. erosion control: check-dam count from L = h / S on the design profile ----------
+EA = last("plan_erosion_control")["args"]
+vp = last("create_profile") if any(e["tool"] == "create_profile" for e in LOG) else None
+for r in rcsv("esc-quantities.csv"):
+    if r["item"] == "check dam":
+        s0, s1 = float(r["from_station"]), float(r["to_station"]); sp = float(r["basis"].split("spacing ")[1].split(" m")[0])
+        report(f"check dams {r['side']} {s0:.0f}-{s1:.0f}: n = floor(L/sp)+1", float(r["quantity"]), math.floor((s1 - s0) / sp) + 1, 1e-9)
+
 print(f"\n{len(rows)} v5 checks, {len(fails)} outside tolerance")
 json.dump([dict(zip(["check", "civil_mcp", "independent", "diff", "unit", "ok"], r)) for r in rows], open(f"{out}/independent-check-v5.json", "w"), indent=1)
 sys.exit(1 if fails else 0)
