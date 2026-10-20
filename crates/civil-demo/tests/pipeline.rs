@@ -12,7 +12,7 @@ fn full_pipeline_and_approval_rules() {
     let log: Vec<Value> = std::fs::read_to_string(format!("{out}/run-log.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     // the 40 m spiral attempt is caught by a superelevation check, the 50 m one is not
     let first_check = log.iter().find(|e| e["tool"] == "check_standards").unwrap();
-    assert!(first_check["mandatory_failures"].as_array().unwrap().iter().any(|f| f.as_str().unwrap().starts_with("SE-")), "{first_check}");
+    assert!(first_check["mandatory_failures"].as_array().unwrap().iter().any(|f| f["id"].as_str().unwrap().starts_with("SE-")), "{first_check}");
     let pipes: Vec<&Value> = log.iter().filter(|e| e["tool"] == "design_pipe_network").collect();
     assert!(pipes[0]["result"]["mandatory_failures"].as_u64().unwrap() > 0);
     assert_eq!(pipes[1]["result"]["mandatory_failures"], 0);

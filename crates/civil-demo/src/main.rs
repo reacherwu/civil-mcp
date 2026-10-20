@@ -20,7 +20,7 @@ impl Run {
             Err(e) => (false, json!({"error": e})),
         };
         let checks = self.s.all_checks();
-        let fails: Vec<String> = checks.iter().filter(|c| !c.pass && c.severity == "mandatory").map(|c| format!("{} {}", c.id, c.element)).collect();
+        let fails: Vec<Value> = checks.iter().filter(|c| !c.pass && c.severity == "mandatory").map(|c| json!({"id": c.id, "element": c.element, "value": c.value, "limit": c.limit, "unit": c.unit, "citation": c.citation})).collect();
         writeln!(self.log, "{}", json!({"tool": name, "ok": ok, "args": a, "result": v.get("result").cloned().unwrap_or(v.clone()), "checks_total": checks.len(), "mandatory_failures": fails})).unwrap();
         if !ok {
             eprintln!("tool {name} failed: {}", v["error"]);
