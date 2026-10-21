@@ -2,7 +2,7 @@
 
 # civil-mcp
 
-**Road design you can hand to an AI agent, and check.** About 65 Civil 3D-style design tools, served as a local MCP server. Each result carries the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
+**Road design you can hand to an AI agent, and check.** 65 Civil 3D-style design tools served as a local MCP server. Every result cites the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
 
 [![CI](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -12,12 +12,12 @@
 
 ![The agent designing a road on USGS terrain. Every frame is drawn from files the demo wrote.](docs/media/civil-mcp-agent-design.gif)
 
-| **65** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set (PDF + DXF) | **269 / 269** independent re-checks within tolerance |
-|:---:|:---:|:---:|:---:|
+| **65** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set + **14**-sheet construction set | **269 / 269** independent re-checks within tolerance | **11** real-terrain runs on **9** surfaces |
+|:---:|:---:|:---:|:---:|:---:|
 
-<sub>All numbers come from the committed demo: US AASHTO profile, 50 km/h rural collector, 5,607 USGS 3DEP survey points near Palo Alto CA, measured 2026-10-20. Layered elastic pavement analysis matches the published KENPAVE example to ≤ 0.09 %.</sub>
+<sub>Numbers come from a fresh run of the committed demo (US AASHTO profile, 50 km/h rural collector, 5,607 USGS 3DEP survey points near Palo Alto CA) and of `scripts/terrain_batch.py`, both on 2026-10-20 (PDT). Layered elastic pavement analysis matches the published KENPAVE example to ≤ 0.09 %.</sub>
 
-**This is not a substitute for a licensed engineer.** It is a set of tools an engineer can direct, audit and approve.
+**This is not a substitute for a licensed engineer.** It is a set of tools an engineer can direct, audit and approve. Current depth: concept / 30 % design content, laid out in a 60 %-style sheet format.
 
 </div>
 
@@ -25,7 +25,19 @@
 
 ## Contents
 
-[Works with](#works-with-mcp-clients) · [How it works](#how-it-works) · [Why](#why) · [Quick start](#quick-start) · [Client setup](#mcp-client-setup) · [Feature gallery](#feature-gallery) · [Drawing set](#drawing-set-all-38-sheets) · [Sheet frames](#sheet-frames-and-drafting-standards) · [Standards](#standards-coverage-by-country) · [Validation](#validation-summary) · [Deliverables](#deliverables-matrix) · [Limits](#limits) · [Roadmap](#roadmap) · [License](#license-and-attribution)
+[Status](#status-at-a-glance) · [Works with](#works-with-mcp-clients) · [How it works](#how-it-works) · [Why](#why) · [Quick start](#quick-start) · [Client setup](#mcp-client-setup) · [Feature gallery](#feature-gallery) · [Real terrain](#real-terrain-route-feasibility-and-switchbacks) · [Superelevation runoff](#superelevation-runoff-sized-during-alignment-design) · [Civil 3D handoff](#civil-3d-handoff-landxml-cross-sections-and-3d-cad-model) · [Construction set](#construction-scale-sheet-set) · [Blender](#blender-visualisation-concept--preliminary) · [Units](#units-si-or-us-customary) · [Drawing set](#drawing-set-all-38-sheets) · [Sheet frames](#sheet-frames-and-drafting-standards) · [Standards](#standards-coverage-by-country) · [Validation](#validation-summary) · [Deliverables](#deliverables-matrix) · [Status and limits](#status-and-limits) · [Roadmap](#roadmap) · [License](#license-and-attribution)
+
+## Status at a glance
+
+| Area | State |
+|---|---|
+| Design depth | Concept / 30 % content in a 60 %-style sheet format. Every sheet is stamped PRELIMINARY until an engineer approves |
+| Standards profiles | US AASHTO, Canada TAC, UK DMRB, Australia Austroads, New Zealand Austroads + NZTA |
+| Units | SI by default; switch to US customary (international or survey foot) and back at any time |
+| Terrain | GeoTIFF / COG, ESRI ASCII grid, LAS / LAZ, with CRS handling; 11 real-terrain runs documented |
+| Outputs | PDF, per-sheet DXF and SVG, LandXML 1.2 with cross sections, 3D DXF model, glTF / Blender scene, CSV / Markdown / HTML reports |
+| Verification | 269 independent Python re-checks, CI on every push, Rust unit and pipeline tests |
+| Not yet | DWG writer, a Civil 3D open test, end-to-end tests in MCP clients, remote (HTTP) transport |
 
 ## Works with (MCP clients)
 
@@ -73,24 +85,27 @@ flowchart LR
 
 ```bash
 git clone https://github.com/reacherwu/civil-mcp && cd civil-mcp
-cargo run --release -p civil-demo -- demo-out     # ~5 s after build; writes everything below
+cargo run --release -p civil-demo -- demo-out              # SI; a few seconds after the build
+cargo run --release -p civil-demo -- demo-out-us --units us   # the same design in US customary units
 ```
 
-<details><summary><b>What the demo writes to <code>demo-out/</code></b> (≈ 80 files)</summary>
+<details><summary><b>What the demo writes to <code>demo-out/</code></b> (162 files)</summary>
 
 | Group | Files |
 |---|---|
-| Drawings | `sheets.pdf` (38 sheets, A1), `sheet-01.dxf` … `sheet-38.dxf`, `model.dxf` |
-| Model exchange | `design.xml` (LandXML 1.2: surface, alignment, profile, pipe networks), `corridor.json`, `setting-out.csv` |
+| Drawings | `sheets.pdf` (38 sheets), `sheet-01.dxf` … `sheet-38.dxf` + SVG, `model.dxf` |
+| Construction set | `construction-set.pdf` (14 sheets), `cs-01.dxf` … `cs-14.dxf` + SVG, `construction-register.csv` |
+| Model exchange | `design.xml` (LandXML 1.2: surface, alignment, profile, cross sections, pipe networks), `civil3d-model.dxf` (3D), `corridor.json`, `setting-out.csv` |
+| Visualisation | `scene.glb` (glTF 2.0), `scene.json`, `blender_scene.py` |
 | Reports | `design-report.md`, `drainage-report.md`, `pavement-report.md`, `constructability.md`, `rsa-brief.md`, `specialist-handoffs.md`, `review.html` |
 | Registers | `parameter-register.csv`, `departures-register.csv`, `deliverables-status.csv`, `utility-register.csv` |
 | Quantities and cost | `boq.csv`, `cost-estimate.csv`, `cost-plan.csv`, `esc-quantities.csv`, `land-requirements.csv`, `footprint.csv` |
-| Calculations | `hydrology.csv`, `culverts.csv`, `network-storm.json`, `network-sanitary.json`, `pavement-mechanistic.csv`, `rigid-pavement.csv`, `foundation-design.csv`, `wall-types.csv`, `wall-reinforcement.csv`, `slope-sections.csv`, `signal-timing.csv`, `capacity.csv`, `landscape.csv`, `lighting-poles.csv`, `sign-schedule.csv`, `no-passing-zones.csv`, `route-alternatives.json`, `profile-optimisation.json`, `quantities.json`, `protection.json`, `intersection-X1.json` |
+| Calculations | `superelevation.json`, `hydrology.csv`, `culverts.csv`, `network-storm.json`, `network-sanitary.json`, `pavement-mechanistic.csv`, `rigid-pavement.csv`, `foundation-design.csv`, `wall-types.csv`, `wall-reinforcement.csv`, `slope-sections.csv`, `signal-timing.csv`, `capacity.csv`, `landscape.csv`, `lighting-poles.csv`, `sign-schedule.csv`, `no-passing-zones.csv`, `route-alternatives.json`, `profile-optimisation.json`, `quantities.json`, `protection.json`, `intersection-X1.json` |
 | Trail | `audit.jsonl` (hash chain), `run-log.jsonl` (every tool call and result) |
 
 </details>
 
-Committed copies: [sheets.pdf](docs/sheets.pdf) · [review.html](docs/review.html) · [design.xml](docs/design.xml) · [run-log.jsonl](docs/run-log.jsonl) · 1080p video: [docs/media/civil-mcp-agent-design.mp4](docs/media/civil-mcp-agent-design.mp4)
+Committed copies from this run: [sheets.pdf](docs/sheets.pdf) · [review.html](docs/review.html) · [design.xml](docs/design.xml) · [run-log.jsonl](docs/run-log.jsonl) · 1080p video: [docs/media/civil-mcp-agent-design.mp4](docs/media/civil-mcp-agent-design.mp4)
 
 Run the MCP server itself:
 
@@ -180,7 +195,7 @@ A first prompt to try: *"Open a project in ./job, set a US AASHTO basis for 60 k
 
 ## Feature gallery
 
-The features below follow the pipeline order. Every image is a crop of a sheet the demo actually produced; [all 38 full-size sheets](#drawing-set-all-38-sheets) are further down. Clause references are the ones the tools cite in their output. Values that come from copyrighted tables are *engineer inputs* and are marked that way in the parameter register.
+The features below follow the pipeline order. Images are frames of the demo animation or crops of sheets from the fresh demo run; [all 38 full-size sheets](#drawing-set-all-38-sheets) are further down. Clause references are the ones the tools cite in their output. Values that come from copyrighted tables are *engineer inputs* and are marked that way in the parameter register.
 
 ### 1 · Survey points → TIN
 
@@ -196,21 +211,22 @@ The features below follow the pipeline order. Every image is a crop of a sheet t
 
 ### 2 · Route alternatives and selection
 
-A least-cost search on a 10 m grid produces three corridors. Each is built and checked in full, and the selection rule and reasons are recorded.
+A least-cost search on a 10 m grid produces four corridors: direct, contour-following, a separate corridor, and a switchback search that limits every move to 2 × the design maximum grade. Each alternative is fitted with curves and transitions, built and checked in full, and the selection rule and reasons are recorded.
 
 <img src="docs/img/crop/sheet-02.png" width="100%" alt="route alternatives sheet"/>
 
 | Alternative | Length | Mandatory failures | Cut / fill m³ | Wall concrete m³ | Cost proxy |
 |---|---:|---:|---:|---:|---:|
 | **A-direct (selected)** | 1,136 m | **0** | 22,618 / 51,310 | 6,581 | 317,776 |
-| B-contour-following | 1,088 m | 3 | 39,482 / 69,081 | 4,691 | 299,615 |
-| C-separate-corridor | 1,129 m | 0 | 20,967 / 100,404 | 77,824 | 2,578,395 |
+| B-contour-following | 1,053 m | 0 | 44,606 / 69,366 | 6,293 | 346,578 |
+| C-separate-corridor | 1,129 m | 2 | 20,967 / 100,404 | 77,824 | 2,578,395 |
+| D-switchback | 1,064 m | 0 | 40,433 / 68,291 | 9,787 | 450,179 |
 
 Rule: fewest mandatory failures, then lowest cost proxy. Rates are placeholders. **Tools:** `generate_route_alternatives`, `select_route` · **Checked:** route costs re-derived with SciPy `csgraph` Dijkstra to 1e-6.
 
 ### 3 · Horizontal alignment, spirals and superelevation
 
-Circular curves with clothoid transitions, and AASHTO superelevation with runoff by maximum relative gradient.
+Circular curves with clothoid transitions, and AASHTO superelevation with runoff by maximum relative gradient. Spirals are sized to the required runoff while the alignment is fitted ([details](#superelevation-runoff-sized-during-alignment-design)).
 
 <img src="docs/img/crop/sheet-05.png" width="100%" alt="superelevation diagram"/>
 
@@ -220,7 +236,7 @@ Circular curves with clothoid transitions, and AASHTO superelevation with runoff
 | 2 | 200 | 40 / 40 | 42.68° | 0.0303 | 27.1 → 40 m |
 | 3 | 200 | 40 / 40 | −13.17° | 0.0303 | 27.1 → 40 m |
 
-Clauses: AASHTO Green Book 2018 (7th ed.) minimum radius, spiral transitions, superelevation runoff (Table 3-15 values engineer-entered), SSD 63.4 m. **Tools:** `create_alignment`, `design_superelevation`, `check_standards` · **Checked:** clothoid chords to 1e-6 m, e and runoff lengths exact.
+Clauses: AASHTO Green Book 2018 (7th ed.) minimum radius, spiral transitions, superelevation runoff (Table 3-15 values engineer-entered), SSD 63.4 m. **Tools:** `create_alignment`, `design_superelevation`, `check_standards` · **Checked:** clothoid chords to 1e-6 m; e, runoff length, spiral ≥ runoff and curve overlap re-derived in Python.
 
 ### 4 · Profile and earthwork balance
 
@@ -436,28 +452,134 @@ The tools write Markdown and HTML reports generated from the model state. The de
 Every tool call is appended to `audit.jsonl` with its actor, inputs, outputs, SHA-256 hashes and the previous entry's hash. `verify_audit_log` recomputes the chain. Approval is a separate, explicit act.
 
 ```json
-{"actor":"engineer:REVIEWER-PLACEHOLDER","hash":"fe11010e…","inputs":{"basis":{"design_speed_kmh":50.0,"e_max":0.08,…}},"prev_hash":"…","tool":"set_design_basis"}
-{"actor":"agent","hash":"3c49811d…","inputs":{"path":"…/usgs3dep_palo_alto_points.csv"},"outputs":{"file_sha256":"3cf736ec…","points":5607},…}
+{"actor":"engineer:REVIEWER-PLACEHOLDER","hash":"…","inputs":{"basis":{"design_speed_kmh":50.0,"e_max":0.08,…}},"prev_hash":"…","tool":"set_design_basis"}
+{"actor":"agent","hash":"…","inputs":{"path":"…/usgs3dep_palo_alto_points.csv"},"outputs":{"file_sha256":"3cf736ec…","points":5607},…}
 ```
 
 | Audit entries (demo) | Chain status | Sheet status before approval |
 |---:|---|---|
-| 58 | **OK** (`verify_audit_log`) | PRELIMINARY – NOT FOR CONSTRUCTION |
+| 61 | **OK** (`verify_audit_log`) | PRELIMINARY – NOT FOR CONSTRUCTION |
 
 **Tools:** `verify_audit_log`, `generate_review_report`, `record_review`, `record_departure`. MCP cannot authenticate a human, and `engineer:<name>` is a declaration. Production deployments need real authentication in front of `set_design_basis` and `record_review`.
 
-### 18 · Interoperability: LandXML, DXF, DWG
+### 18 · Interoperability: LandXML, DXF, DWG, glTF
 
 | Format | Direction | Verification |
 |---|---|---|
-| LandXML 1.2 | import + export | XSD-valid (0 errors). Civil 3D 2022/2023/2025 exports: surfaces to 2e-12, a 23.47 km alignment to 2.6e-10 m, 411 pipes to 1.3e-9 m |
-| DXF (AC1009 / R12) | export, 39 files | ezdxf audit 0 errors; LibreCAD 2.2 rendered all DXFs in the v4 run (not re-run for v6) |
-| DWG | via ODA File Converter | DXF→DWG→DXF round trip on all 39 files with identical entity counts (0 mismatches); LibreDWG reads all |
-| PDF | export | 38 A1 sheets with title block, audit head hash, seal box |
+| LandXML 1.2 | import + export | XSD-valid (0 errors), with cross sections. Civil 3D 2022/2023/2025 exports: surfaces to 2e-12, a 23.47 km alignment to 2.6e-10 m, 411 pipes to 1.3e-9 m |
+| DXF (AC1009 / R12) | export: 38 sheets, 14 construction sheets, `model.dxf`, `civil3d-model.dxf` | ezdxf audit 0 errors in CI. An earlier local run rendered the sheet DXFs in LibreCAD 2.2 and round-tripped them DXF→DWG→DXF through ODA File Converter with identical entity counts; that run was not repeated for this build |
+| DWG | not written | convert with ODA File Converter |
+| glTF 2.0 (`scene.glb`) | export | container, accessor bounds and ground mesh checked against the LandXML TIN in CI |
+| PDF | export | 38-sheet set and 14-sheet construction set, title block, audit head hash, seal box |
 
-**Tools:** `import_landxml`, `export_landxml`, `generate_drawings`.
+**Tools:** `import_landxml`, `export_landxml`, `export_cad_model`, `export_blender_scene`, `generate_drawings`, `generate_construction_set`.
 
 ---
+
+## Real terrain, route feasibility and switchbacks
+
+`import_terrain` loads a GeoTIFF / Cloud-Optimised GeoTIFF DEM, an ESRI ASCII grid, or a LAS/LAZ point cloud (ASPRS class 2 ground by default) and builds the existing-ground TIN.
+
+- **CRS.** The EPSG code comes from GeoTIFF keys or the LAS WKT/GeoKey VLRs, or from `epsg`. Geographic and Web Mercator data are projected to UTM (checked against PROJ to < 1 mm). Projected data (UTM, state plane, national grids) stay planar; international and US survey feet are converted to metres, horizontal and vertical separately.
+- **Switchbacks.** `generate_route_alternatives` adds a switchback alternative (D) that forbids moves steeper than 2 × the design maximum grade. It keeps hairpin curves when the engineer enters `hairpin_min_radius_m`, recording each as a design exception.
+- **Plausibility limits.** Every alternative is checked against fill, cut and wall-height limits (EW-FILL / EW-CUT / EW-WALL). The defaults are 15 / 15 / 10 m: agent screening values that the engineer should confirm or replace through `limits`.
+- **Infeasibility stop.** When every alternative fails the grade or height limits, or no path exists, the tool stops with `INFEASIBLE` and gives the reason: the elevation difference, the minimum road length that difference needs at the maximum grade, and the options (enlarge the surface, enter a hairpin radius, revise limits, move the end points).
+- **Duplicates.** Alternatives that repeat an earlier path are flagged (`overlap_with_earlier_pct`).
+
+<img src="docs/img/terrain/paloalto-routes.png" width="80%" alt="four route alternatives on the Palo Alto foothills DEM"/>
+
+<sub>Four alternatives over 4.4 km on USGS 3DEP terrain, drawn by `scripts/terrain_figure.py` from the `route-alternatives.json` that the batch run wrote.</sub>
+
+Results of `scripts/terrain_batch.py` on 11 runs over 9 public surfaces (end points at 15 % and 85 % of each extent, AASHTO 50 km/h, 10 % maximum grade):
+
+| Site | Terrain | Data | Result |
+|---|---|---|---|
+| Palo Alto (UTM) | hills | USGS 3DEP GeoTIFF | recommended A-direct; B and D exceed the screening limits |
+| Palo Alto (state plane, US ft) | hills | USGS 3DEP GeoTIFF, EPSG:2227 | recommended C-separate-corridor; all four within limits |
+| Kansas | flat | USGS 3DEP | recommended B-contour-following |
+| Iowa | rolling | USGS 3DEP | recommended B-contour-following |
+| Autzen, Oregon | flat urban | LAZ point cloud, intl ft + US survey ft vertical | recommended A-direct (D duplicates A, flagged) |
+| Blue Mountains, NSW | plateau / escarpment | Copernicus GLO-30 (geographic → UTM) | recommended **D-switchback**, the only alternative within the limits |
+| Boulder, CO (20 m and 10 m cells) | mountain | USGS 3DEP | **INFEASIBLE**: about 640 m climb over 4.3 km needs ≥ 6.4 km of road at 10 %, and no grade-limited path exists in the box |
+| West Virginia (20 m and 10 m cells) | dissected Appalachian | USGS 3DEP | **INFEASIBLE**: A–C exceed the fill / wall limits; D finds no grade-limited path at 20 m and exceeds the limits at 10 m |
+| Lake District, UK | mountain | Copernicus GLO-30 | **INFEASIBLE**: 223 m climb over 3.9 km needs ≥ 2.2 km at 10 % and the grade-limited search finds no path |
+
+Per-alternative lengths, grades, radii, earthwork, limit failures and runoff results are in **[docs/terrain-tests.md](docs/terrain-tests.md)**.
+
+## Superelevation runoff sized during alignment design
+
+Transition lengths are set while the alignment is fitted, so the runoff check passes by design.
+
+1. For each candidate radius, the tool computes e (AASHTO Method 1, or the profile's own e/R rule) and the required development length L = w·(e + nc) / Δmax. Δmax is the maximum relative gradient of the profile in force (AASHTO table, or the DMRB / Austroads value entered for that profile).
+2. The spiral is the preferred length, shortened to what the deflection allows, and never shorter than L (rounded up to 5 m).
+3. The curve's tangent length, spirals included, has to fit in the available tangent. If it does not, the radius is reduced towards the minimum. On small deflections, where the spirals cannot fit inside the turn, a flatter radius is tried instead (up to 4 × the preferred radius), which also lowers e and L.
+4. A corner that still cannot fit is removed and the curves are re-fitted. If it is the last one, the curve is kept and a `transition_notes` entry records it as a design exception with the reason.
+
+| | Superelevation failures before | After |
+|---|---:|---:|
+| Demo (selected route A) | 0 | 0 (geometry unchanged) |
+| Real-terrain alternatives, 6 sites × 4 | 1–36 per alternative | **0** on all 24 |
+
+An independent Python re-check recomputes e, L, spiral ≥ L, spirals within the deflection, and curve overlap for the selected demo route (14 checks), and recomputes L for every fitted curve in the terrain batch (0 short spirals).
+
+## Civil 3D handoff: LandXML cross sections and 3D CAD model
+
+- `export_landxml` writes `CrossSects` as well as the surface, alignment, profile and pipe networks: EG and FG at every corridor station, offsets negative to the left, with cut/fill areas. When the terrain came from `import_terrain` in metres, it also writes `CoordinateSystem` with the EPSG code. The file validates against the LandXML 1.2 XSD, and CI re-reads the sections to check FG at the centreline against an independent parabola evaluation.
+- `export_cad_model` writes `civil3d-model.dxf`, a 3D model in world coordinates and metres. In the demo it holds 12,691 3D faces (11,089 EG TIN faces on `V-TOPO-SURF`, 1,602 FG faces on `C-ROAD-SURF`), the 3D centreline, 18 corridor feature lines, the wall tops, 25 pipes at invert and 27 structures at rim. Layers follow the drafting profile (NCS names in the US) or an agency `layer_map`. CI re-reads the file with ezdxf: the face count matches the LandXML TIN, and the centreline z matches the profile.
+- No DWG is written. LibreDWG 0.13.3 `dxf2dwg`, tried on this model, produced a DWG that read back empty, so DWG conversion stays with ODA File Converter. None of these files has been opened in Civil 3D.
+
+## Construction-scale sheet set
+
+`generate_construction_set` writes `construction-set.pdf`, `cs-NN.dxf/svg` and `construction-register.csv`, alongside the main 38-sheet set. The demo set has 14 sheets:
+
+| Sheet | Content | Scale |
+|---|---|---|
+| CS-G-701 | survey control (engineer or surveyor input) and horizontal / vertical alignment data: Δ, R, Ls, TS/SC/CS/ST stations, VPIs | NTS |
+| CS-C-101 … 104 | plan and profile split at match lines on round stations (0+300, 0+600, 0+900); each match line names the adjoining sheet; contours, property lines and right-of-way on the plan | 1:500 (1" = 50' in US units) |
+| CS-C-301 … 308 | cross sections at the standard interval (20 m, 50 ft in US units) with EG, FG, datum, R/W lines and construction limits | 1:200 |
+| CS-C-601 | summary of quantities by pay item, earthwork split per plan sheet | NTS |
+
+| Alignment data | Plan and profile | Cross sections | Quantities |
+|---|---|---|---|
+| [<img src="docs/img/cs/cs-01.png" width="230"/>](docs/img/cs/cs-01.png) | [<img src="docs/img/cs/cs-02.png" width="230"/>](docs/img/cs/cs-02.png) | [<img src="docs/img/cs/cs-06.png" width="230"/>](docs/img/cs/cs-06.png) | [<img src="docs/img/cs/cs-14.png" width="230"/>](docs/img/cs/cs-14.png) |
+
+Set checks: standard scale (pass), continuous match lines (pass), full coverage of the alignment (pass), and engineer inputs present. That last check **fails in the demo**, because no property lines or survey control points were entered, and the sheet says so.
+
+## Blender visualisation (concept / preliminary)
+
+`export_blender_scene` writes `scene.glb` (glTF 2.0: terrain, pavement, earthwork slopes, walls, pipes, structures and the route alternatives as coloured ribbons), `scene.json` (georeference origin E0/N0/Z0 + EPSG, a 229-point camera path along the centreline, metrics per alternative) and `blender_scene.py`, the render script.
+
+```bash
+blender -b -P blender_scene.py -- /path/to/project --frames 96 --res 1280x720 --samples 16
+```
+
+Stills from that headless run on the demo (Blender 4.2.3, Cycles on CPU):
+
+| Overview with all four alternatives | Selected route A-direct |
+|---|---|
+| ![overview](docs/img/blender/overview.jpg) | ![alternative A](docs/img/blender/alt-A-direct.jpg) |
+| **Switchback alternative D** | **Driver's eye view** |
+| ![alternative D](docs/img/blender/alt-D-switchback.jpg) | ![driver eye](docs/img/blender/driver-2.jpg) |
+
+The script also writes the remaining stills, `flythrough.mp4`, `scene.usdc` and `scene.blend`. For interactive work, pair it with an open-source Blender MCP server such as [blender-mcp](https://github.com/ahujasid/blender-mcp) (`uvx mcp-for-blender`): open `scene.blend` and let the agent adjust materials, cameras or annotations. Edits in Blender do not change the design. See [docs/blender.md](docs/blender.md).
+
+## Units: SI or US customary
+
+civil-mcp works in SI (metres) by default. You can switch between SI and US customary at any time with the `set_units` tool, and switch back the same way:
+
+```json
+{"name":"set_units","arguments":{"system":"US"}}
+{"name":"set_units","arguments":{"system":"US","foot":"survey"}}
+{"name":"set_units","arguments":{"system":"SI"}}
+```
+
+With `system` set to `US`:
+- Tool results use US units, and keys are renamed to match (`radius_m` becomes `radius_ft`, `cut_m3` becomes `cut_cy`, `design_speed_kmh` becomes `design_speed_mph`).
+- Inputs can use US keys (`radius_ft`, `design_speed_mph`) or SI keys. Lengths without a suffix are read in feet.
+- Drawings use 100 ft stations (12+34.56), engineering scales (1" = 50', 1" = 5' vertical), labels in ft and in, and a scale bar in feet.
+- Reports and CSV files are in US units, and the bill of quantities uses CY, SY, LF, TON and EA.
+
+`foot` is `international` (0.3048 m, the default) or `survey` (1200/3937 m, for older state plane data). `inputs` and `outputs` can be set separately from `system` for the JSON results only. Design calculations and checks always run in SI, and the audit log stays in SI. The demo runs in US units with `cargo run --release -p civil-demo -- demo-out-us --units us`.
 
 ## Drawing set (all 38 sheets)
 
@@ -480,7 +602,7 @@ Click a thumbnail to open the full-size sheet (2000 px PNG). The vector PDF is [
 
 ## Sheet frames and drafting standards
 
-Every sheet in `generate_drawings` (PDF, per-sheet SVG and DXF) is composed into a configurable frame and title block. Five drafting profiles are built in: US, CA, UK, AU and NZ. Selecting a profile sets the default sheet size, borders, title-block fields, layer names, line weights and types, sheet numbering and revision codes. Any field can then be overridden.
+Every sheet in `generate_drawings` and `generate_construction_set` (PDF, per-sheet SVG and DXF) is composed into a configurable frame and title block. Five drafting profiles are built in: US, CA, UK, AU and NZ. Selecting a profile sets the default sheet size, borders, title-block fields, layer names, line weights and types, sheet numbering and revision codes. Any field can then be overridden.
 
 | Tool | What it does |
 |---|---|
@@ -567,19 +689,19 @@ The CI tests cover the non-US paths: `tests/profiles_v5.rs` and `tests/profiles_
 
 ## Validation summary
 
-Full record: **[docs/VALIDATION.md](docs/VALIDATION.md)**. Every row runs in [CI](.github/workflows/ci.yml) unless noted.
+Full record: **[docs/VALIDATION.md](docs/VALIDATION.md)**. Every row runs in [CI](.github/workflows/ci.yml), on both the SI and the US-units demo, unless noted.
 
 | Check | What is compared | Result |
 |---|---|---|
-| Independent re-checks, base ([`independent_check.py`](scripts/independent_check.py)) | areas, volumes, mass haul, superelevation, clothoids, Manning/HGL, walls, route costs, pavement, HEC-15, BoQ, LandXML XSD, DXF audit | **91 / 91** OK |
+| Independent re-checks, base ([`independent_check.py`](scripts/independent_check.py)) | areas, volumes, mass haul, superelevation and runoff, clothoids, Manning/HGL, walls, route costs, pavement, HEC-15, BoQ, LandXML XSD and cross sections, DXF audit, 3D CAD model, glTF scene | **118 / 118** OK |
 | Independent re-checks, v5 ([`independent_check_v5.py`](scripts/independent_check_v5.py)) | hydrology, culverts (HDS-5), slope stability, subsurface drainage, walls, land, locality | **70 / 70** OK |
 | Independent re-checks, v6 ([`independent_check_v6.py`](scripts/independent_check_v6.py)) | layered elastic vs PyMastic and KENPAVE, MSE, wall shear/crack/footing, signals, capacity, rigid, landscape, locality | **81 / 81** OK |
 | Layered elastic vs published KENPAVE 3-layer example | deflection, σz, εr, εz | ≤ **0.088 %** |
 | Civil 3D LandXML fixtures (2022/2023/2025) | surfaces, a 23.47 km alignment, 411 pipes | ≤ 2e-12 rel. / 2.6e-10 m / 1.3e-9 m |
-| CAD round trip (ODA, local, not in CI) | DXF→DWG→DXF on 39 files | 0 entity-count mismatches; ezdxf audit 0 errors |
-| Rust tests (`cargo test`) | unit tests with worked examples, LandXML round trip, MCP stdio, profiles, full pipeline | all pass; `cargo fmt --check` and `clippy -D warnings` clean |
+| Real-terrain batch (local run; CI skips it) | 11 runs, 9 surfaces; runoff re-check on every fitted curve | see [docs/terrain-tests.md](docs/terrain-tests.md) |
+| Rust tests (`cargo test`) | unit tests with worked examples, LandXML round trip, MCP stdio, profiles, frames, terrain import, full pipeline | all pass; `cargo fmt --check` and `clippy -D warnings` clean |
 
-The re-check scripts share no code with the Rust tools. They re-derive each value from the files the tools wrote, using NumPy, SciPy and PyMastic.
+The re-check scripts share no code with the Rust tools. They re-derive each value from the files the tools wrote, using NumPy, SciPy, ezdxf and PyMastic.
 
 ## Deliverables matrix
 
@@ -589,103 +711,31 @@ The re-check scripts share no code with the Rust tools. They re-derive each valu
 |---:|---:|---:|---:|
 | **52** | 1 (structures: bridges) | 2 | **0** |
 
-## Units: SI or US customary
+## Status and limits
 
-civil-mcp works in SI (metres) by default. You can switch between SI and US customary at any time with the `set_units` tool, and switch back the same way:
-
-```json
-{"name":"set_units","arguments":{"system":"US"}}
-{"name":"set_units","arguments":{"system":"US","foot":"survey"}}
-{"name":"set_units","arguments":{"system":"SI"}}
-```
-
-With `system` set to `US`:
-- Tool results use US units, and keys are renamed to match (`radius_m` becomes `radius_ft`, `cut_m3` becomes `cut_cy`, `design_speed_kmh` becomes `design_speed_mph`).
-- Inputs can use US keys (`radius_ft`, `design_speed_mph`) or SI keys. Lengths without a suffix are read in feet.
-- Drawings use 100 ft stations (12+34.56), engineering scales (1" = 50', 1" = 5' vertical), labels in ft and in, and a scale bar in feet.
-- Reports and CSV files are in US units, and the bill of quantities uses CY, SY, LF, TON and EA.
-
-`foot` is `international` (0.3048 m, the default) or `survey` (1200/3937 m, for older state plane data). `inputs` and `outputs` can be set separately from `system` for the JSON results only. Design calculations and checks always run in SI, and the audit log stays in SI. The demo runs in US units with `cargo run --release -p civil-demo -- demo-out-us --units us`.
-
-## Real terrain, route feasibility and switchbacks
-
-`import_terrain` loads a GeoTIFF / Cloud-Optimised GeoTIFF DEM, an ESRI ASCII grid, or a LAS/LAZ point cloud (ASPRS class 2 ground by default) and builds the existing-ground TIN.
-
-- **CRS.** The EPSG code comes from GeoTIFF keys or the LAS WKT/GeoKey VLRs, or from `epsg`. Geographic and Web Mercator data are projected to UTM (checked against PROJ to < 1 mm). Projected data (UTM, state plane, national grids) stay planar; international and US survey feet are converted to metres, horizontal and vertical separately.
-- **Route search.** `generate_route_alternatives` adds a switchback alternative (D) that forbids moves steeper than 2 × the design maximum grade. It keeps hairpin curves when the engineer enters `hairpin_min_radius_m`, recording them as design exceptions.
-- **Plausibility limits.** Every alternative is checked against fill, cut and wall-height limits (EW-FILL / EW-CUT / EW-WALL). The defaults are 15 / 15 / 10 m: agent screening values that the engineer should confirm or replace through `limits`.
-- **Infeasibility stop.** When every alternative fails the grade or height limits, or no path exists, the tool stops with `INFEASIBLE` and gives the reason. The message states the elevation difference and the minimum road length that difference needs at the maximum grade.
-- **Duplicates.** Alternatives that repeat an earlier path are flagged (`overlap_with_earlier_pct`).
-
-Results on 11 runs over 9 public surfaces (USGS 3DEP, Copernicus GLO-30 for the UK and Australia, a LAZ sample in Oregon state-plane feet) are in [docs/terrain-tests.md](docs/terrain-tests.md). They were produced with `scripts/terrain_batch.py`.
-
-## Civil 3D handoff: LandXML cross sections and 3D CAD model
-
-- `export_landxml` now also writes `CrossSects`: EG and FG at every corridor station, offsets negative to the left, with cut/fill areas. When the terrain came from `import_terrain` in metres, it also writes `CoordinateSystem` with the EPSG code. The output validates against the LandXML 1.2 XSD, and CI re-reads the sections to check FG at the centreline against an independent parabola evaluation.
-- `export_cad_model` writes `civil3d-model.dxf`, a 3D model in world coordinates and metres. It contains:
-  - EG and FG TIN faces;
-  - the 3D centreline;
-  - corridor feature lines by point code;
-  - wall tops;
-  - pipes at invert;
-  - structures at rim.
-
-  Layers follow the drafting profile (NCS `V-TOPO-SURF`, `C-ROAD-SURF`, `C-ROAD-FEAT`, …) or an agency `layer_map`. CI re-reads the file with ezdxf: the face count matches the LandXML TIN faces, and the centreline z matches the profile.
-- No DWG is written by the tool. LibreDWG 0.13.3 `dxf2dwg`, tried on this model, produced a DWG that read back empty, so DWG conversion stays with ODA File Converter. None of these files has been opened in Civil 3D.
-
-## Construction-scale sheet set
-
-`generate_construction_set` writes `construction-set.pdf`, `cs-NN.dxf/svg` and `construction-register.csv`. The main 38-sheet set is not changed. The set contains:
-
-- **Survey control and alignment data.** Control points as entered by the engineer or surveyor, horizontal curve data (Δ, R, Ls, TS/SC/CS/ST stations) and vertical alignment data.
-- **Plan-and-profile sheets.** Split at match lines on round stations, at 1:500 metric or 1" = 50' US. Each match line labels the adjoining sheet. The plan shows the existing-conditions base: contours, engineer-entered property lines and right-of-way.
-- **Gridded cross sections.** At 20 m metric or 50 ft US, showing EG, FG, datum, R/W lines and construction limits.
-- **Summary of quantities by pay item.** Includes earthwork split per plan sheet.
-
-Set checks confirm a standard scale, continuous match lines and full coverage. A further check flags missing engineer inputs (ROW, property lines, control, sections at the interval).
-
-## Blender visualisation (concept / preliminary)
-
-`export_blender_scene` writes three files to the project folder:
-
-- `scene.glb` (glTF 2.0): terrain, pavement, earthwork slopes, walls, pipes, structures and the route alternatives as coloured ribbons.
-- `scene.json`: georeference origin E0/N0/Z0 + EPSG, a camera path along the design centreline, and the metrics for each alternative.
-- `blender_scene.py`: the render script.
-
-```bash
-blender -b -P blender_scene.py -- /path/to/project --frames 240 --res 1280x720 --samples 16
-```
-
-The script renders the following into `render/`:
-
-- an overview;
-- one still per alternative;
-- three driver-eye stills;
-- `flythrough.mp4`.
-
-It also exports `scene.usdc` and `scene.blend`. Tested headless with Blender 4.2.3 (Cycles, CPU). For interactive work, pair it with an open-source Blender MCP server such as [blender-mcp](https://github.com/ahujasid/blender-mcp) (`uvx mcp-for-blender`): open `scene.blend` and let the agent adjust materials, cameras or annotations. See [docs/blender.md](docs/blender.md).
-
-## Limits
-
+- **Depth is concept / 30 %.** The sheets follow a 60 %-style format (title blocks, match lines, gridded sections, quantities), but the content is concept level: no detailed drainage profiles per structure, no signing details, no specifications.
 - **This is not engineering approval.** The demo "engineer" is a placeholder. Nothing here has been reviewed by a licensed engineer, and every sheet stays PRELIMINARY until a real engineer approves it.
+- **No DWG, and not opened in Civil 3D.** The tools write DXF and LandXML only. Neither the LandXML nor the 3D DXF has been opened in Civil 3D or AutoCAD, and corridor volumes and hydraulics have not been compared with Civil 3D runs (no public files were found).
+- **MCP clients are not tested end to end.** Client configs follow each client's docs; only the raw stdio protocol is tested. See [Works with](#works-with-mcp-clients).
 - **Copyrighted tables are not shipped.** Values such as Green Book side friction, TAC, Austroads, CD 226 figures and AGPT02 equivalent-stress tables are engineer inputs. Transcribed values must be checked against the edition in use.
 - **Geotechnical inputs are placeholders.** Slope, wall and foundation soil parameters stand in for a ground-investigation report. MSE internal stability, global stability and detailing belong to the supplier and the geotechnical engineer.
+- **One full demo site.** The complete design, drawings and independent re-checks come from one terrain sample (Palo Alto). The 11 real-terrain runs stop at route alternatives.
+- **Route search is approximate.** It runs on a grid (10 m or the import cell) and its cost proxy is relative. Earthwork limits are screening defaults.
+- **Runoff gaps.** The tangent runout before the first curve and after the last one is not checked against the alignment ends (demo: first curve starts 9.6 m from the start, runout 10.8 m; reported as a note). Hairpins with no room for spirals become simple curves whose runoff is covered by the overlap check only. The Python runoff re-check covers the AASHTO profile only.
 - **Bridges are out of scope.** They are handed to a structures specialist (`specialist_handoffs`).
 - **Signals and capacity are concept-level only.** HCS, Synchro, SIDRA or LINSIG govern detailed design. UK/AU/NZ warrants need local thresholds.
-- **Untested against real Civil 3D or AutoCAD runs.** Corridor volumes and hydraulics have not been compared with Civil 3D runs; no such public files were found. The DWGs have not been opened in AutoCAD.
-- **Route search is approximate.** It runs on a 10 m grid and its cost proxy is relative.
-- **One full demo site.** The complete design, drawings and independent re-checks come from one terrain sample (Palo Alto). Route generation was also run on 11 real-terrain cases over 9 surfaces, listed in [docs/terrain-tests.md](docs/terrain-tests.md); those runs stop at route alternatives.
-- **Identity is declared, not proven.** MCP cannot authenticate the human approver; deployments need authentication in front of approval.
+- **Approver identity is declared only.** MCP cannot authenticate the human approver; deployments need authentication in front of approval.
 - **Sheet frames are SI only.** R12 DXF carries no lineweights (they are in PDF and SVG). Templates read lines, rectangles and text; SVG group transforms are ignored. Content is scaled from an A1 layout, so small sheets give text below 2.5 mm (advisory). The default issue date is UTC.
-- **Clients are untested end to end.** See [Works with](#works-with-mcp-clients).
+- **Blender output is presentation only.** Materials and lighting are simple and the renders are not a design deliverable.
 
 ## Roadmap
 
 - [ ] **Remote transport:** Streamable HTTP MCP with authentication, so web-only clients can connect and approval can be tied to a real identity.
 - [ ] **End-to-end client testing:** Claude Code, Claude Desktop, Cursor, Codex, Gemini CLI and VS Code, with recorded sessions.
-- [ ] Comparison against Civil 3D corridor volumes and pipe-network hydraulics, given a public or partner dataset.
+- [ ] Open the LandXML and 3D DXF in Civil 3D and compare corridor volumes and pipe hydraulics, given a public or partner dataset.
+- [ ] Tangent-runout checks at the alignment ends, and runoff re-checks for the DMRB and Austroads profiles.
 - [ ] 3D wall and structure solids for clash checks, using a permissive B-rep kernel such as [truck](https://github.com/ricosjp/truck).
-- [ ] More terrain samples and non-US demo projects.
+- [ ] Full demo projects beyond Palo Alto, including non-US sites.
 
 ## Geometry kernel
 
