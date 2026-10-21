@@ -562,6 +562,8 @@ pub fn run_units(out: &str, us: bool) -> Session {
     // survey control are not available for the demo and are flagged as missing engineer inputs
     let v = r.call("generate_construction_set", json!({"row_left_m":30.0,"row_right_m":30.0}));
     println!("construction set: {} sheets, checks {}", v["result"]["sheets"], v["result"]["checks"]);
+    let v = r.call("export_blender_scene", json!({}));
+    println!("blender scene: {} meshes, camera path {} points", v["result"]["meshes"].as_array().map_or(0, |m| m.len()), v["result"]["camera_path_points"]);
     let v = r.call("generate_review_report", json!({}));
     println!("review report: {}", v["result"]["audit"]);
     println!("outputs in {out}/");

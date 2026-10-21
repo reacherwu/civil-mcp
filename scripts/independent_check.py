@@ -583,6 +583,30 @@ report("CAD model layers present (centreline, surfaces, features)", float(all(an
 sv_ = np.linspace(float(xs_[0].get("sta")), float(xs_[-1].get("sta")), len(vz_))
 report("CAD centreline z vs independent parabola, max abs diff (m)", max(abs(vz_[i_][2] - zprof(sv_[i_])) for i_ in range(len(vz_))), 0, 1e-3, "m", rel=False)
 
+# ---------- 17. Blender scene (glTF 2.0 .glb): container, accessor bounds, ground mesh = EG TIN ----------
+import struct as ST_
+gb_ = open(f"{out}/scene.glb", "rb").read()
+mg_, ver_, tot_ = ST_.unpack("<4sII", gb_[:12]); jl_, jt_ = ST_.unpack("<I4s", gb_[12:20])
+gj_ = json.loads(gb_[20:20 + jl_]); bl_, bt_ = ST_.unpack("<I4s", gb_[20 + jl_:28 + jl_]); bb_ = gb_[28 + jl_:28 + jl_ + bl_]
+report("glTF container (magic, version 2, length, JSON+BIN chunks)", float(mg_ == b"glTF" and ver_ == 2 and tot_ == len(gb_) and jt_ == b"JSON" and bt_ == b"BIN\x00"), 1.0, 0, "", rel=False)
+bad_ = 0
+for a_ in gj_["accessors"]:
+    v_ = gj_["bufferViews"][a_["bufferView"]]
+    if a_["type"] == "VEC3":
+        arr_ = np.frombuffer(bb_[v_["byteOffset"]:v_["byteOffset"] + v_["byteLength"]], "<f4").reshape(-1, 3)
+        bad_ += int(len(arr_) != a_["count"] or np.abs(arr_.min(0) - a_["min"]).max() > 1e-3 or np.abs(arr_.max(0) - a_["max"]).max() > 1e-3)
+    else:
+        ix_ = np.frombuffer(bb_[v_["byteOffset"]:v_["byteOffset"] + v_["byteLength"]], "<u4")
+        bad_ += int(len(ix_) != a_["count"] or len(ix_) % 3 != 0)
+report("glTF accessors consistent with buffer data (count, min/max, triangles)", bad_, 0, 0, "", rel=False)
+SJ_ = json.load(open(f"{out}/scene.json")); org_ = SJ_["origin"]
+eg_xml_ = ET_.parse(f"{out}/design.xml").find(".//l:Surfaces/l:Surface[@name='EG']", NS_)
+egp_ = np.array([p_.text.split() for p_ in eg_xml_.findall(".//l:Pnts/l:P", NS_)], float)  # LandXML: N E Z
+m0_ = gj_["meshes"][0]["primitives"][0]; v0_ = gj_["bufferViews"][gj_["accessors"][m0_["attributes"]["POSITION"]]["bufferView"]]
+g0_ = np.frombuffer(bb_[v0_["byteOffset"]:v0_["byteOffset"] + v0_["byteLength"]], "<f4").reshape(-1, 3).astype(float)
+world_ = np.c_[g0_[:, 0] + org_["e"], -g0_[:, 2] + org_["n"], g0_[:, 1] + org_["z"]]
+report("glTF ground mesh back to world = LandXML EG points, max abs diff (m)", float(np.abs(world_ - egp_[:, [1, 0, 2]]).max()) if len(world_) == len(egp_) else 1e9, 0, 0.01, "m", rel=False)  # f32 local coordinates
+
 json.dump([dict(zip(["check", "civil_mcp", "independent", "diff", "unit", "ok"], r_)) for r_ in rows], open(f"{out}/independent-checks.json", "w"), ensure_ascii=False, indent=1)
 print(f"\n{len(rows)} checks, {len(fails)} failed")
 sys.exit(1 if fails else 0)

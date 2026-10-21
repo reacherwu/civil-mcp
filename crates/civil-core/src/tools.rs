@@ -78,6 +78,7 @@ pub fn tool_list() -> Value {
       {"name":"import_landxml","description":"Import a LandXML 1.x file: TIN surface (as existing ground), alignment (line/arc/clothoid) and profile. Reports differences against values stored in the file (areas, elevations, lengths, element end points).","inputSchema":obj(json!({"path":s,"surface":s,"alignment":s,"use_surface":b,"use_alignment":b}),&["path"])},
       {"name":"export_landxml","description":"Write LandXML 1.2 with points, existing-ground and corridor surfaces, alignment and profile.","inputSchema":obj(json!({"file":s}),&[])},
       {"name":"generate_construction_set","description":"Write the construction-scale sheet set (construction-set.pdf, cs-NN.dxf/svg, construction-register.csv): survey control and curve/vertical data tables, plan-and-profile sheets split at match lines at a standard scale (1:500 metric, 1\" = 50' US), existing-conditions base (contours, engineer-entered property lines and right-of-way), gridded cross sections at a standard interval (20 m / 50 ft) with ROW and construction limits, and a quantity summary by pay item with earthwork per plan sheet. Missing engineer inputs are flagged on the sheets and in the checks. The main set (generate_drawings) is unchanged.","inputSchema":obj(json!({"row_left_m":num,"row_right_m":num,"property_lines":arr(json!({"type":"object","properties":{"id":s,"pts":arr(arr(num.clone()))}})),"control":arr(json!({"type":"object","properties":{"id":s,"e":num,"n":num,"z":num,"desc":s}})),"xs_interval_m":num,"plan_scale":num}),&[])},
+      {"name":"export_blender_scene","description":"Write a Blender-ready visualisation scene: scene.glb (glTF 2.0: existing ground, road pavement, earthwork slopes, retaining walls, pipes, structures, route alternatives as coloured ribbons), scene.json (georeference origin E0/N0/Z0 + EPSG, camera path along the design centreline, alternative metrics) and blender_scene.py, a headless script (blender -b -P blender_scene.py -- <dir>) that builds materials, lighting and camera, renders an overview, one still per alternative, driver-eye stills and a flythrough MP4, and exports USD (scene.usdc) and scene.blend. Concept / preliminary visualisation only.","inputSchema":obj(json!({}),&[])},
       {"name":"export_cad_model","description":"Write a 3D CAD model for Civil 3D / MicroStation handoff (DXF R12, metres, world coordinates): existing and finished-grade TIN faces, 3D centreline, corridor feature lines by point code, wall tops, pipes at invert, structures at rim. Layers follow the active drafting profile (NCS for US, ISO 13567 elsewhere) or 'layer_map' {internal: agency layer} (keys SURF-EG, SURF-FG, ALIGNMENT, FEATURE, WALL, PIPE, STRUCTURE). Use with export_landxml for alignments, profiles, cross sections and pipe networks.","inputSchema":obj(json!({"file":s,"layer_map":{"type":"object"}}),&[])},
       {"name":"import_terrain","description":"Import terrain from a GeoTIFF / Cloud-Optimised GeoTIFF DEM, an ESRI ASCII grid (.asc), or a LAS/LAZ point cloud (ASPRS classes, default [2] ground), and build the existing-ground TIN. CRS: EPSG from GeoTIFF keys or LAS VLRs (or 'epsg'); geographic and Web Mercator data are projected to UTM; projected data (UTM, MGA, state plane, national grids) are kept planar with foot units (US survey / international) converted to metres. 'crop' [xmin,ymin,xmax,ymax] in output metres, 'step' subsamples, 'z_units' m|ft|us_ft.","inputSchema":obj(json!({"path":s,"step":num,"crop":arr(num.clone()),"epsg":num,"target_epsg":num,"xy_units":{"type":"string","enum":["m","ft","us_ft"]},"z_units":{"type":"string","enum":["m","ft","us_ft"]},"classes":arr(num.clone()),"max_points":num,"max_edge_m":num,"build_surface":b}),&["path"])},
       {"name":"build_surface","description":"Build a Delaunay TIN from loaded points. Optional max_edge_m drops long hull triangles.","inputSchema":obj(json!({"max_edge_m":num}),&[])},
@@ -629,6 +630,62 @@ impl Session {
                 checks.push(json!({"id": "CS-INPUTS", "pass": p.missing_inputs.is_empty(), "detail": if p.missing_inputs.is_empty() { "all engineer inputs present".to_string() } else { format!("missing: {}", p.missing_inputs.join("; ")) }}));
                 let out = json!({"sheets": pages, "plan": p, "sheet_ids": ids, "checks": checks, "files": files});
                 let prov = self.log("agent", name, a, &out, &["construction plan conventions: match lines, standard engineering scales".into()])?;
+                Ok(json!({"result": out, "provenance": prov}))
+            }
+            "export_blender_scene" => {
+                let (t, _) = self.tin.as_ref().ok_or("build_surface first")?;
+                let alts: Vec<(String, Vec<[f64; 2]>)> = self
+                    .route
+                    .as_ref()
+                    .and_then(|r| r["alternatives"].as_array().cloned())
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|r| {
+                        let p: Vec<[f64; 2]> = serde_json::from_value(r["path"].clone()).ok()?;
+                        Some((r["name"].as_str()?.to_string(), p))
+                    })
+                    .collect();
+                let sc = crate::gltf::build(t, self.corridor.as_ref(), &self.networks, &alts);
+                let o = sc.origin;
+                // camera path along the design centreline (Blender axes: x east, y north, z up; local metres)
+                let mut cam = vec![];
+                if let (Some(al), Some(pr)) = (&self.alignment, &self.profile) {
+                    let (s0, s1) = (al.start_station().max(pr.start()), al.end_station().min(pr.end()));
+                    let n = ((s1 - s0) / 5.0).ceil().max(1.0) as usize;
+                    for i in 0..=n {
+                        let s = s0 + (s1 - s0) * i as f64 / n as f64;
+                        if let (Some((x, y, _)), Some(z)) = (al.point_at(s), pr.elevation_at(s)) {
+                            cam.push([x - o[0], y - o[1], z - o[2]]);
+                        }
+                    }
+                }
+                let (mut mn, mut mx) = ([f64::MAX; 3], [f64::MIN; 3]);
+                for p in &t.pts {
+                    for k in 0..3 {
+                        mn[k] = mn[k].min(p[k] - o[k]);
+                        mx[k] = mx[k].max(p[k] - o[k]);
+                    }
+                }
+                let alt_eval: Vec<Value> = self
+                    .route
+                    .as_ref()
+                    .and_then(|r| r["alternatives"].as_array().cloned())
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|r| json!({"name": r["name"], "evaluation": r["evaluation"]}))
+                    .collect();
+                let meta = json!({"origin": {"e": o[0], "n": o[1], "z": o[2], "epsg": self.crs_epsg, "note": "Blender/glTF coordinates are metres relative to this origin; glTF y-up (x east, y up, z south), Blender after import z-up (x east, y north)"},
+                    "bbox_local": [mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]], "camera_path": cam, "eye_height_m": 1.2,
+                    "meshes": sc.meshes.iter().map(|m| json!({"name": m.name, "material": crate::gltf::MATERIALS[m.material].0, "vertices": m.pos.len(), "triangles": m.idx.len() / 3})).collect::<Vec<_>>(),
+                    "alternatives": alt_eval, "selected": self.route_choice.as_ref().map(|r| r["selected"].clone())});
+                let glb = crate::gltf::to_glb(&sc, json!({"georeference": meta["origin"]}));
+                let mut files = json!({});
+                files["scene.glb"] = json!(self.write("scene.glb", &glb)?);
+                files["scene.json"] = json!(self.write("scene.json", serde_json::to_string_pretty(&meta).unwrap().as_bytes())?);
+                files["blender_scene.py"] = json!(self.write("blender_scene.py", include_str!("../../../scripts/blender_scene.py").as_bytes())?);
+                let out = json!({"files": files, "origin": meta["origin"], "meshes": meta["meshes"], "camera_path_points": cam.len(),
+                    "render": "blender -b -P blender_scene.py -- <project dir>  (stills, flythrough.mp4, scene.usdc, scene.blend)", "purpose": "concept / preliminary visualisation only; not a design deliverable"});
+                let prov = self.log("agent", name, a, &out, &["glTF 2.0 (Khronos)".into()])?;
                 Ok(json!({"result": out, "provenance": prov}))
             }
             "export_cad_model" => {

@@ -2,7 +2,7 @@
 
 # civil-mcp
 
-**Road design you can hand to an AI agent, and check.** About 61 Civil 3D-style design tools, served as a local MCP server. Each result carries the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
+**Road design you can hand to an AI agent, and check.** About 65 Civil 3D-style design tools, served as a local MCP server. Each result carries the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
 
 [![CI](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -12,7 +12,7 @@
 
 ![The agent designing a road on USGS terrain. Every frame is drawn from files the demo wrote.](docs/media/civil-mcp-agent-design.gif)
 
-| **61** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set (PDF + DXF) | **242 / 242** independent re-checks within tolerance |
+| **65** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set (PDF + DXF) | **242 / 242** independent re-checks within tolerance |
 |:---:|:---:|:---:|:---:|
 
 <sub>All numbers come from the committed demo: US AASHTO profile, 50 km/h rural collector, 5,607 USGS 3DEP survey points near Palo Alto CA, measured 2026-10-20. Layered elastic pavement analysis matches the published KENPAVE example to ≤ 0.09 %.</sub>
@@ -39,7 +39,7 @@ civil-mcp is a standard [Model Context Protocol](https://modelcontextprotocol.io
 | [Codex](https://developers.openai.com/codex/mcp) (CLI / IDE extension / ChatGPT desktop app) | `codex mcp add civil -- /path/to/civil-mcp`, or `~/.codex/config.toml` → `[mcp_servers.civil]` | per docs, not yet tested end to end |
 | [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/) | `gemini mcp add civil /path/to/civil-mcp`, or `~/.gemini/settings.json` → `mcpServers` | per docs, not yet tested end to end |
 | [VS Code (GitHub Copilot agent mode)](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) | `MCP: Add Server` → *Command (stdio)*, or `.vscode/mcp.json` → `servers` | per docs, not yet tested end to end |
-| Raw JSON-RPC over stdio | `initialize` → `tools/list` | **tested**: protocol `2024-11-05`, 61 tools listed. The CI test `crates/civil-mcp/tests/stdio.rs` drives a UK-profile session over stdio |
+| Raw JSON-RPC over stdio | `initialize` → `tools/list` | **tested**: protocol `2024-11-05`, 65 tools listed. The CI test `crates/civil-mcp/tests/stdio.rs` drives a UK-profile session over stdio |
 
 **What does not work yet**
 
@@ -606,6 +606,64 @@ With `system` set to `US`:
 - Reports and CSV files are in US units, and the bill of quantities uses CY, SY, LF, TON and EA.
 
 `foot` is `international` (0.3048 m, the default) or `survey` (1200/3937 m, for older state plane data). `inputs` and `outputs` can be set separately from `system` for the JSON results only. Design calculations and checks always run in SI, and the audit log stays in SI. The demo runs in US units with `cargo run --release -p civil-demo -- demo-out-us --units us`.
+
+## Real terrain, route feasibility and switchbacks
+
+`import_terrain` loads a GeoTIFF / Cloud-Optimised GeoTIFF DEM, an ESRI ASCII grid, or a LAS/LAZ point cloud (ASPRS class 2 ground by default) and builds the existing-ground TIN.
+
+- **CRS.** The EPSG code comes from GeoTIFF keys or the LAS WKT/GeoKey VLRs, or from `epsg`. Geographic and Web Mercator data are projected to UTM (checked against PROJ to < 1 mm). Projected data (UTM, state plane, national grids) stay planar; international and US survey feet are converted to metres, horizontal and vertical separately.
+- **Route search.** `generate_route_alternatives` adds a switchback alternative (D) that forbids moves steeper than 2 × the design maximum grade. It keeps hairpin curves when the engineer enters `hairpin_min_radius_m`, recording them as design exceptions.
+- **Plausibility limits.** Every alternative is checked against fill, cut and wall-height limits (EW-FILL / EW-CUT / EW-WALL). The defaults are 15 / 15 / 10 m: agent screening values that the engineer should confirm or replace through `limits`.
+- **Infeasibility stop.** When every alternative fails the grade or height limits, or no path exists, the tool stops with `INFEASIBLE` and gives the reason. The message states the elevation difference and the minimum road length that difference needs at the maximum grade.
+- **Duplicates.** Alternatives that repeat an earlier path are flagged (`overlap_with_earlier_pct`).
+
+Results on 11 runs over 9 public surfaces (USGS 3DEP, Copernicus GLO-30 for the UK and Australia, a LAZ sample in Oregon state-plane feet) are in [docs/terrain-tests.md](docs/terrain-tests.md). They were produced with `scripts/terrain_batch.py`.
+
+## Civil 3D handoff: LandXML cross sections and 3D CAD model
+
+- `export_landxml` now also writes `CrossSects`: EG and FG at every corridor station, offsets negative to the left, with cut/fill areas. When the terrain came from `import_terrain` in metres, it also writes `CoordinateSystem` with the EPSG code. The output validates against the LandXML 1.2 XSD, and CI re-reads the sections to check FG at the centreline against an independent parabola evaluation.
+- `export_cad_model` writes `civil3d-model.dxf`, a 3D model in world coordinates and metres. It contains:
+  - EG and FG TIN faces;
+  - the 3D centreline;
+  - corridor feature lines by point code;
+  - wall tops;
+  - pipes at invert;
+  - structures at rim.
+
+  Layers follow the drafting profile (NCS `V-TOPO-SURF`, `C-ROAD-SURF`, `C-ROAD-FEAT`, …) or an agency `layer_map`. CI re-reads the file with ezdxf: the face count matches the LandXML TIN faces, and the centreline z matches the profile.
+- No DWG is written by the tool. LibreDWG 0.13.3 `dxf2dwg`, tried on this model, produced a DWG that read back empty, so DWG conversion stays with ODA File Converter. None of these files has been opened in Civil 3D.
+
+## Construction-scale sheet set
+
+`generate_construction_set` writes `construction-set.pdf`, `cs-NN.dxf/svg` and `construction-register.csv`. The main 38-sheet set is not changed. The set contains:
+
+- **Survey control and alignment data.** Control points as entered by the engineer or surveyor, horizontal curve data (Δ, R, Ls, TS/SC/CS/ST stations) and vertical alignment data.
+- **Plan-and-profile sheets.** Split at match lines on round stations, at 1:500 metric or 1" = 50' US. Each match line labels the adjoining sheet. The plan shows the existing-conditions base: contours, engineer-entered property lines and right-of-way.
+- **Gridded cross sections.** At 20 m metric or 50 ft US, showing EG, FG, datum, R/W lines and construction limits.
+- **Summary of quantities by pay item.** Includes earthwork split per plan sheet.
+
+Set checks confirm a standard scale, continuous match lines and full coverage. A further check flags missing engineer inputs (ROW, property lines, control, sections at the interval).
+
+## Blender visualisation (concept / preliminary)
+
+`export_blender_scene` writes three files to the project folder:
+
+- `scene.glb` (glTF 2.0): terrain, pavement, earthwork slopes, walls, pipes, structures and the route alternatives as coloured ribbons.
+- `scene.json`: georeference origin E0/N0/Z0 + EPSG, a camera path along the design centreline, and the metrics for each alternative.
+- `blender_scene.py`: the render script.
+
+```bash
+blender -b -P blender_scene.py -- /path/to/project --frames 240 --res 1280x720 --samples 16
+```
+
+The script renders the following into `render/`:
+
+- an overview;
+- one still per alternative;
+- three driver-eye stills;
+- `flythrough.mp4`.
+
+It also exports `scene.usdc` and `scene.blend`. Tested headless with Blender 4.2.3 (Cycles, CPU). For interactive work, pair it with an open-source Blender MCP server such as [blender-mcp](https://github.com/ahujasid/blender-mcp) (`uvx mcp-for-blender`): open `scene.blend` and let the agent adjust materials, cameras or annotations. See [docs/blender.md](docs/blender.md).
 
 ## Limits
 
