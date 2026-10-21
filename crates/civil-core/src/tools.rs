@@ -1199,19 +1199,12 @@ impl Session {
                     // switchback alternatives keep their hairpins when the engineer has entered a
                     // hairpin minimum radius (design exception); others drop sub-minimum PIs
                     let r_floor = if spec.hard_grade { hairpin_r.unwrap_or(rs.r_min) } else { rs.r_min };
-                    if spec.hard_grade && hairpin_r.is_some() {
-                        let pref = radii.clone();
-                        radii = pref.iter().map(|r| r.max(r_floor)).collect();
-                    }
                     for _ in 0..60 {
                         match radii.iter().position(|r| *r < r_floor) {
                             Some(k) if pis.len() > 3 => {
                                 pis.remove(k + 1);
                                 pis = crate::route::clean_pis(pis, 4.0, 40.0);
                                 radii = crate::route::fit_radii(&pis, r_pref, ls, 0.45);
-                                if spec.hard_grade && hairpin_r.is_some() {
-                                    radii = radii.iter().map(|r| if *r >= r_floor * 0.999 { *r } else { r.max(r_floor) }).collect();
-                                }
                             }
                             _ => break,
                         }
@@ -1322,7 +1315,7 @@ impl Session {
                 let full = json!({"alternatives": rows, "recommendation": rec});
                 let h = self.write("route-alternatives.json", full.to_string().as_bytes())?;
                 let summary: Vec<Value> =
-                    rows.iter().map(|r| json!({"name": r["name"], "pis": r["pis"].as_array().map_or(0, |p| p.len()), "evaluation": r["evaluation"]})).collect();
+                    rows.iter().map(|r| json!({"name": r["name"], "pis": r["pis"].as_array().map_or(0, |p| p.len()), "overlap_with_earlier_pct": r["overlap_with_earlier_pct"], "duplicate_of_earlier": r["duplicate_of_earlier"], "evaluation": r["evaluation"]})).collect();
                 let prov = self.log(
                     "agent",
                     name,

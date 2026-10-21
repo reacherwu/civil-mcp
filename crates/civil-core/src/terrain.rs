@@ -37,6 +37,7 @@ pub struct Import {
     pub points: Vec<[f64; 3]>,
 }
 
+#[derive(Clone)]
 pub struct Options {
     pub step: usize,
     /// crop box in the output CRS (metres): [xmin, ymin, xmax, ymax]
@@ -173,6 +174,34 @@ impl Xform {
             _ => (x * self.unit, y * self.unit),
         }
     }
+}
+
+/// Splits a (compound) WKT into its horizontal part and its vertical part.
+fn wkt_split(w: &str) -> (&str, Option<&str>) {
+    match w.find("VERT_CS[").or_else(|| w.find("VERTCRS[")) {
+        Some(i) => (&w[..i], Some(&w[i..])),
+        None => (w, None),
+    }
+}
+fn wkt_last_epsg(w: &str) -> Option<u32> {
+    let i = w.rfind("AUTHORITY[\"EPSG\",\"").or_else(|| w.rfind("ID[\"EPSG\","))?;
+    w[i..].chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect::<String>().parse().ok()
+}
+/// Metres per unit of the last linear UNIT / LENGTHUNIT in a WKT fragment.
+fn wkt_last_unit(w: &str) -> Option<f64> {
+    let i = w.rfind("LENGTHUNIT[").or_else(|| {
+        // last UNIT that is not the angular degree unit
+        w.match_indices("UNIT[").map(|m| m.0).filter(|&k| !w[k..].starts_with("UNIT[\"degree")).last()
+    })?;
+    let t = &w[i..];
+    let f: f64 = t.split(',').nth(1)?.trim_end_matches(']').trim().parse().ok()?;
+    Some(if (f - SURVEY_FT).abs() < 1e-9 {
+        SURVEY_FT
+    } else if (f - INTL_FT).abs() < 1e-9 {
+        INTL_FT
+    } else {
+        f
+    })
 }
 
 fn make_xform(epsg: Option<u32>, unit_key: Option<f64>, o: &Options, centre: (f64, f64)) -> crate::Result<(Xform, CrsInfo)> {
@@ -460,6 +489,10 @@ pub fn read_las(bytes: &[u8], o: &Options) -> crate::Result<Import> {
     // VLRs: LASzip (22204) and CRS (GeoKeyDirectory 34735, OGC WKT 2112)
     let mut p = hsize;
     let mut laz_vlr = None;
+    let mut z_key: Option<f64> = None;
+    // the OGC WKT VLR takes precedence over GeoTIFF keys when both are present (writers such
+    // as libLAS have been seen to store inconsistent keys)
+    let (mut wkt_epsg, mut wkt_unit) = (None, None);
     let mut epsg = None;
     let mut unit_key = None;
     for _ in 0..nvlr {
@@ -486,23 +519,33 @@ pub fn read_las(bytes: &[u8], o: &Options) -> crate::Result<Import> {
             }
         }
         if user == "LASF_Projection" && rid == 2112 {
-            let w = String::from_utf8_lossy(body);
-            if let Some(i) = w.rfind("AUTHORITY[\"EPSG\",\"").or_else(|| w.rfind("ID[\"EPSG\",")) {
-                let t: String = w[i..].chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
-                epsg = t.parse().ok();
-            }
-            if w.contains("US survey foot") || w.contains("Foot_US") {
-                unit_key = Some(SURVEY_FT);
+            let w = String::from_utf8_lossy(body).to_string();
+            let (h, v) = wkt_split(&w);
+            wkt_epsg = wkt_last_epsg(h);
+            wkt_unit = wkt_last_unit(h);
+            if let Some(u) = v.and_then(wkt_last_unit) {
+                z_key = Some(u);
             }
         }
         p += 54 + len;
     }
-    let epsg = o.epsg.or(epsg);
+    let epsg = o.epsg.or(wkt_epsg).or(epsg);
+    let unit_key = if wkt_epsg.is_some() { wkt_unit.or(Some(1.0)) } else { unit_key };
+    let zo;
+    let o = if o.z_units.is_none() && z_key.is_some_and(|z| z != 1.0) {
+        zo = Options { z_units: Some(if z_key == Some(SURVEY_FT) { "us_ft" } else { "ft" }.into()), ..o.clone() };
+        &zo
+    } else {
+        o
+    };
     let data: Vec<u8> = if compressed || laz_vlr.is_some() {
         let v = laz_vlr.ok_or("LAZ without a LASzip VLR")?;
         let vlr = laz::LazVlr::from_buffer(&v).map_err(|e| format!("laz vlr: {e}"))?;
         let mut out = vec![0u8; n as usize * rlen];
-        let mut dec = laz::LasZipDecompressor::new(Cursor::new(&bytes[off..]), vlr).map_err(|e| format!("laz: {e}"))?;
+        // the chunk table offset stored in the stream is absolute, so the reader spans the whole file
+        let mut cur = Cursor::new(bytes);
+        cur.set_position(off as u64);
+        let mut dec = laz::LasZipDecompressor::new(cur, vlr).map_err(|e| format!("laz: {e}"))?;
         dec.decompress_many(&mut out).map_err(|e| format!("laz: {e}"))?;
         out
     } else {
@@ -559,6 +602,14 @@ pub fn read_any(path: &str, o: &Options) -> crate::Result<Import> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compound_wkt_units() {
+        let w = r#"COMPD_CS["x",PROJCS["NAD83 / Oregon LCC (m)",GEOGCS["NAD83",UNIT["degree",0.0174532925199433]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","2991"]],VERT_CS["NAVD88 height (ftUS)",UNIT["US survey foot",0.304800609601219,AUTHORITY["EPSG","9003"]],AUTHORITY["EPSG","6360"]]]"#;
+        let (h, v) = wkt_split(w);
+        assert_eq!(wkt_last_epsg(h), Some(2991));
+        assert_eq!(wkt_last_unit(h), Some(1.0));
+        assert_eq!(v.and_then(wkt_last_unit), Some(SURVEY_FT));
+    }
     #[test]
     fn utm_reference_points() {
         // references from PROJ (pyproj 3.x, EPSG:4326 → 32610 / 32733 / 3857 → 32613)
