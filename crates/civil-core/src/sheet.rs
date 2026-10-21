@@ -32,6 +32,7 @@ fn sample_al(al: &Alignment, step: f64) -> Vec<(f64, f64, f64, f64)> {
     v
 }
 
+#[derive(Clone)]
 pub struct SheetInfo {
     pub project: String,
     pub engineer: String,
@@ -83,12 +84,8 @@ pub(crate) fn base(d: &mut Drawing) {
     ] {
         d.layer(l, c);
     }
-    d.rect("BORDER", 10.0, 10.0, SHEET_W - 10.0, SHEET_H - 10.0);
 }
 
-/// Title block at the right; stamp logic: PRELIMINARY unless the engineer approved
-/// with zero mandatory failures. Even then the sheet only says "approved in audit
-/// log"; sealing is the engineer's act.
 /// Greedy wrap by estimated width in ems (CJK = 1 em, other = 0.55 em).
 pub(crate) fn wrap(s: &str, max_em: f64) -> Vec<String> {
     let mut out = vec![String::new()];
@@ -109,47 +106,10 @@ pub(crate) fn title_block(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, 
     title_block_s(d, info, sheet_title, "AS SHOWN", page, pages)
 }
 
-pub(crate) fn title_block_s(d: &mut Drawing, info: &SheetInfo, sheet_title: &str, scale: &str, page: usize, pages: usize) {
-    let (tx0, ty0, tx1, ty1) = (SHEET_W - 150.0, 20.0, SHEET_W - 20.0, SHEET_H - 20.0);
-    d.rect("TITLE", tx0, ty0, tx1, ty1);
-    let mut y = ty1 - 4.0;
-    let mut t = |d: &mut Drawing, s: &str, h: f64, layer: &str| {
-        y -= h;
-        d.text(layer, [tx0 + 4.0, y], h, s);
-        y -= h * 0.9;
-    };
-    for line in wrap(&info.project, 26.0) {
-        t(d, &line, 4.0, "TITLE");
-    }
-    t(d, &format!("Sheet: {sheet_title}"), 3.0, "TITLE");
-    t(d, &format!("Sheet {page} of {pages}"), 2.5, "TITLE");
-    t(d, &format!("Scale: {scale} (A1)"), 2.5, "TITLE");
-    t(d, &format!("Standards: {}", info.standard), 2.5, "TITLE");
-    t(d, &format!("Design speed: {:.0} km/h", info.design_speed), 2.5, "TITLE");
-    t(d, &format!("Checks: {}/{} pass", info.checks_total - info.checks_failed, info.checks_total), 2.5, "TITLE");
-    t(d, "Audit log head:", 2.5, "TITLE");
-    let h = info.audit_head.clone();
-    t(d, &h[..32.min(h.len())], 2.0, "TITLE");
-    t(d, &h[32.min(h.len())..], 2.0, "TITLE");
-    t(d, "Prepared by: civil-mcp agent tools", 2.5, "TITLE");
-    t(d, "Engineer in responsible charge:", 2.5, "TITLE");
-    t(d, &info.engineer, 2.5, "TITLE");
-    match info.approved_seq {
-        Some(seq) if info.checks_failed == 0 => {
-            t(d, "APPROVED IN AUDIT LOG", 3.0, "STAMP");
-            t(d, &format!("Approved in audit log, entry #{seq}"), 2.5, "STAMP");
-            t(d, "Seal applied by the engineer only", 2.2, "STAMP");
-        }
-        _ => {
-            t(d, "PRELIMINARY", 6.0, "STAMP");
-            t(d, "NOT FOR CONSTRUCTION", 5.0, "STAMP");
-            t(d, "NOT FOR CONSTRUCTION", 4.0, "STAMP");
-            t(d, "Not reviewed or sealed by a licensed engineer", 2.5, "STAMP");
-            t(d, "Not reviewed or sealed by a licensed engineer.", 2.2, "STAMP");
-        }
-    }
-    d.rect("TITLE", tx0 + 10.0, ty0 + 10.0, tx1 - 10.0, ty0 + 90.0);
-    d.text("TITLE", [tx0 + 14.0, ty0 + 13.0], 2.2, "ENGINEER SEAL / SIGNATURE");
+/// Records the sheet identity; the frame, title block, stamp and seal box are drawn by
+/// `frame::compose` so that the same layout can be put on any sheet size and drafting standard.
+pub(crate) fn title_block_s(d: &mut Drawing, _info: &SheetInfo, sheet_title: &str, scale: &str, page: usize, pages: usize) {
+    d.meta = Some(crate::drawing::SheetMeta { title: sheet_title.into(), scale: scale.into(), page, pages });
 }
 
 pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) -> Drawing {
@@ -445,7 +405,7 @@ pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) 
     if let Some(p) = best.last() {
         if let Some(h) = hyd(&p.to) {
             let c = total;
-            d.text("STRUCTURE", [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} OUTFALL HGL {:.2}", p.to, h.hgl));
+            d.text("STRUCTURE", [tp(c, h.rim)[0] - 32.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} OUTFALL HGL {:.2}", p.to, h.hgl));
         }
     }
     d.poly("PROFILE-GROUND", rim);

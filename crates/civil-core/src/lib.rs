@@ -17,6 +17,7 @@ pub mod drawing;
 pub mod ext;
 pub mod ext6;
 pub mod font;
+pub mod frame;
 pub mod grading;
 pub mod hydrology;
 pub mod intersect;

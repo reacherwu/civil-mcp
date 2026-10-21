@@ -102,11 +102,11 @@ pub fn cover(info: &SheetInfo, std: Standard, index: &[(String, String)], notes:
     }
     d.text("TEXT", [30.0, y - 2.0], 3.5, &format!("Standards profile: {}   Design speed {:.0} km/h", std_label(std), info.design_speed));
     d.text("TITLE", [30.0, y - 16.0], 4.5, "SHEET INDEX");
-    let mut rows = vec![vec!["Sheet".to_string(), "Title".to_string(), "File".to_string()]];
+    let mut rows = vec![vec!["Sheet".to_string(), "Title".to_string(), "Drawing No.".to_string()]];
     for (i, (t, f)) in index.iter().enumerate() {
         rows.push(vec![format!("{} of {}", i + 1, pages), t.clone(), f.clone()]);
     }
-    table(&mut d, 30.0, y - 22.0, &[30.0, 190.0, 40.0], 3.0, &rows);
+    table(&mut d, 30.0, y - 22.0, &[26.0, 160.0, 74.0], 3.0, &rows);
     let mut ny = SHEET_H - 120.0;
     let nx = 340.0;
     d.text("TITLE", [nx, ny + 14.0], 4.5, "GENERAL NOTES");

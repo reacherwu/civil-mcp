@@ -520,8 +520,24 @@ pub fn run(out: &str) -> Session {
     let c = r.call("check_standards", json!({}));
     println!("all checks: {} total, {} mandatory failures, {} advisory", c["result"]["total"], c["result"]["mandatory_failures"], c["result"]["advisory"]);
     r.call("export_landxml", json!({"file":"design.xml"}));
+    // sheet frame: US drafting profile defaults (ANSI D, NCS layers, UDS sheet ids) + title-block content
+    r.call(
+        "set_sheet_frame",
+        json!({"frame": {"profile": "US", "size": "ANSI D", "fields": {
+            "client": "Demo County Public Works (fictitious)", "contract_no": "Contract DEMO-001", "project_code": "DEMO",
+            "logo_text": "OWNER LOGO",
+            "date": "2026-10-20", "revisions": [{"rev": "A", "date": "2026-10-20", "description": "Preliminary design for review", "by": "AGT"}]}}}),
+    );
     let v = r.call("generate_drawings", json!({}));
-    println!("drawings: {} sheets, status {}", v["result"]["pages"], v["result"]["status"]);
+    println!(
+        "drawings: {} sheets, status {}; drawing standards ({} {}): {} checks, {} mandatory failures",
+        v["result"]["pages"],
+        v["result"]["status"],
+        v["result"]["drawing_standards"]["profile"],
+        v["result"]["drawing_standards"]["size"],
+        v["result"]["drawing_standards"]["checks"],
+        v["result"]["drawing_standards"]["mandatory_failures"]
+    );
     let v = r.call("generate_deliverables", json!({"stage":"preliminary"}));
     println!("deliverables: {}", v["result"]["files"].as_object().unwrap().keys().cloned().collect::<Vec<_>>().join(", "));
     let v = r.call("generate_review_report", json!({}));

@@ -50,6 +50,10 @@ pub struct Session {
     pub departures: Vec<Value>,
     pub traffic: Option<Value>,
     pub ext: std::collections::BTreeMap<String, crate::ext::ExtOut>,
+    /// sheet frame chosen with set_sheet_frame (None = profile defaults of the design-basis country)
+    pub frame: Option<crate::frame::FrameSpec>,
+    /// drawing-standard checks of the last generate_drawings run
+    pub frame_checks: Vec<Check>,
 }
 
 fn obj(props: Value, req: &[&str]) -> Value {
@@ -83,7 +87,7 @@ pub fn tool_list() -> Value {
       {"name":"grade","description":"Grade a pad (closed polygon) or feature line (open, side left/right) to existing ground at cut/fill slopes; returns daylight line and composite volumes.","inputSchema":obj(json!({"name":s,"vertices":xyz,"closed":b,"side":s,"cut_slope_h":num,"fill_slope_h":num,"spacing_m":num,"cell_m":num}),&["name","vertices","closed","cut_slope_h","fill_slope_h"])},
       {"name":"design_pipe_network","description":"Gravity storm/sanitary network: inverts from min cover/slope/drop, Manning full and partial flow, rational-method flows; checks per FHWA HEC-22 (storm) or the engineer's sewer criteria (sanitary peaking: Harmon or Ten States Standards). Rims default to the corridor surface, else existing ground.","inputSchema":obj(json!({"name":s,"criteria":{"type":"object","properties":{"standard":{"type":"string","enum":["FHWA_HEC22","ENGINEER"]},"system":{"type":"string","enum":["storm","sanitary"]},"min_cover_m":num,"min_slope":num,"structure_drop_m":num,"intensity_mm_h":num,"tailwater_m":num,"freeboard_m":num},"required":["standard","system","min_cover_m","min_slope"]},"structures":arr(json!({"type":"object","properties":{"id":s,"x":num,"y":num,"rim":num,"area_ha":num,"c":num,"inflow_m3s":num,"population":num,"per_capita_lpd":num},"required":["id","x","y"]})),"pipes":arr(json!({"type":"object","properties":{"id":s,"from":s,"to":s,"diameter_m":num,"n":num,"material":s,"max_slope":num,"min_slope":num},"required":["id","from","to","diameter_m","n"]}))}),&["name","criteria","structures","pipes"])},
       {"name":"compute_quantities","description":"Mass haul ordinates and balance points, shrinkage (cut_factor), bulking, free haul and overhaul, borrow and waste, and a material table by station range.","inputSchema":obj(json!({"cut_factor":num,"bulking_factor":num,"free_haul_m":num,"table_step_m":num}),&[])},
-      {"name":"generate_drawings","description":"Write model.dxf (world), sheets.pdf (all sheets, embedded font) and sheet-NN.dxf per sheet. PRELIMINARY stamp unless approved with zero mandatory failures.","inputSchema":obj(json!({}),&[])},
+      {"name":"generate_drawings","description":"Write model.dxf (world), sheets.pdf (all sheets, embedded font), sheet-NN.dxf and sheet-NN.svg per sheet, sheet-register.csv and drawing-standards.json. Every sheet is placed on the sheet frame (set_sheet_frame, or the drafting profile of the design-basis country) with its title block, revision table, sign-off, seal box, north arrow and scale bar; layers, line weights and line types follow the profile. Optional 'frame' overrides the stored frame for this run. PRELIMINARY stamp unless approved with zero mandatory failures.","inputSchema":obj(json!({"frame":crate::frame::spec_schema()}),&[])},
       {"name":"generate_review_report","description":"Write review.html listing every check (pass/fail with citation), quantities, output file hashes and the audit trail.","inputSchema":obj(json!({}),&[])},
       {"name":"record_review","description":"Record the engineer's decision. actor must be 'engineer:<name>'. approve is refused while mandatory checks fail. Any later design change voids the approval.","inputSchema":obj(json!({"actor":s,"decision":{"type":"string","enum":["approve","reject","comment"]},"note":s}),&["actor","decision","note"])},
       {"name":"verify_audit_log","description":"Recompute the hash chain of the audit log and report the first tampered entry, if any.","inputSchema":obj(json!({}),&[])},
@@ -98,6 +102,7 @@ pub fn tool_list() -> Value {
     ]);
     if let Some(a) = v.as_array_mut() {
         a.extend(crate::ext::tool_list());
+        a.extend(crate::frame::tool_list());
     }
     v
 }
@@ -143,6 +148,78 @@ impl Session {
         self.files.push((name.into(), h.clone()));
         Ok(h)
     }
+    fn call_frame(&mut self, name: &str, a: &Value) -> crate::Result<Value> {
+        use crate::frame;
+        let country = self.basis.as_ref().map(|b| b.standard).unwrap_or(standards::Standard::Us);
+        let info = || -> SheetInfo {
+            let all = self.all_checks();
+            SheetInfo {
+                project: self.basis.as_ref().map(|b| b.project.clone()).unwrap_or_else(|| "Project".into()),
+                engineer: self.basis.as_ref().map(|b| b.engineer_of_record.clone()).unwrap_or_else(|| "Engineer of record".into()),
+                standard: serde_json::to_value(country).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
+                design_speed: self.basis.as_ref().map(|b| b.design_speed_kmh).unwrap_or(0.0),
+                audit_head: self.log.as_ref().map(|l| l.head.clone()).unwrap_or_default(),
+                checks_failed: all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(),
+                checks_total: all.len(),
+                approved_seq: self.approved_seq,
+            }
+        };
+        match name {
+            "list_sheet_frames" => {
+                let sizes: Vec<Value> = frame::SIZES.iter().map(|s| json!({"name": s.0, "long_mm": s.1, "short_mm": s.2, "source": s.3})).collect();
+                let profiles: Vec<Value> = [standards::Standard::Us, standards::Standard::Ca, standards::Standard::Uk, standards::Standard::Au, standards::Standard::Nz]
+                    .iter()
+                    .map(|s| {
+                        let p = frame::profile(*s);
+                        json!({"code": p.code, "name": p.name, "default_size": p.default_size, "margins_mm": p.margins, "title_block_width_mm": p.tb_width, "layer_format": p.layer_fmt, "sheet_id_format": p.sheet_id, "seal": p.seal_label})
+                    })
+                    .collect();
+                let cur = frame::resolve(&self.frame.clone().unwrap_or_default(), country)?;
+                Ok(json!({"result": {"sizes": sizes, "profiles": profiles, "current": cur, "current_spec": self.frame}}))
+            }
+            "get_drafting_standard" => {
+                let c = a["country"].as_str().ok_or("country required (US, CA, UK, AU, NZ)")?;
+                let s = frame::country(c).ok_or("country must be US, CA, UK, AU or NZ")?;
+                Ok(json!({"result": frame::profile_json(s)}))
+            }
+            "set_sheet_frame" => {
+                let spec: frame::FrameSpec = serde_json::from_value(a.get("frame").cloned().unwrap_or(json!({}))).map_err(|e| format!("frame: {e}"))?;
+                let r = frame::resolve(&spec, country)?;
+                let out = json!({"frame": r, "profile": r.profile.name, "required_title_block_fields": r.profile.required_fields});
+                let prov =
+                    self.log("agent", name, a, &json!({"profile": r.country, "size": r.size, "orientation": r.orientation, "layout_factor": r.k}), &[])?;
+                self.frame = Some(spec);
+                Ok(json!({"result": out, "provenance": prov}))
+            }
+            "preview_sheet_frame" => {
+                let spec: frame::FrameSpec = match a.get("frame") {
+                    Some(f) if !f.is_null() => serde_json::from_value(f.clone()).map_err(|e| format!("frame: {e}"))?,
+                    _ => self.frame.clone().unwrap_or_default(),
+                };
+                let r = frame::resolve(&spec, country)?;
+                let inf = info();
+                let d = frame::preview(&r, &inf);
+                let ids = frame::sheet_ids(&r, &["Plan preview".into()]);
+                let checks = frame::check_set(std::slice::from_ref(&d), &r, &ids, &inf);
+                let mut files = json!({});
+                files["frame-preview.pdf"] = json!(self.write("frame-preview.pdf", &drawing::to_pdf(&[(&d, r.w, r.h)]))?);
+                files["frame-preview.svg"] = json!(self.write("frame-preview.svg", d.to_svg(r.w, r.h).as_bytes())?);
+                files["frame-preview.dxf"] = json!(self.write("frame-preview.dxf", d.to_dxf().as_bytes())?);
+                let fail = checks.iter().filter(|c| !c.pass && c.severity == "mandatory").count();
+                Ok(json!({"result": {"frame": r, "files": files, "checks": checks, "mandatory_failures": fail}}))
+            }
+            "check_drawing_standards" => {
+                if self.frame_checks.is_empty() {
+                    return Err("run generate_drawings first".into());
+                }
+                let fail = self.frame_checks.iter().filter(|c| !c.pass && c.severity == "mandatory").count();
+                let adv = self.frame_checks.iter().filter(|c| !c.pass && c.severity != "mandatory").count();
+                Ok(json!({"result": {"checks": self.frame_checks, "mandatory_failures": fail, "advisory_flags": adv}}))
+            }
+            _ => Err(format!("unknown tool {name}")),
+        }
+    }
+
     pub fn all_checks(&self) -> Vec<Check> {
         let mut c = self.checks.clone();
         c.extend(self.ext_checks());
@@ -297,9 +374,13 @@ impl Session {
     }
 
     pub fn call(&mut self, name: &str, a: &Value) -> crate::Result<Value> {
-        let r = match self.call_ext(name, a) {
-            Some(r) => r,
-            None => self.call_inner(name, a),
+        let r = if crate::frame::TOOLS.contains(&name) {
+            self.call_frame(name, a)
+        } else {
+            match self.call_ext(name, a) {
+                Some(r) => r,
+                None => self.call_inner(name, a),
+            }
         };
         if r.is_ok() && (DESIGN_TOOLS.contains(&name) || crate::ext::TOOLS.contains(&name)) {
             self.approved_seq = None;
@@ -642,7 +723,7 @@ impl Session {
                 let info = SheetInfo {
                     project: b.project.clone(),
                     engineer: b.engineer_of_record.clone(),
-                    standard: format!("{:?}", b.standard),
+                    standard: serde_json::to_value(b.standard).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
                     design_speed: b.design_speed_kmh,
                     audit_head: head.clone(),
                     checks_failed: all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(),
@@ -697,7 +778,13 @@ impl Session {
                 }
                 titles.push("Standard details atlas (references)".into());
                 let pages = titles.len();
-                let index: Vec<(String, String)> = titles.iter().enumerate().map(|(i, t)| (t.clone(), format!("sheet-{:02}.dxf", i + 1))).collect();
+                let spec: crate::frame::FrameSpec = match a.get("frame") {
+                    Some(f) if !f.is_null() => serde_json::from_value(f.clone()).map_err(|e| format!("frame: {e}"))?,
+                    _ => self.frame.clone().unwrap_or_default(),
+                };
+                let rf = crate::frame::resolve(&spec, b.standard)?;
+                let ids = crate::frame::sheet_ids(&rf, &titles);
+                let index: Vec<(String, String)> = titles.iter().enumerate().map(|(i, t)| (t.clone(), ids[i].clone())).collect();
                 let mut notes = vec![
                     format!("Design to {} - parameter register lists each value as verified (from the published standard), formula, or engineer input.", crate::sheetset::std_label(b.standard)),
                     "Values from copyrighted or paywalled tables are not shipped with the software; they are entered by the engineer and marked as engineer inputs in the parameter register and design report.".into(),
@@ -766,22 +853,42 @@ impl Session {
                 }
                 sheets.push(crate::sheetset::details_atlas(b.standard, &info, pg, pages));
                 debug_assert_eq!(sheets.len(), pages);
+                let sheets: Vec<drawing::Drawing> = sheets.iter().enumerate().map(|(i, d)| crate::frame::compose(d, &rf, &info, &ids[i])).collect();
+                let fchecks = crate::frame::check_set(&sheets, &rf, &ids, &info);
                 let model = sheet::model(&ds, 1.0).to_dxf();
-                let pdf = drawing::to_pdf(&sheets.iter().map(|d| (d, sheet::SHEET_W, sheet::SHEET_H)).collect::<Vec<_>>());
-                let dxfs: Vec<String> = sheets.iter().map(|d| d.to_dxf()).collect();
+                let pdf = drawing::to_pdf(&sheets.iter().map(|d| (d, rf.w, rf.h)).collect::<Vec<_>>());
                 let mut files = json!({});
                 files["model.dxf"] = json!(self.write("model.dxf", model.as_bytes())?);
                 files["sheets.pdf"] = json!(self.write("sheets.pdf", &pdf)?);
-                for (i, d) in dxfs.iter().enumerate() {
+                let mut reg = String::from("page,sheet_id,title,revision,status,size,dxf,svg\n");
+                let rev = rf.spec.fields.revisions.last().map(|x| x.rev.clone()).unwrap_or_else(|| rf.profile.initial_revision.to_string());
+                for (i, d) in sheets.iter().enumerate() {
                     let n = format!("sheet-{:02}.dxf", i + 1);
-                    files[&n] = json!(self.write(&n, d.as_bytes())?);
+                    files[&n] = json!(self.write(&n, d.to_dxf().as_bytes())?);
+                    let sv = format!("sheet-{:02}.svg", i + 1);
+                    files[&sv] = json!(self.write(&sv, d.to_svg(rf.w, rf.h).as_bytes())?);
+                    reg += &format!(
+                        "{},{},{},{},{},{},{n},{sv}\n",
+                        i + 1,
+                        ids[i],
+                        crate::ext::csvq(&titles[i]),
+                        rev,
+                        if info.approved_seq.is_some() && info.checks_failed == 0 { "approved" } else { "preliminary" },
+                        rf.size
+                    );
                 }
+                files["sheet-register.csv"] = json!(self.write("sheet-register.csv", reg.as_bytes())?);
+                let fail = fchecks.iter().filter(|c| !c.pass && c.severity == "mandatory").count();
+                let fjson = json!({"frame": rf, "checks": fchecks, "mandatory_failures": fail});
+                files["drawing-standards.json"] = json!(self.write("drawing-standards.json", serde_json::to_string_pretty(&fjson).unwrap().as_bytes())?);
+                self.frame_checks = fchecks.clone();
                 let status = if info.approved_seq.is_some() && info.checks_failed == 0 {
                     "APPROVED IN AUDIT LOG (seal by engineer)"
                 } else {
                     "PRELIMINARY - NOT FOR CONSTRUCTION"
                 };
-                let out = json!({"files": files, "pages": pages, "sheet_index": titles, "status": status, "audit_head_on_sheet": head});
+                let frame_summary = json!({"profile": rf.country, "size": rf.size, "orientation": rf.orientation, "layout_factor": rf.k, "sheet_ids": ids, "checks": self.frame_checks.len(), "mandatory_failures": fail, "advisory": self.frame_checks.iter().filter(|c| !c.pass && c.severity != "mandatory").map(|c| format!("{} {}: {}", c.id, c.item, c.element)).collect::<Vec<_>>(), "warnings": rf.warnings});
+                let out = json!({"files": files, "pages": pages, "sheet_index": titles, "status": status, "audit_head_on_sheet": head, "drawing_standards": frame_summary});
                 let prov = self.log("agent", name, a, &out, &[])?;
                 Ok(json!({"result": out, "provenance": prov}))
             }

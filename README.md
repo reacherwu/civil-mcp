@@ -2,7 +2,7 @@
 
 # civil-mcp
 
-**Road design you can hand to an AI agent, and check.** About 55 Civil 3D-style design tools, served as a local MCP server. Each result carries the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
+**Road design you can hand to an AI agent, and check.** About 60 Civil 3D-style design tools, served as a local MCP server. Each result carries the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
 
 [![CI](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -25,7 +25,7 @@
 
 ## Contents
 
-[Works with](#works-with-mcp-clients) · [How it works](#how-it-works) · [Why](#why) · [Quick start](#quick-start) · [Client setup](#mcp-client-setup) · [Feature gallery](#feature-gallery) · [Drawing set](#drawing-set-all-38-sheets) · [Standards](#standards-coverage-by-country) · [Validation](#validation-summary) · [Deliverables](#deliverables-matrix) · [Limits](#limits) · [Roadmap](#roadmap) · [License](#license-and-attribution)
+[Works with](#works-with-mcp-clients) · [How it works](#how-it-works) · [Why](#why) · [Quick start](#quick-start) · [Client setup](#mcp-client-setup) · [Feature gallery](#feature-gallery) · [Drawing set](#drawing-set-all-38-sheets) · [Sheet frames](#sheet-frames-and-drafting-standards) · [Standards](#standards-coverage-by-country) · [Validation](#validation-summary) · [Deliverables](#deliverables-matrix) · [Limits](#limits) · [Roadmap](#roadmap) · [License](#license-and-attribution)
 
 ## Works with (MCP clients)
 
@@ -39,7 +39,7 @@ civil-mcp is a standard [Model Context Protocol](https://modelcontextprotocol.io
 | [Codex](https://developers.openai.com/codex/mcp) (CLI / IDE extension / ChatGPT desktop app) | `codex mcp add civil -- /path/to/civil-mcp`, or `~/.codex/config.toml` → `[mcp_servers.civil]` | per docs, not yet tested end to end |
 | [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/) | `gemini mcp add civil /path/to/civil-mcp`, or `~/.gemini/settings.json` → `mcpServers` | per docs, not yet tested end to end |
 | [VS Code (GitHub Copilot agent mode)](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) | `MCP: Add Server` → *Command (stdio)*, or `.vscode/mcp.json` → `servers` | per docs, not yet tested end to end |
-| Raw JSON-RPC over stdio | `initialize` → `tools/list` | **tested**: protocol `2024-11-05`, 55 tools listed. The CI test `crates/civil-mcp/tests/stdio.rs` drives a UK-profile session over stdio |
+| Raw JSON-RPC over stdio | `initialize` → `tools/list` | **tested**: protocol `2024-11-05`, 60 tools listed. The CI test `crates/civil-mcp/tests/stdio.rs` drives a UK-profile session over stdio |
 
 **What does not work yet**
 
@@ -478,6 +478,66 @@ Click a thumbnail to open the full-size sheet (2000 px PNG). The vector PDF is [
 
 ---
 
+## Sheet frames and drafting standards
+
+Every sheet in `generate_drawings` (PDF, per-sheet SVG and DXF) is composed into a configurable frame and title block. Five drafting profiles are built in: US, CA, UK, AU and NZ. Selecting a profile sets the default sheet size, borders, title-block fields, layer names, line weights and types, sheet numbering and revision codes. Any field can then be overridden.
+
+| Tool | What it does |
+|---|---|
+| `list_sheet_frames` | Sheet sizes (ISO A0-A4, ANSI A-E, ARCH A-E1), the five profiles and their default frame, and the current frame |
+| `get_drafting_standard` | One profile in full. Each parameter is marked `verified`, `formula` or `engineer` and carries its source |
+| `set_sheet_frame` | Profile, size, orientation, margins, title-block fields, revision table, custom DXF/SVG/JSON template, layer map, sheet ID pattern. Logged in the audit chain. It does not void an approval |
+| `preview_sheet_frame` | Renders an empty frame to `frame-preview.pdf/.svg/.dxf` and returns the layout and checks |
+| `check_drawing_standards` | Runs checks FR-01 to FR-14 on the last drawing set |
+
+```json
+{"name":"set_sheet_frame","arguments":{"frame":{"profile":"UK","size":"ISO A1","orientation":"landscape",
+ "fields":{"project":"A40 junction","client":"County Council","project_code":"A40J","originator":"ABC",
+ "revisions":[{"rev":"P01","date":"2026-10-20","description":"Preliminary issue","by":"AGT"}]}}}}
+```
+
+| Profile | Default sheet | Title block | Layer names | Sheet IDs | First revision | Parameters (verified / formula / engineer) |
+|---|---|---|---|---|---|---|
+| US | ANSI D | right strip, PE seal box | NCS (`C-ROAD-CNTR`) | UDS (`G-001`, `C-101`) | A | 4 / 4 / 9 |
+| CA | ISO A1 | ISO 7200, 180 mm | NCS-style | UDS-style | A | 11 / 5 / 5 |
+| UK | ISO A1 | ISO 7200, 180 mm | BS 1192 style (`C-00-M_Alignment`) | ISO 19650 UK NA (`PRJ-ORG-ZZ-ZZ-DR-C-0001`) | P01 (status S3) | 13 / 7 / 3 |
+| AU | ISO A1 | ISO 7200, 180 mm | ISO-style | `PRJ-C-0001` | A | 11 / 5 / 5 |
+| NZ | ISO A1 | ISO 7200, 180 mm | ISO-style | `PRJ-C-0001` | A | 11 / 5 / 4 |
+
+All ISO profiles have ISO 5457 centring marks and grid references. Agency CAD manuals (state DOT, National Highways, TfNSW, NZTA) are not shipped. Their specific values are engineer inputs with a default.
+
+Sheet 3 (plan and profile) in each profile, rendered from the generated PDFs by `scripts/render_readme_images.py --frames`:
+
+| US, ANSI D | CA, ISO A1 |
+|---|---|
+| ![US](docs/img/frames/US-ANSID-landscape-plan.png) | ![CA](docs/img/frames/CA-A1-landscape-plan.png) |
+| **UK, ISO A1** | **AU, ISO A1** |
+| ![UK](docs/img/frames/UK-A1-landscape-plan.png) | ![AU](docs/img/frames/AU-A1-landscape-plan.png) |
+| **NZ, ISO A1** | **UK, ISO A3** |
+| ![NZ](docs/img/frames/NZ-A1-landscape-plan.png) | ![UK A3](docs/img/frames/UK-A3-landscape-plan.png) |
+
+Title-block close-ups:
+
+| US | UK | AU, A4 portrait |
+|---|---|---|
+| ![US title block](docs/img/frames/US-ANSID-landscape-titleblock.png) | ![UK title block](docs/img/frames/UK-A1-landscape-titleblock.png) | ![AU A4](docs/img/frames/AU-A4-portrait-plan.png) |
+
+Drawing-standard checks (kept separate from the 288 design checks and the approval gate):
+
+| Check | What it covers | Severity |
+|---|---|---|
+| FR-01 / FR-02 / FR-03 | sheet size, margins, frame line | mandatory |
+| FR-04 | title-block width | advisory |
+| FR-05 | required title-block fields; checker required once approved | mandatory |
+| FR-06 / FR-07 | sheet ID pattern; revision code pattern, no C revisions while preliminary | mandatory |
+| FR-08 / FR-08b | seal box present; no seal shown while preliminary | mandatory |
+| FR-09 / FR-09b | title-block text at least 2.5 mm; small content text | mandatory / advisory |
+| FR-10 / FR-11 | content inside the drawing area; layer names | mandatory |
+| FR-12 / FR-12b | scale bar; preferred scales | mandatory / advisory |
+| FR-13 / FR-14 | north arrow on plans; grid references (ISO) | mandatory |
+
+Seven profile and size combinations (`cargo run --release --example frames_gallery -p civil-demo -- out`) give 0 mandatory failures and 2 advisories each. The 2 advisories are FR-09b and FR-12b: content is drawn on an A1 layout and scaled to fit the sheet, so a smaller sheet gives smaller text and non-preferred scales. The scale bar shows the plotted scale.
+
 ## Standards coverage by country
 
 Each profile classifies every geometric design parameter as **verified** (a value from the published source, cited), **formula** (computed from a published formula), or **engineer input** (from a copyrighted or paywalled table, or not verified; it must be entered and is flagged in the register). The counts below are measured with `cargo run -p civil-core --example profile_register` on a minimal basis.
@@ -540,6 +600,7 @@ The re-check scripts share no code with the Rust tools. They re-derive each valu
 - **Route search is approximate.** It runs on a 10 m grid and its cost proxy is relative.
 - **One demo site.** All results come from one terrain sample.
 - **Identity is declared, not proven.** MCP cannot authenticate the human approver; deployments need authentication in front of approval.
+- **Sheet frames are SI only.** R12 DXF carries no lineweights (they are in PDF and SVG). Templates read lines, rectangles and text; SVG group transforms are ignored. Content is scaled from an A1 layout, so small sheets give text below 2.5 mm (advisory). The default issue date is UTC.
 - **Clients are untested end to end.** See [Works with](#works-with-mcp-clients).
 
 ## Roadmap

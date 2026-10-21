@@ -14,12 +14,43 @@ pub enum Ent {
     Text { layer: String, p: [f64; 2], h: f64, s: String },
 }
 
+/// Sheet identity recorded by the sheet generators; the frame (title block) is drawn
+/// later by `frame::compose` from this record.
+#[derive(Debug, Clone, Default)]
+pub struct SheetMeta {
+    pub title: String,
+    pub scale: String,
+    pub page: usize,
+    pub pages: usize,
+}
+
+/// Output style of one layer: exported name, line weight (mm) and line type.
+#[derive(Debug, Clone)]
+pub struct LayerStyle {
+    pub name: String,
+    pub width_mm: f64,
+    /// "CONTINUOUS" | "DASHED" | "DASHDOT" | "DOT"
+    pub ltype: String,
+}
+
+pub fn dash_pattern(lt: &str) -> &'static [f64] {
+    match lt {
+        "DASHED" => &[6.0, 3.0],
+        "DASHDOT" => &[12.0, 3.0, 1.0, 3.0],
+        "DOT" => &[1.0, 2.0],
+        _ => &[],
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Drawing {
     pub ents: Vec<Ent>,
     pub layers: Vec<(String, u8)>,
     /// sheet drawings are in millimetres ($INSUNITS 4); world models in metres (6)
     pub units_mm: bool,
+    pub meta: Option<SheetMeta>,
+    /// per internal layer name; empty = legacy output (internal names, 0.25 mm, continuous)
+    pub styles: std::collections::BTreeMap<String, LayerStyle>,
 }
 
 pub fn layer_rgb(l: &str) -> [f64; 3] {
@@ -87,32 +118,40 @@ impl Drawing {
         ] {
             g(c, v);
         }
-        for (c, v) in [
-            (0, "SECTION"),
-            (2, "TABLES"),
-            (0, "TABLE"),
-            (2, "LTYPE"),
-            (70, "1"),
-            (0, "LTYPE"),
-            (2, "CONTINUOUS"),
-            (70, "0"),
-            (3, "Solid line"),
-            (72, "65"),
-            (73, "0"),
-            (40, "0.0"),
-            (0, "ENDTAB"),
-        ] {
+        for (c, v) in [(0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "LTYPE"), (70, "4")] {
             g(c, v);
         }
-        g(0, "TABLE");
-        g(2, "LAYER");
-        g(70, &(self.layers.len() + 1).to_string());
-        for (n, c) in std::iter::once(&("0".to_string(), 7u8)).chain(self.layers.iter()) {
-            g(0, "LAYER");
+        for (n, desc) in [("CONTINUOUS", "Solid line"), ("DASHED", "Dashed __ __ __"), ("DASHDOT", "Dash dot __ . __ ."), ("DOT", "Dotted . . . .")] {
+            let pat = dash_pattern(n);
+            g(0, "LTYPE");
             g(2, n);
             g(70, "0");
+            g(3, desc);
+            g(72, "65");
+            g(73, &pat.len().to_string());
+            g(40, &format!("{:.1}", pat.iter().sum::<f64>()));
+            for (i, d) in pat.iter().enumerate() {
+                g(49, &format!("{:.1}", if i % 2 == 0 { *d } else { -*d }));
+            }
+        }
+        g(0, "ENDTAB");
+        g(0, "TABLE");
+        g(2, "LAYER");
+        let mut seen = std::collections::BTreeSet::new();
+        let mut rows = vec![];
+        for (n, c) in std::iter::once(&("0".to_string(), 7u8)).chain(self.layers.iter()) {
+            let (on, lt) = self.styles.get(n).map(|st| (st.name.clone(), st.ltype.clone())).unwrap_or((n.clone(), "CONTINUOUS".into()));
+            if seen.insert(on.clone()) {
+                rows.push((on, *c, lt));
+            }
+        }
+        g(70, &rows.len().to_string());
+        for (n, c, lt) in rows {
+            g(0, "LAYER");
+            g(2, &n);
+            g(70, "0");
             g(62, &c.to_string());
-            g(6, "CONTINUOUS");
+            g(6, &lt);
         }
         g(0, "ENDTAB");
         g(0, "TABLE");
@@ -135,11 +174,12 @@ impl Drawing {
         g(0, "SECTION");
         g(2, "ENTITIES");
         let f = |x: f64| format!("{x:.4}");
+        let ln = |l: &String| -> String { self.styles.get(l).map(|s| s.name.clone()).unwrap_or_else(|| l.clone()) };
         for e in &self.ents {
             match e {
                 Ent::Line { layer, a, b } => {
                     g(0, "LINE");
-                    g(8, layer);
+                    g(8, &ln(layer));
                     g(10, &f(a[0]));
                     g(20, &f(a[1]));
                     g(30, "0.0");
@@ -149,7 +189,7 @@ impl Drawing {
                 }
                 Ent::Poly { layer, pts } | Ent::Fill { layer, pts, .. } => {
                     g(0, "POLYLINE");
-                    g(8, layer);
+                    g(8, &ln(layer));
                     g(66, "1");
                     g(10, "0.0");
                     g(20, "0.0");
@@ -157,17 +197,17 @@ impl Drawing {
                     g(70, if matches!(e, Ent::Fill { .. }) { "1" } else { "0" });
                     for p in pts {
                         g(0, "VERTEX");
-                        g(8, layer);
+                        g(8, &ln(layer));
                         g(10, &f(p[0]));
                         g(20, &f(p[1]));
                         g(30, "0.0");
                     }
                     g(0, "SEQEND");
-                    g(8, layer);
+                    g(8, &ln(layer));
                 }
                 Ent::Text { layer, p, h, s } => {
                     g(0, "TEXT");
-                    g(8, layer);
+                    g(8, &ln(layer));
                     g(10, &f(p[0]));
                     g(20, &f(p[1]));
                     g(30, "0.0");
@@ -181,6 +221,73 @@ impl Drawing {
         g(0, "EOF");
         o
     }
+}
+
+impl Drawing {
+    /// Standalone SVG of a sheet (w×h mm), y up in the model → y down in SVG.
+    pub fn to_svg(&self, w: f64, h: f64) -> String {
+        let mut o = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}mm\" height=\"{h}mm\" viewBox=\"0 0 {w} {h}\">\n<rect width=\"{w}\" height=\"{h}\" fill=\"white\"/>\n"
+        );
+        let rgb = |r: [f64; 3]| format!("rgb({},{},{})", (r[0] * 255.0) as u8, (r[1] * 255.0) as u8, (r[2] * 255.0) as u8);
+        let pts = |p: &[[f64; 2]]| p.iter().map(|q| format!("{:.2},{:.2}", q[0], h - q[1])).collect::<Vec<_>>().join(" ");
+        // one <g> per layer keeps the exported layer names visible to SVG editors
+        let mut by: Vec<(String, Vec<&Ent>)> = vec![];
+        for e in &self.ents {
+            let l = match e {
+                Ent::Line { layer, .. } | Ent::Poly { layer, .. } | Ent::Fill { layer, .. } | Ent::Text { layer, .. } => layer,
+            };
+            match by.iter_mut().find(|x| &x.0 == l) {
+                Some(x) => x.1.push(e),
+                None => by.push((l.clone(), vec![e])),
+            }
+        }
+        for (l, es) in by {
+            let st = self.styles.get(&l);
+            let name = st.map(|s| s.name.clone()).unwrap_or(l.clone());
+            let wmm = st.map(|s| s.width_mm).unwrap_or(0.25);
+            let dash = st.map(|s| dash_pattern(&s.ltype).iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")).unwrap_or_default();
+            let c = rgb(layer_rgb(&l));
+            let _ = write!(
+                o,
+                "<g id=\"{}\" stroke=\"{c}\" stroke-width=\"{wmm}\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+                xml_esc(&name)
+            );
+            if !dash.is_empty() {
+                let _ = write!(o, " stroke-dasharray=\"{dash}\"");
+            }
+            o += ">\n";
+            for e in es {
+                match e {
+                    Ent::Line { a, b, .. } => {
+                        let _ = writeln!(o, "<line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\"/>", a[0], h - a[1], b[0], h - b[1]);
+                    }
+                    Ent::Poly { pts: p, .. } => {
+                        let _ = writeln!(o, "<polyline points=\"{}\"/>", pts(p));
+                    }
+                    Ent::Fill { pts: p, rgb: r, .. } => {
+                        let _ = writeln!(o, "<polygon points=\"{}\" fill=\"{}\" stroke=\"none\"/>", pts(p), rgb(*r));
+                    }
+                    Ent::Text { p, h: th, s, .. } => {
+                        let _ = writeln!(
+                            o,
+                            "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"DejaVu Sans, Arial, sans-serif\" font-size=\"{:.3}\" fill=\"{c}\" stroke=\"none\">{}</text>",
+                            p[0],
+                            h - p[1],
+                            th / 0.729,
+                            xml_esc(s)
+                        );
+                    }
+                }
+            }
+            o += "</g>\n";
+        }
+        o + "</svg>\n"
+    }
+}
+
+pub fn xml_esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// ASCII as-is, everything else as \U+XXXX (AutoCAD/ezdxf convention).
@@ -213,7 +320,18 @@ pub fn to_pdf(pages: &[(&Drawing, f64, f64)]) -> Vec<u8> {
     for (d, _, _) in pages {
         let mut c = String::new();
         let _ = writeln!(c, "0.25 w 1 J 1 j");
+        let mut cur = (0.25f64, String::from("CONTINUOUS"));
         for e in &d.ents {
+            let layer = match e {
+                Ent::Line { layer, .. } | Ent::Poly { layer, .. } | Ent::Fill { layer, .. } | Ent::Text { layer, .. } => layer,
+            };
+            if let Some(st) = d.styles.get(layer) {
+                if (st.width_mm - cur.0).abs() > 1e-9 || st.ltype != cur.1 {
+                    let pat: Vec<String> = dash_pattern(&st.ltype).iter().map(|v| format!("{:.2}", v * k)).collect();
+                    let _ = writeln!(c, "{:.3} w [{}] 0 d", st.width_mm * k, pat.join(" "));
+                    cur = (st.width_mm, st.ltype.clone());
+                }
+            }
             match e {
                 Ent::Line { layer, a, b } => {
                     let r = layer_rgb(layer);
