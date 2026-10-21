@@ -7,7 +7,7 @@ For concept and preliminary visualisation only; the scene is not a design delive
 
    ```bash
    blender -b -P blender_scene.py -- /path/to/project --frames 240 --res 1280x720 --samples 16
-   # options: --engine CYCLES|BLENDER_EEVEE_NEXT|BLENDER_WORKBENCH  --no-video  --no-usd
+   # options: --engine CYCLES|BLENDER_EEVEE_NEXT|BLENDER_WORKBENCH  --no-video  --no-usd  --show-parcels (render imported parcel and ROW outlines)
    ```
 
    The script renders `render/overview.png`, `render/alt-<name>.png` (one per alternative, the others hidden), `render/driver-1..3.png` and `render/flythrough.mp4`. It also writes `scene.usdc`, `scene.blend` and `render/render-manifest.json`. Cycles on CPU is the default because EEVEE needs a GPU context, which headless servers often lack.

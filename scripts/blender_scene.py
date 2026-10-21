@@ -2,7 +2,7 @@
 #
 #   blender -b -P blender_scene.py -- <dir with scene.glb + scene.json> [--frames 240] [--res 1280x720]
 #                                     [--samples 16] [--engine CYCLES|BLENDER_EEVEE_NEXT|BLENDER_WORKBENCH]
-#                                     [--no-video] [--no-usd]
+#                                     [--no-video] [--no-usd] [--show-parcels]
 #
 # Builds the scene from scene.glb (terrain, pavement, earthwork, walls, drainage, route
 # alternatives), adds sun and sky colour, renders stills (overview, one per route alternative,
@@ -17,12 +17,13 @@ argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 if not argv:
     sys.exit("usage: blender -b -P blender_scene.py -- <scene dir> [options]")
 D = os.path.abspath(argv[0])
-opt = {"frames": 240, "res": "1280x720", "samples": 16, "engine": "CYCLES", "video": True, "usd": True}
+opt = {"frames": 240, "res": "1280x720", "samples": 16, "engine": "CYCLES", "video": True, "usd": True, "parcels": False}
 i = 1
 while i < len(argv):
     a = argv[i]
     if a == "--no-video": opt["video"] = False
     elif a == "--no-usd": opt["usd"] = False
+    elif a == "--show-parcels": opt["parcels"] = True
     else:
         opt[a.lstrip("-")] = argv[i + 1]; i += 1
     i += 1
@@ -56,6 +57,25 @@ if meta.get("ground_trimmed_mesh") in objs:
     objs["Existing ground"].hide_render = True
 if any(n.startswith("Pavement layer ") for n in objs) and "Road pavement" in objs:
     objs["Road pavement"].hide_render = True
+# imported parcels (user data) and the ROW polygon as curves; hidden in renders unless --show-parcels
+def outline(name, pts, col, mat):
+    cu = bpy.data.curves.new(name, "CURVE"); cu.dimensions = "3D"; cu.bevel_depth = 0.25
+    sp = cu.splines.new("POLY"); sp.points.add(len(pts)); sp.use_cyclic_u = False
+    for k, p in enumerate(list(pts) + [pts[0]]):
+        sp.points[k].co = (p[0], p[1], p[2] + 0.5, 1.0)
+    ob = bpy.data.objects.new(name, cu); col.objects.link(ob); cu.materials.append(mat)
+    ob.hide_render = not opt["parcels"]
+if meta.get("parcels"):
+    pc = bpy.data.collections.new("Parcels (imported)"); sc.collection.children.link(pc)
+    def flat(name, rgb):
+        m = bpy.data.materials.new(name); m.use_nodes = True
+        m.node_tree.nodes["Principled BSDF"].inputs[0].default_value = (*rgb, 1.0); return m
+    m_p, m_n, m_r = flat("Parcel line", (0.9, 0.9, 0.9)), flat("No-go parcel", (0.8, 0.1, 0.1)), flat("ROW line", (0.9, 0.6, 0.1))
+    for p in meta["parcels"]:
+        for k, r in enumerate(p["rings"]):
+            outline(f"Parcel {p['id']}" + (f" ring {k + 1}" if k else ""), r, pc, m_n if p.get("no_go") else m_p)
+    if meta.get("row_polygon"):
+        outline("ROW (daylight + buffer)", meta["row_polygon"], pc, m_r)
 bb = meta["bbox_local"]  # [xmin, ymin, zmin, xmax, ymax, zmax]
 c = Vector(((bb[0] + bb[3]) / 2, (bb[1] + bb[4]) / 2, (bb[2] + bb[5]) / 2)); span = max(bb[3] - bb[0], bb[4] - bb[1])
 written = []

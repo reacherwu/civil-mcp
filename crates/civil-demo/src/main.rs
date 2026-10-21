@@ -121,6 +121,14 @@ pub fn run_units(out: &str, us: bool) -> Session {
         "wall":{"kind":"cantilever","max_daylight_offset_m":30.0,"max_slope_height_m":12.0,"offset_from_hinge_m":0.5,"embedment_m":0.8,
                 "soil":{"gamma_kn_m3":19.0,"phi_deg":30.0,"base_friction":0.45,"bearing_kpa":250.0,"surcharge_kpa":10.0}}}),
     );
+    // synthetic parcels (made up for the demo; see synthetic_parcels) for ROW screening
+    let parcels = synthetic_parcels(out);
+    let v = r.call(
+        "import_parcels",
+        json!({"path": parcels, "rate_unit": "m2", "coord_unit": "m", "currency": "demo units (synthetic)", "fallback_rates": {"RES": 8.0},
+        "row": {"buffer_m": 3.0, "min_remnant_fraction": 0.2, "admin_factor": 0.1, "severance_factor": 0.25}}),
+    );
+    println!("parcels (synthetic): {} parcels, {} buildings, no-go {}", v["result"]["parcels"], v["result"]["buildings"], v["result"]["no_go"]);
     // route alternatives over the terrain
     let v = r.call("generate_route_alternatives", json!({"start":[573520.0,4139660.0],"end":[574280.0,4140380.0],"cell_m":10.0,"radius_pref_m":200.0,"spiral_m":40.0,"simplify_tol_m":15.0,"vpi_spacing_m":150.0,"interval_m":20.0,"shrink":0.9,"limits":{"max_fill_m":20.0,"max_cut_m":20.0,"max_wall_m":20.0,"source":"demo engineer input (TEST)"}}));
     for a in v["result"]["alternatives"].as_array().unwrap() {
@@ -138,7 +146,25 @@ pub fn run_units(out: &str, us: bool) -> Session {
             e["cost_proxy"].as_f64().unwrap_or(f64::NAN)
         );
     }
-    let rec = v["result"]["recommendation"]["recommended"].as_str().unwrap().to_string();
+    for a in v["result"]["alternatives"].as_array().unwrap() {
+        let w = &a["row"];
+        println!(
+            "ROW {}: take {:.0} m2 of {} parcels ({} full, {} partial), relocations {}, no-go hits {}, ROW cost {}, cost proxy + ROW {}",
+            a["name"].as_str().unwrap(),
+            w["row_area_m2"].as_f64().unwrap_or(f64::NAN) - w["row_area_outside_parcels_m2"].as_f64().unwrap_or(0.0),
+            w["parcels_affected"],
+            w["full_takes"],
+            w["partial_takes"],
+            w["relocations"],
+            w["no_go_hits"],
+            w["cost"].as_f64().map_or("unknown".into(), |c| format!("{c:.0}")),
+            a["total_with_row"].as_f64().map_or("unknown".into(), |c| format!("{c:.0}"))
+        );
+    }
+    let rk = &v["result"]["recommendation"];
+    println!("ranking without ROW: {}", rk["ranking_without_row"]);
+    println!("ranking with ROW: {}", rk["ranking_with_row"]);
+    let rec = rk["recommended"].as_str().unwrap().to_string();
     println!("recommended route: {rec}");
     let v = r.call("select_route", json!({"alternative": rec, "actor": "agent"}));
     let end = v["result"]["length_m"].as_f64().unwrap();
@@ -568,4 +594,48 @@ pub fn run_units(out: &str, us: bool) -> Session {
     println!("review report: {}", v["result"]["audit"]);
     println!("outputs in {out}/");
     r.s
+}
+
+/// Writes a SYNTHETIC parcel set (GeoJSON, UTM 10N metres) over the demo terrain. The lots,
+/// zoning, values, buildings and the no-go park are invented to exercise ROW scoring; they
+/// are not real cadastral or valuation data. Values are in notional "demo units".
+fn synthetic_parcels(out: &str) -> String {
+    let (x0, y0, dx, dy, nx, ny) = (573450.0, 4139550.0, 100.0, 100.0, 9, 10);
+    let mut feats = vec![];
+    let sq = |a: f64, b: f64, c: f64, d: f64| json!([[[a, b], [c, b], [c, d], [a, d], [a, b]]]);
+    for j in 0..ny {
+        for i in 0..nx {
+            let (a, b) = (x0 + i as f64 * dx, y0 + j as f64 * dy);
+            let id = format!("S-{}{:02}", (b'A' + i as u8) as char, j + 1);
+            if id == "S-E05" {
+                // replaced by the small residential subdivision below
+                continue;
+            }
+            let mut pr = json!({"id": id, "zoning": "AG", "land_rate": 1.0, "improvement_value": 0.0});
+            if id == "S-C06" {
+                pr = json!({"id": id, "zoning": "OPEN", "no_go": true, "no_go_reason": "public park (synthetic)"});
+            }
+            feats.push(json!({"type": "Feature", "properties": pr, "geometry": {"type": "Polygon", "coordinates": sq(a, b, a + dx, b + dy)}}));
+        }
+    }
+    // residential subdivision of cell S-E05 (x 573850-573950, y 4139950-4140050): R-1 has no
+    // land rate (the zoning fallback rate applies), R-2 has a house
+    let (ex, ey) = (573850.0, 4139950.0);
+    for (id, pr, g) in [
+        ("R-1", json!({"zoning": "RES", "improvement_value": 0.0}), sq(ex, ey, ex + 50.0, ey + 70.0)),
+        ("R-2", json!({"zoning": "RES", "land_rate": 8.0, "improvement_value": 120000.0}), sq(ex + 50.0, ey, ex + 100.0, ey + 70.0)),
+        ("S-E05N", json!({"zoning": "AG", "land_rate": 1.0, "improvement_value": 0.0}), sq(ex, ey + 70.0, ex + 100.0, ey + 100.0)),
+    ] {
+        let mut pr = pr;
+        pr["id"] = json!(id);
+        feats.push(json!({"type": "Feature", "properties": pr, "geometry": {"type": "Polygon", "coordinates": g}}));
+    }
+    for (id, parcel, g) in [("BLDG-1", "R-2", sq(ex + 75.0, ey + 58.0, ex + 95.0, ey + 68.0)), ("BLDG-2", "R-1", sq(ex + 10.0, ey + 5.0, ex + 25.0, ey + 15.0))]
+    {
+        feats.push(json!({"type": "Feature", "properties": {"id": id, "feature_type": "building", "parcel_id": parcel}, "geometry": {"type": "Polygon", "coordinates": g}}));
+    }
+    let gj = json!({"type": "FeatureCollection", "name": "SYNTHETIC demo parcels (not real data)", "features": feats});
+    let p = format!("{out}/synthetic-parcels.geojson");
+    std::fs::write(&p, serde_json::to_string_pretty(&gj).unwrap()).unwrap();
+    p
 }

@@ -26,14 +26,18 @@ pub struct AltSpec {
     /// headings briefly, with cut/fill absorbing the excess)
     #[serde(default)]
     pub hard_grade: bool,
+    /// weight on the imported parcels' ROW cost surface (land rate / median rate per metre of
+    /// path; no-go parcels impassable). 0 = off; only used when parcels are imported
+    #[serde(default)]
+    pub w_row: f64,
 }
 
 pub fn default_alts() -> Vec<AltSpec> {
     vec![
-        AltSpec { name: "A-direct".into(), w_grade: 1.0, w_terrain: 0.0, w_turn: 2.0, avoid_previous_m: 0.0, hard_grade: false },
-        AltSpec { name: "B-contour-following".into(), w_grade: 10.0, w_terrain: 0.3, w_turn: 2.0, avoid_previous_m: 0.0, hard_grade: false },
-        AltSpec { name: "C-separate-corridor".into(), w_grade: 4.0, w_terrain: 0.1, w_turn: 2.0, avoid_previous_m: 80.0, hard_grade: false },
-        AltSpec { name: "D-switchback".into(), w_grade: 200.0, w_terrain: 0.0, w_turn: 0.5, avoid_previous_m: 0.0, hard_grade: true },
+        AltSpec { name: "A-direct".into(), w_grade: 1.0, w_terrain: 0.0, w_turn: 2.0, avoid_previous_m: 0.0, hard_grade: false, w_row: 0.0 },
+        AltSpec { name: "B-contour-following".into(), w_grade: 10.0, w_terrain: 0.3, w_turn: 2.0, avoid_previous_m: 0.0, hard_grade: false, w_row: 0.0 },
+        AltSpec { name: "C-separate-corridor".into(), w_grade: 4.0, w_terrain: 0.1, w_turn: 2.0, avoid_previous_m: 80.0, hard_grade: false, w_row: 0.0 },
+        AltSpec { name: "D-switchback".into(), w_grade: 200.0, w_terrain: 0.0, w_turn: 0.5, avoid_previous_m: 0.0, hard_grade: true, w_row: 0.0 },
     ]
 }
 
@@ -119,6 +123,20 @@ pub fn least_cost(
     spec: &AltSpec,
     avoid: &[Vec<[f64; 2]>],
 ) -> crate::Result<(Vec<[f64; 2]>, f64, usize)> {
+    least_cost_row(g, start, end, gmax_pct, spec, avoid, None)
+}
+
+/// [`least_cost`] with an optional ROW cost surface per grid cell (normalised land rate, NaN =
+/// no-go). It is added to the per-metre cost with weight `spec.w_row`; NaN cells are impassable.
+pub fn least_cost_row(
+    g: &Grid,
+    start: [f64; 2],
+    end: [f64; 2],
+    gmax_pct: f64,
+    spec: &AltSpec,
+    avoid: &[Vec<[f64; 2]>],
+    row: Option<&[f64]>,
+) -> crate::Result<(Vec<[f64; 2]>, f64, usize)> {
     let (si, sj) = g.ij(start);
     let (ei, ej) = g.ij(end);
     let n = g.nx * g.ny * 16;
@@ -134,6 +152,16 @@ pub fn least_cost(
                 if avoid.iter().any(|a| dist_to_poly(p, a) < spec.avoid_previous_m) {
                     pen[j * g.nx + i] = 3.0;
                 }
+            }
+        }
+    }
+    let mut blocked = vec![false; g.nx * g.ny];
+    if let Some(rc) = row.filter(|_| spec.w_row > 0.0) {
+        for k in 0..pen.len() {
+            if rc[k].is_nan() {
+                blocked[k] = true;
+            } else {
+                pen[k] += spec.w_row * rc[k];
             }
         }
     }
@@ -169,6 +197,9 @@ pub fn least_cost(
             }
             let (ni, nj) = (ni as usize, nj as usize);
             let Some(z1) = g.z[nj * g.nx + ni] else { continue };
+            if blocked[nj * g.nx + ni] {
+                continue;
+            }
             let l = ((di * di + dj * dj) as f64).sqrt() * g.cell;
             // knight moves cross two cells: the midpoint elevation is the mean of those two,
             // and the steeper half governs (otherwise a one-cell ridge could be jumped)
@@ -384,6 +415,30 @@ mod tests {
         let (p, c, _) = least_cost(&g, [0.0, 0.0], [290.0, 0.0], 8.0, &default_alts()[0], &[]).unwrap();
         assert!((c - 290.0).abs() < 1e-6, "{c}");
         assert_eq!(simplify(&p, 1.0).len(), 2);
+    }
+    #[test]
+    fn row_cost_surface_detours_around_expensive_and_no_go_parcels() {
+        let g = Grid { x0: 0.0, y0: 0.0, cell: 10.0, nx: 30, ny: 30, z: vec![Some(0.0); 900] };
+        // an expensive block (10 × median rate) across the straight line, x 100-200, y 0-150
+        let mut rc = vec![1.0; 900];
+        for j in 0..=15 {
+            for i in 10..=20 {
+                rc[j * 30 + i] = 10.0;
+            }
+        }
+        let mut spec = default_alts()[0].clone();
+        let (p0, _, _) = least_cost_row(&g, [0.0, 0.0], [290.0, 0.0], 8.0, &spec, &[], Some(&rc)).unwrap();
+        assert!(p0.iter().all(|q| q[1] < 1.0), "w_row = 0 ignores the surface");
+        spec.w_row = 1.0;
+        let (p1, _, _) = least_cost_row(&g, [0.0, 0.0], [290.0, 0.0], 8.0, &spec, &[], Some(&rc)).unwrap();
+        assert!(p1.iter().any(|q| q[1] > 150.0), "path should go round the expensive block");
+        // the same block as no-go is impassable however small the weight
+        let nogo: Vec<f64> = rc.iter().map(|v| if *v > 5.0 { f64::NAN } else { 0.0 }).collect();
+        spec.w_row = 1e-6;
+        let (p2, _, _) = least_cost_row(&g, [0.0, 0.0], [290.0, 0.0], 8.0, &spec, &[], Some(&nogo)).unwrap();
+        for q in &p2 {
+            assert!(!(q[0] >= 100.0 && q[0] <= 200.0 && q[1] <= 150.0), "{q:?} inside no-go");
+        }
     }
     #[test]
     fn steep_ridge_is_avoided_by_grade_weighting() {

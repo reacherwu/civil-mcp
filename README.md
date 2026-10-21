@@ -2,7 +2,7 @@
 
 # civil-mcp
 
-**Road design you can hand to an AI agent, and check.** 65 Civil 3D-style design tools served as a local MCP server. Every result cites the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
+**Road design you can hand to an AI agent, and check.** 66 Civil 3D-style design tools served as a local MCP server. Every result cites the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
 
 [![CI](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -12,7 +12,7 @@
 
 ![The agent designing a road on USGS terrain. Every frame is drawn from files the demo wrote.](docs/media/civil-mcp-agent-design.gif)
 
-| **65** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set + **14**-sheet construction set | **274 / 274** independent re-checks within tolerance | **11** real-terrain runs on **9** surfaces |
+| **66** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set + **14**-sheet construction set | **304 / 304** independent re-checks within tolerance | **11** real-terrain runs on **9** surfaces |
 |:---:|:---:|:---:|:---:|:---:|
 
 <sub>Numbers come from a fresh run of the committed demo (US AASHTO profile, 50 km/h rural collector, 5,607 USGS 3DEP survey points near Palo Alto CA) and of `scripts/terrain_batch.py`, both on 2026-10-20 (PDT). Layered elastic pavement analysis matches the published KENPAVE example to ≤ 0.09 %.</sub>
@@ -36,7 +36,7 @@
 | Units | SI by default; switch to US customary (international or survey foot) and back at any time |
 | Terrain | GeoTIFF / COG, ESRI ASCII grid, LAS / LAZ, with CRS handling; 11 real-terrain runs documented |
 | Outputs | PDF, per-sheet DXF and SVG, LandXML 1.2 with cross sections, 3D DXF model, glTF / Blender scene, CSV / Markdown / HTML reports |
-| Verification | 274 independent Python re-checks, CI on every push, Rust unit and pipeline tests |
+| Verification | 304 independent Python re-checks, CI on every push, Rust unit and pipeline tests |
 | Not yet | built-in DWG writer (DWG needs ODA File Converter), a Civil 3D / 12d / BricsCAD open test, end-to-end tests in MCP clients, remote (HTTP) transport |
 
 ## Works with (MCP clients)
@@ -51,7 +51,7 @@ civil-mcp is a standard [Model Context Protocol](https://modelcontextprotocol.io
 | [Codex](https://developers.openai.com/codex/mcp) (CLI / IDE extension / ChatGPT desktop app) | `codex mcp add civil -- /path/to/civil-mcp`, or `~/.codex/config.toml` → `[mcp_servers.civil]` | per docs, not yet tested end to end |
 | [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/) | `gemini mcp add civil /path/to/civil-mcp`, or `~/.gemini/settings.json` → `mcpServers` | per docs, not yet tested end to end |
 | [VS Code (GitHub Copilot agent mode)](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) | `MCP: Add Server` → *Command (stdio)*, or `.vscode/mcp.json` → `servers` | per docs, not yet tested end to end |
-| Raw JSON-RPC over stdio | `initialize` → `tools/list` | **tested**: protocol `2024-11-05`, 65 tools listed. The CI test `crates/civil-mcp/tests/stdio.rs` drives a UK-profile session over stdio |
+| Raw JSON-RPC over stdio | `initialize` → `tools/list` | **tested**: protocol `2024-11-05`, 66 tools listed. The CI test `crates/civil-mcp/tests/stdio.rs` drives a UK-profile session over stdio |
 
 **What does not work yet**
 
@@ -223,6 +223,32 @@ A least-cost search on a 10 m grid produces four corridors: direct, contour-foll
 | D-switchback | 1,064 m | 0 | 40,433 / 68,291 | 9,787 | 450,179 |
 
 Rule: fewest mandatory failures, then lowest cost proxy. Rates are placeholders. **Tools:** `generate_route_alternatives`, `select_route` · **Checked:** route costs re-derived with SciPy `csgraph` Dijkstra to 1e-6.
+
+**Parcels and right-of-way (ROW) cost.** `import_parcels` reads parcel boundaries from GeoJSON or an ESRI Shapefile (.shp + .dbf), with an optional CSV of values joined by parcel id. Each parcel can carry a land value or a rate per m², ha, acre or SF, an improvement value, a zoning class and a no-go flag (protected land, cemetery, park). Buildings are features with `feature_type: "building"`. For every alternative, the ROW is the daylight lines plus a buffer. The tool intersects it with the parcels and reports:
+
+- the take per parcel, as full or partial; a take is full when a building is inside the ROW or the remnant falls below the threshold you set;
+- relocations (buildings hit);
+- the acquisition cost: land × rate, plus improvements on full takes, plus the severance and admin factors you enter.
+
+You can also enter a fallback rate for each zoning class. If a parcel has no value, no rate and no fallback, the ROW cost of every alternative crossing it is reported as unknown (`null`, with the known part as a lower bound). It is never reported as zero, and an unknown cost keeps ROW out of the ranking. When parcels are loaded, the ranking puts alternatives that cross a no-go parcel last; you can switch this to a penalty. The rest are ranked by weighted cost proxy + ROW cost + relocation penalty, and the tool returns the ranking both without and with ROW. Setting `w_row` on an alternative adds the parcels' land rates to its least-cost search, so the path avoids expensive parcels; no-go parcels become impassable. Outputs:
+
+- `row-takes.csv`;
+- a ROW table in the design report;
+- parcel lines with hatched take areas on the construction plan sheets;
+- `<Parcels>` in LandXML (XSD-valid);
+- PARCEL and ROW-TAKE layers in the 3D CAD model;
+- parcel and ROW outlines in the Blender scene (hidden in renders unless you pass `--show-parcels`).
+
+The demo uses a **synthetic parcel set**, written by the demo itself to `synthetic-parcels.geojson`. It is invented and is not real cadastral or valuation data. It has 1 ha agricultural lots at 1.0 per m², a small residential subdivision (one lot priced by the RES fallback rate of 8.0 per m², one lot at 8.0 per m² with a house valued at 120,000) and a no-go park. Values are notional "demo units", and ROW is added to the placeholder cost proxy as if both were in the same currency. Options used: 3 m buffer, a full take when the remnant is under 20 % of the parcel, admin 10 %, severance 25 % on partial takes.
+
+| Alternative | ROW take | Parcels (full / partial) | Relocations | No-go hit | ROW cost | Cost proxy + ROW |
+|---|---:|---:|---:|---|---:|---:|
+| **A-direct (selected)** | 33,262 m² | 21 (0 / 21) | 0 | | 45,735 | 363,511 |
+| B-contour-following | 34,227 m² | 21 (1 / 20) | 1 | | 222,265 | 568,843 |
+| C-separate-corridor | 27,669 m² | 20 (0 / 20) | 0 | park S-C06 | unknown (known part 34,835) | unknown |
+| D-switchback | 31,577 m² | 18 (0 / 18) | 0 | | 50,306 | 500,484 |
+
+Ranking without ROW: A > B > D > C. With ROW: A > D > B > C. On B, the house is inside the ROW, so its lot becomes a full take (162,800 with improvements and admin) and B drops behind D. C crosses the no-go park, so it ranks last whatever it costs. **Tools:** `import_parcels`, `generate_route_alternatives` · **Checked:** take areas re-derived by rasterising the ROW polygon × parcels at 0.5 m, take type, cost formula, relocations and the ranking re-derived in Python (`independent_check.py`).
 
 ### 3 · Horizontal alignment, spirals and superelevation
 
@@ -698,7 +724,7 @@ Full record: **[docs/VALIDATION.md](docs/VALIDATION.md)**. Every row runs in [CI
 
 | Check | What is compared | Result |
 |---|---|---|
-| Independent re-checks, base ([`independent_check.py`](scripts/independent_check.py)) | areas, volumes, mass haul, superelevation and runoff, clothoids, Manning/HGL, walls, route costs, pavement, HEC-15, BoQ, LandXML XSD and cross sections, DXF audit, 3D CAD model, glTF scene (incl. pavement layer thicknesses, trimmed ground on the survey surface) | **123 / 123** OK |
+| Independent re-checks, base ([`independent_check.py`](scripts/independent_check.py)) | areas, volumes, mass haul, superelevation and runoff, clothoids, Manning/HGL, walls, route costs, pavement, HEC-15, BoQ, LandXML XSD and cross sections, DXF audit, 3D CAD model, glTF scene (incl. pavement layer thicknesses, trimmed ground on the survey surface), ROW take areas, costs and ranking, LandXML parcels | **153 / 153** OK |
 | Independent re-checks, v5 ([`independent_check_v5.py`](scripts/independent_check_v5.py)) | hydrology, culverts (HDS-5), slope stability, subsurface drainage, walls, land, locality | **70 / 70** OK |
 | Independent re-checks, v6 ([`independent_check_v6.py`](scripts/independent_check_v6.py)) | layered elastic vs PyMastic and KENPAVE, MSE, wall shear/crack/footing, signals, capacity, rigid, landscape, locality | **81 / 81** OK |
 | Layered elastic vs published KENPAVE 3-layer example | deflection, σz, εr, εz | ≤ **0.088 %** |
@@ -727,6 +753,7 @@ The re-check scripts share no code with the Rust tools. They re-derive each valu
 - **Copyrighted tables are not shipped.** Values such as Green Book side friction, TAC, Austroads, CD 226 figures and AGPT02 equivalent-stress tables are engineer inputs. Transcribed values must be checked against the edition in use.
 - **Geotechnical inputs are placeholders.** Slope, wall and foundation soil parameters stand in for a ground-investigation report. MSE internal stability, global stability and detailing belong to the supplier and the geotechnical engineer.
 - **One full demo site.** The complete design, drawings and independent re-checks come from one terrain sample (Palo Alto). The 11 real-terrain runs stop at route alternatives.
+- **ROW cost is a screening estimate from your data.** civil-mcp has no valuation model and does not appraise. Every land value, rate, improvement value, fallback rate and admin or severance factor is user input, and missing values make the cost unknown. Takes come from the corridor daylight lines plus a buffer; they do not come from a legal ROW plan or a boundary survey. Partial-take remnants are judged by area only (no shape, access or zoning rules). Parcel geometry must be in the terrain's projected CRS (m, ft or US survey ft). Polygon holes count in areas but are not written to LandXML, and parcel lines in the CAD model and Blender scene are draped at their vertices only. The demo parcels are synthetic.
 - **Route search is approximate.** It runs on a grid (10 m or the import cell) and its cost proxy is relative. Earthwork limits are screening defaults.
 - **Runoff gaps.** The tangent runout before the first curve and after the last one is not checked against the alignment ends (demo: first curve starts 9.6 m from the start, runout 10.8 m; reported as a note). Hairpins with no room for spirals become simple curves whose runoff is covered by the overlap check only. The Python runoff re-check covers the AASHTO profile only.
 - **Bridges are out of scope.** They are handed to a structures specialist (`specialist_handoffs`).

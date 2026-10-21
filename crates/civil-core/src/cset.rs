@@ -52,6 +52,9 @@ pub struct Ctx<'a> {
     pub cor: &'a Corridor,
     pub boq: Vec<crate::deliver::BoqRow>,
     pub inp: &'a Inputs,
+    /// imported parcels (import_parcels) and the ROW take of the current corridor
+    pub parcels: Option<&'a crate::parcels::ParcelSet>,
+    pub take: Option<crate::parcels::RowResult>,
 }
 
 /// Standard metric plan scales and US engineer's scales used for construction plans.
@@ -128,7 +131,11 @@ pub fn plan(c: &Ctx) -> Plan {
         missing.push("right-of-way offsets (row_left_m / row_right_m)".to_string());
     }
     if c.inp.property_lines.is_empty() {
-        missing.push("property lines".to_string());
+        missing.push(if c.parcels.is_some() {
+            "property lines (boundary survey; the imported parcels are drawn for ROW screening only)".to_string()
+        } else {
+            "property lines".to_string()
+        });
     }
     if c.inp.control.is_empty() {
         missing.push("survey control points".to_string());
@@ -161,7 +168,7 @@ fn sec_at(c: &Corridor, s: f64) -> Option<&Section> {
 
 fn layers(d: &mut Drawing) {
     crate::sheet::base(d);
-    for (l, c) in [("ROW", 6), ("PARCEL", 8), ("DETAIL", 7), ("SUBGRADE", 3)] {
+    for (l, c) in [("ROW", 6), ("PARCEL", 8), ("ROW-TAKE", 1), ("DETAIL", 7), ("SUBGRADE", 3)] {
         d.layer(l, c);
     }
 }
@@ -201,6 +208,54 @@ pub fn plan_profile(c: &Ctx, p: &Plan, k: usize, ids: &[String]) -> Drawing {
             d.poly("PARCEL", v.iter().map(|q| [q[0].clamp(PX0, PX1), q[1].clamp(py0, py1)]).collect());
             if let Some(q) = v.iter().find(|q| inside(**q)) {
                 d.text("PARCEL", [q[0] + 1.0, q[1] + 1.0], 2.0, &format!("PROPERTY {}", pl.id));
+            }
+        }
+    }
+    // imported parcels (user data) and the ROW take of the current corridor, hatched
+    if let Some(ps) = c.parcels {
+        let clip = |a: [f64; 2], b: [f64; 2]| inside(a) && inside(b);
+        for p in &ps.parcels {
+            let mut shown = false;
+            for r in &p.rings {
+                let v: Vec<[f64; 2]> = r.iter().map(|q| tp(q[0], q[1])).collect();
+                for k in 0..v.len() {
+                    let (a, b) = (v[k], v[(k + 1) % v.len()]);
+                    if clip(a, b) {
+                        d.line("PARCEL", a, b);
+                        shown = true;
+                    }
+                }
+            }
+            if shown {
+                let r = &p.rings[0];
+                let cx = r.iter().map(|q| q[0]).sum::<f64>() / r.len() as f64;
+                let cy = r.iter().map(|q| q[1]).sum::<f64>() / r.len() as f64;
+                let q = tp(cx, cy);
+                if inside(q) {
+                    let z = p.zoning.as_deref().map_or(String::new(), |z| format!(" {z}"));
+                    d.text("PARCEL", q, 2.0, &format!("PARCEL {}{}{}", p.id, z, if p.no_go { " NO-GO" } else { "" }));
+                }
+            }
+        }
+        if let Some(t) = &c.take {
+            let fp = vec![t.polygon.clone()];
+            let sp = 2.5 / sc;
+            for tk in &t.takes {
+                if let Some(p) = ps.parcels.iter().find(|p| p.id == tk.parcel_id) {
+                    for s in crate::parcels::hatch(&p.rings, &fp, sp) {
+                        let (a, b) = (tp(s[0][0], s[0][1]), tp(s[1][0], s[1][1]));
+                        if clip(a, b) {
+                            d.line("ROW-TAKE", a, b);
+                        }
+                    }
+                }
+            }
+            let v: Vec<[f64; 2]> = t.polygon.iter().map(|q| tp(q[0], q[1])).collect();
+            for k in 0..v.len() {
+                let (a, b) = (v[k], v[(k + 1) % v.len()]);
+                if clip(a, b) {
+                    d.line("ROW-TAKE", a, b);
+                }
             }
         }
     }

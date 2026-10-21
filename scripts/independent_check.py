@@ -676,5 +676,84 @@ if bas_.get("standard") == "US_AASHTO_2018" and sel_:
 else:
     print("info: runoff re-check covers US_AASHTO_2018 runs only; skipped")
 
+# ---------- ROW screening: take areas by rasterising the ROW polygon x parcels (0.5 m cells) ----------
+imp_ = [e for e in LOG if e["tool"] == "import_parcels"]
+ra_ = load("route-alternatives.json") if os.path.exists(f"{out}/route-alternatives.json") else None
+if imp_ and ra_ and any(a.get("row") for a in ra_["alternatives"]):
+    ia_ = imp_[-1]["args"]
+    ro_ = {"buffer_m": 0.0, "min_remnant_m2": 0.0, "min_remnant_fraction": 0.0, "admin_factor": 0.0, "severance_factor": 0.0, **ia_.get("row", {})}
+    gj_ = json.load(open(os.path.join(out, os.path.basename(ia_["path"]))))
+    unit_ = {"m2": 1.0, "ha": 1e4, "acre": 4046.8564224, "sf": 0.09290304}[ia_.get("rate_unit", "m2")]
+    fb_ = {k: v / unit_ for k, v in ia_.get("fallback_rates", {}).items()}
+    def area_(r):
+        r = np.asarray(r, float); return 0.5 * float(np.dot(r[:-1, 0], r[1:, 1]) - np.dot(r[1:, 0], r[:-1, 1]))
+    par_, bld_ = {}, []
+    for f in gj_["features"]:
+        pr = f["properties"]; ring = f["geometry"]["coordinates"][0]
+        if pr.get("feature_type") == "building":
+            bld_.append((pr["id"], pr.get("parcel_id"), Path(ring)))
+        else:
+            par_[pr["id"]] = (pr, Path(ring), abs(area_(ring)))
+    def rate_(pr, a):
+        if pr.get("land_rate") is not None: return pr["land_rate"] / unit_
+        if pr.get("land_value") is not None: return pr["land_value"] / a
+        return fb_.get(pr.get("zoning"))
+    h_ = 0.5
+    for alt in ra_["alternatives"]:
+        w = alt.get("row")
+        if not w: continue
+        poly = np.asarray(w["polygon"]); rp = Path(poly)
+        x0, y0 = poly.min(0); x1, y1 = poly.max(0)
+        X, Y = np.meshgrid(np.arange(x0 + h_ / 2, x1, h_), np.arange(y0 + h_ / 2, y1, h_))
+        P = np.c_[X.ravel(), Y.ravel()]; P = P[rp.contains_points(P)]
+        report(f"ROW {alt['name']}: ROW polygon area (m², shoelace vs raster)", w["row_area_m2"], len(P) * h_ * h_, 1.0)
+        hit_ = {b[0]: b[1] for b in bld_ if b[2].contains_points(P).any()}
+        tot_, unknown_, worst_, nfull_, nref_, cost_bad_ = 0.0, False, 0.0, 0, 0, 0
+        sum_ours_, sum_ref_ = 0.0, 0.0
+        for t in w["takes"]:
+            pr, pp, pa = par_[t["parcel_id"]]
+            a_ref = float(pp.contains_points(P).sum()) * h_ * h_
+            sum_ours_ += t["take_area_m2"]; sum_ref_ += a_ref
+            # raster error bound: half a cell along the take perimeter (approximated as 4·sqrt(area) + 2 x ROW crossing)
+            worst_ = max(worst_, abs(t["take_area_m2"] - a_ref) / (0.5 * h_ * (4 * math.sqrt(max(a_ref, 1.0))) + 1.0))
+            rem = pa - t["take_area_m2"]
+            bh = [b for b, p in hit_.items() if p == t["parcel_id"]]
+            full = bool(bh) or (ro_["min_remnant_m2"] > 0 and rem < ro_["min_remnant_m2"]) or (ro_["min_remnant_fraction"] > 0 and rem < ro_["min_remnant_fraction"] * pa)
+            nfull_ += int(bool(t["full_take"])); nref_ += int(full)
+            if bool(t["full_take"]) != full: cost_bad_ += 1
+            r = rate_(pr, pa)
+            if r is None or (full and pr.get("improvement_value") is None):
+                if t["cost"] is not None: cost_bad_ += 1
+                unknown_ = True; continue
+            land = r * (pa if full else t["take_area_m2"])
+            c = (land + ((pr.get("improvement_value") or 0.0) if full else 0.0) + (0 if full else ro_["severance_factor"] * land)) * (1 + ro_["admin_factor"])
+            if t["cost"] is None or abs(t["cost"] - c) > 1e-6 * max(1.0, c): cost_bad_ += 1
+            tot_ += c
+        report(f"ROW {alt['name']}: total take area over {len(w['takes'])} parcels (m², raster 0.5 m)", sum_ours_, sum_ref_, 1.0)
+        report(f"ROW {alt['name']}: worst per-parcel take-area difference / raster error bound (<= 1)", min(worst_, 99.0), 0.0, 1.0, "", rel=False)
+        report(f"ROW {alt['name']}: full takes (building hit or remnant below threshold)", float(nfull_), float(nref_), 0, "", rel=False)
+        report(f"ROW {alt['name']}: takes whose type or cost (land + improvements + severance)(1 + admin) differs", float(cost_bad_), 0.0, 0, "", rel=False)
+        report(f"ROW {alt['name']}: relocations (buildings in the ROW)", float(w["relocations"]), float(len(hit_)), 0, "", rel=False)
+        if unknown_:
+            report(f"ROW {alt['name']}: cost unknown (null 1 = yes), known part checked", float(w["cost"] is None), 1.0, 0, "", rel=False)
+        else:
+            report(f"ROW {alt['name']}: ROW cost (sum of takes)", w["cost"], tot_, 1e-6)
+    # ranking re-derived from the per-alternative numbers
+    rk = ra_["recommendation"]
+    nogo = lambda a: rk["row_options"]["no_go"] == "infeasible" and bool(a["row"]["no_go_hits"])
+    feas = [a for a in ra_["alternatives"] if not nogo(a)]
+    known = all(a["row"]["cost"] is not None for a in feas)
+    o_ = rk["row_options"]
+    sc = lambda a: (nogo(a), a["evaluation"]["geometry_mandatory_failures"], o_["w_construction"] * a["evaluation"]["cost_proxy"] + (o_["w_row"] * (a["row"]["cost"] or 0.0) if known else 0) + o_["relocation_penalty"] * a["row"]["relocations"])
+    ref_rank = [a["name"] for a in sorted(ra_["alternatives"], key=sc)]
+    ok_ = ref_rank == rk["ranking_with_row"]
+    report("ROW ranking with ROW re-derived (1 = same order)", float(ok_), 1.0, 0, "", rel=False)
+    if ok_: print("info: ranking with ROW", " > ".join(ref_rank))
+    lx_ = glob.glob(f"{out}/*.xml")
+    for f in lx_:
+        n_ = len(ET.parse(f).getroot().findall(".//{http://www.landxml.org/schema/LandXML-1.2}Parcel"))
+        if n_:
+            report(f"LandXML {os.path.basename(f)}: Parcel elements = imported parcels", float(n_), float(len(par_)), 0, "", rel=False)
+
 print(f"\n{len(rows)} checks, {len(fails)} failed")
 sys.exit(1 if fails else 0)

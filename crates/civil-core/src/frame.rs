@@ -515,6 +515,7 @@ fn layer_def(l: &str) -> (&'static str, &'static str, char, usize, &'static str)
         "ROUTE-C" => ("C-ROUT-ALTC", "RouteC", 'M', 1, "CONTINUOUS"),
         "ROUTE-SELECTED" => ("C-ROUT-SELD", "RouteSelected", 'M', 3, "CONTINUOUS"),
         "ROW" => ("V-PROP-ROWL", "RightOfWay", 'M', 2, "DASHDOT"),
+        "ROW-TAKE" => ("V-PROP-TAKE", "RightOfWayTake", 'H', 0, "CONTINUOUS"),
         "SIGHT" => ("C-ROAD-SGHT", "SightLine", 'M', 1, "DASHED"),
         "SIGN" => ("C-SIGN-POST", "Signs", 'M', 2, "CONTINUOUS"),
         "SIGNAL" => ("E-SIGL-HEAD", "Signals", 'M', 2, "CONTINUOUS"),

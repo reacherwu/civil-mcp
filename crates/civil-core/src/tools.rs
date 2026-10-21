@@ -46,6 +46,9 @@ pub struct Session {
     pub route: Option<Value>,
     pub route_inputs: Vec<(String, crate::align::AlignmentInput)>,
     pub route_choice: Option<Value>,
+    /// imported parcels and ROW options (import_parcels)
+    pub parcels: Option<crate::parcels::ParcelSet>,
+    pub row_opts: Option<crate::parcels::RowOpts>,
     pub optimisation: Option<crate::workflow::OptResult>,
     pub protection: Option<crate::protection::Protection>,
     pub earthwork: Option<quantities::Earthwork>,
@@ -101,6 +104,7 @@ pub fn tool_list() -> Value {
       {"name":"verify_audit_log","description":"Recompute the hash chain of the audit log and report the first tampered entry, if any.","inputSchema":obj(json!({}),&[])},
       {"name":"design_pavement","description":"Pavement thickness design using the method of the project's standards profile. US/CA: AASHTO 1993 flexible (SN with layered analysis) or rigid (D). AU/NZ: Austroads AGPT02 empirical granular chart (Figure 8.4 equation). UK: DMRB CD 226 (Eq 2.24 HBGM asphalt, Eq 2.43 URC; Figure 2.20 asphalt-base thickness entered by the engineer). Optional traffic block computes design traffic from AADT. Layers feed create_assembly when it has no pavement.","inputSchema":obj(json!({"kind":{"type":"string","enum":["flexible","rigid"]},"subgrade_cbr":num,"subgrade_mr_mpa":num,"design_traffic":num,"traffic":{"type":"object","description":"aadt, hv_frac, esa_per_hv, growth, years, dir_factor, lane_factor"},"reliability_zr":num,"s0":num,"p0":num,"pt":num,"layers":arr(json!({"type":"object"})),"sc_mpa":num,"ec_mpa":num,"j":num,"cd":num,"k_mpa_m":num,"surfacing_mm":num,"base_mm":num,"foundation_class":num,"uk_type":s,"uk_chart_asphalt_mm":num,"uk_chart_hbgm_mm":num,"uk_rc_mpa":num,"uk_tied_shoulder":b}),&["kind","subgrade_cbr"])},
       {"name":"generate_route_alternatives","description":"Route/corridor selection. Least-cost paths over the terrain grid between start and end, with heading-constrained moves and a penalty on grades above the profile maximum. Several weightings or a separate-corridor penalty give distinct alternatives. Each path is simplified to PIs and given fitted radii. Each alternative is then built in full (alignment, superelevation, suggested profile, corridor with the current assembly) and compared on length, radii, max grade, cut/fill, imbalance, walls, mandatory failures and a unit-rate cost proxy. Returns the agent's recommendation with reasons.","inputSchema":obj(json!({"hairpin_min_radius_m":num,"limits":{"type":"object","properties":{"max_fill_m":num,"max_cut_m":num,"max_wall_m":num,"source":s}},"allow_infeasible":b,"start":{"type":"array","items":num},"end":{"type":"array","items":num},"cell_m":num,"radius_pref_m":num,"spiral_m":num,"simplify_tol_m":num,"vpi_spacing_m":num,"interval_m":num,"shrink":num,"rates":{"type":"object"},"alternatives":arr(json!({"type":"object"}))}),&["start","end"])},
+      {"name":"import_parcels","description":"Import parcel boundaries for right-of-way (ROW) screening of route alternatives: GeoJSON (Polygon/MultiPolygon) or ESRI Shapefile (.shp polygons + .dbf attributes), with an optional values CSV joined by parcel id. Per-parcel properties (renamable with field_map): id, land_value (total) or land_rate (per rate_unit area), improvement_value (buildings etc., paid on full takes), zoning, no_go (protected land, cemetery, park ...) and no_go_reason. Features with feature_type 'building' (and optional parcel_id) are buildings: a building inside the ROW makes its parcel a full take and counts as a relocation. fallback_rates gives a user rate per zoning class; nothing is defaulted, and a parcel without value, rate or fallback makes the ROW cost unknown (null), never zero. row sets the ROW buffer beyond the daylight lines, remnant thresholds for full takes, admin and severance factors, ranking weights and the no-go rule. generate_route_alternatives then scores every alternative on ROW takes and cost; set w_row on an alternative to make its search avoid expensive parcels. User data only: no valuation model, not an appraisal.","inputSchema":obj(json!({"path":s,"values_csv":s,"field_map":{"type":"object"},"rate_unit":{"type":"string","enum":["m2","ha","acre","sf"]},"coord_unit":{"type":"string","enum":["m","ft","usft"]},"fallback_rates":{"type":"object"},"currency":s,"row":{"type":"object","properties":{"buffer_m":num,"min_remnant_m2":num,"min_remnant_fraction":num,"admin_factor":num,"severance_factor":num,"w_construction":num,"w_row":num,"relocation_penalty":num,"no_go":{"type":"string","enum":["infeasible","penalty"]},"no_go_penalty":num}}}),&["path"])},
       {"name":"select_route","description":"Adopt one route alternative as the alignment and record the choice and reasons in the audit log. actor 'agent' records a recommendation; 'engineer:<name>' records the engineer's decision.","inputSchema":obj(json!({"alternative":s,"actor":s,"reasons":arr(s.clone())}),&["alternative"])},
       {"name":"optimize_profile","description":"Earthwork-balance optimiser. Coordinate descent on interior VPI elevations of the current profile to minimise |cut·shrink − fill| + w_volume·(cut+fill) + w_wall·wall concrete + w_haul·haul moment. Every candidate must pass all mandatory grade and vertical-curve checks. Adopts the result; before/after values are logged.","inputSchema":obj(json!({"interval_m":num,"shrink":num,"w_volume":num,"w_wall":num,"w_haul":num,"steps_m":arr(num.clone())}),&[])},
       {"name":"design_protection","description":"Protection works on the built corridor. Roadside hazards inside the engineer-entered clear zone (critical fill slopes above the warrant height, wall faces and drop-offs) give barrier runs with length of need X = L_R(L_A − L_2)/L_A. Ditch linings are chosen by HEC-15 shear stress (bare soil → engineer linings → gravel mulch → riprap D50 by Eq 6.8 → concrete). Slope-protection areas are reported by slope class.","inputSchema":obj(json!({"clear_zone_m":num,"clear_zone_source":s,"recoverable_h":num,"traversable_h":num,"embankment_warrant_height_m":num,"barrier_offset_m":num,"runout_length_m":num,"barrier_type":s,"runoff_c":num,"intensity_mm_h":num,"catchment_width_m":num,"soil_tau_p":num,"soil_name":s,"extra_linings":arr(json!({"type":"object"})),"riprap_sg":num,"seed_flatter_than_h":num,"blanket_flatter_than_h":num}),&["clear_zone_m","recoverable_h","traversable_h","embankment_warrant_height_m","barrier_offset_m","runout_length_m","runoff_c","intensity_mm_h","catchment_width_m","soil_tau_p"])},
@@ -122,6 +126,7 @@ fn f(v: &Value, k: &str) -> Option<f64> {
 
 const DESIGN_TOOLS: &[&str] = &[
     "import_terrain",
+    "import_parcels",
     "set_design_basis",
     "design_pavement",
     "select_route",
@@ -549,6 +554,7 @@ impl Session {
                     networks: self.networks.iter().collect(),
                     corridor: self.corridor.as_ref(),
                     epsg: self.crs_epsg,
+                    parcels: self.parcels.as_ref(),
                 });
                 let h = self.write(&file, xml.as_bytes())?;
                 let out = json!({"file": file, "sha256": h, "bytes": xml.len()});
@@ -563,7 +569,9 @@ impl Session {
                 let cor = self.corridor.as_ref().ok_or("build_corridor first")?;
                 let inp: crate::cset::Inputs = serde_json::from_value(a.clone()).map_err(|e| e.to_string())?;
                 let (boq, _) = crate::deliver::boq(self);
-                let c = crate::cset::Ctx { tin: t, al, pr, cor, boq, inp: &inp };
+                let ro = self.row_opts.clone().unwrap_or_default();
+                let take = self.parcels.as_ref().map(|ps| ps.assess(&crate::parcels::row_polygon(cor, ro.buffer_m), &ro));
+                let c = crate::cset::Ctx { tin: t, al, pr, cor, boq, inp: &inp, parcels: self.parcels.as_ref(), take };
                 let p = crate::cset::plan(&c);
                 let (al_a, al_b) = (al.start_station().max(pr.start()), al.end_station().min(pr.end()));
                 let mut titles: Vec<String> = vec!["Survey control and alignment data".into()];
@@ -681,6 +689,22 @@ impl Session {
                     "ground_trimmed_mesh": self.corridor.as_ref().map(|_| crate::gltf::GROUND_TRIMMED),
                     "closure_mesh": self.corridor.as_ref().map(|_| crate::gltf::CLOSURE),
                     "alternatives": alt_eval, "selected": self.route_choice.as_ref().map(|r| r["selected"].clone())});
+                let mut meta = meta;
+                if let Some(ps) = &self.parcels {
+                    // parcel lines and the ROW polygon of the current corridor, vertices draped on EG (local metres)
+                    let drape = |r: &[[f64; 2]]| -> Vec<[f64; 3]> {
+                        r.iter().map(|q| [q[0] - o[0], q[1] - o[1], t.elevation_at(q[0], q[1]).unwrap_or(o[2]) - o[2]]).collect()
+                    };
+                    meta["parcels"] = json!(ps
+                        .parcels
+                        .iter()
+                        .map(|p| json!({"id": p.id, "zoning": p.zoning, "no_go": p.no_go, "rings": p.rings.iter().map(|r| drape(r)).collect::<Vec<_>>()}))
+                        .collect::<Vec<_>>());
+                    meta["parcels_note"] = json!("user data (import_parcels); vertices draped on existing ground; hidden in renders unless --show-parcels");
+                    if let Some(c) = &self.corridor {
+                        meta["row_polygon"] = json!(drape(&crate::parcels::row_polygon(c, self.row_opts.as_ref().map_or(0.0, |r| r.buffer_m))));
+                    }
+                }
                 let glb = crate::gltf::to_glb(&sc, json!({"georeference": meta["origin"]}));
                 let mut files = json!({});
                 files["scene.glb"] = json!(self.write("scene.glb", &glb)?);
@@ -711,6 +735,11 @@ impl Session {
                     pr: self.profile.as_ref(),
                     cor: self.corridor.as_ref(),
                     nets: self.networks.iter().collect(),
+                    parcels: self.parcels.as_ref(),
+                    row_polygon: match (&self.parcels, &self.corridor) {
+                        (Some(_), Some(c)) => Some(crate::parcels::row_polygon(c, self.row_opts.as_ref().map_or(0.0, |o| o.buffer_m))),
+                        _ => None,
+                    },
                 };
                 let (dxf, st) = crate::cad3d::write(&m, &rf.profile, &map);
                 let h = self.write(&file, dxf.as_bytes())?;
@@ -1347,6 +1376,48 @@ impl Session {
                 self.pavement = Some(pd);
                 Ok(json!({"result": out, "traffic": self.traffic, "provenance": prov}))
             }
+            "import_parcels" => {
+                let p = a["path"].as_str().ok_or("path required")?;
+                let field_map: std::collections::BTreeMap<String, String> = match a.get("field_map").filter(|v| !v.is_null()) {
+                    Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("field_map: {e}"))?,
+                    None => Default::default(),
+                };
+                let fallback: std::collections::BTreeMap<String, f64> = match a.get("fallback_rates").filter(|v| !v.is_null()) {
+                    Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("fallback_rates: {e}"))?,
+                    None => Default::default(),
+                };
+                let o = crate::parcels::ImportOpts {
+                    field_map,
+                    rate_unit: a["rate_unit"].as_str().unwrap_or("m2").to_string(),
+                    coord_unit: a["coord_unit"].as_str().unwrap_or("m").to_string(),
+                    fallback,
+                    currency: a["currency"].as_str().unwrap_or("").to_string(),
+                };
+                let ps = crate::parcels::import(std::path::Path::new(p), a["values_csv"].as_str().map(std::path::Path::new), &o)?;
+                let ro: crate::parcels::RowOpts = match a.get("row").filter(|v| !v.is_null()) {
+                    Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("row: {e}"))?,
+                    None => Default::default(),
+                };
+                if !matches!(ro.no_go.as_str(), "infeasible" | "penalty") {
+                    return Err("row.no_go: use 'infeasible' or 'penalty'".into());
+                }
+                let unrated: Vec<&str> = ps.parcels.iter().filter(|q| ps.rate(q).0.is_none()).map(|q| q.id.as_str()).collect();
+                let no_impr: Vec<&str> = ps.parcels.iter().filter(|q| q.improvement_value.is_none()).map(|q| q.id.as_str()).collect();
+                let area: f64 = ps.parcels.iter().map(|q| q.area_m2).sum();
+                let zon: std::collections::BTreeSet<&str> = ps.parcels.iter().filter_map(|q| q.zoning.as_deref()).collect();
+                let out = json!({
+                    "parcels": ps.parcels.len(), "buildings": ps.buildings.len(), "total_area_m2": area, "total_area_ha": area / 10000.0,
+                    "zoning_classes": zon, "no_go": ps.parcels.iter().filter(|q| q.no_go).map(|q| json!({"id": q.id, "reason": q.no_go_reason})).collect::<Vec<_>>(),
+                    "parcels_without_rate": unrated, "parcels_without_improvement_value": no_impr,
+                    "fallback_zoning_classes": ps.fallback_rate_m2.keys().collect::<Vec<_>>(), "currency": ps.currency, "row": ro, "warnings": ps.warnings,
+                    "note": "Parcel values are user data. civil-mcp has no valuation model; ROW cost is a screening estimate from the entered values, not an appraisal. Parcels without a usable rate make ROW cost unknown for alternatives that touch them; full takes need an improvement value (enter 0 for vacant land)."
+                });
+                let prov =
+                    self.log("agent", name, a, &out, &["user-supplied parcel data (GeoJSON / ESRI Shapefile technical description, July 1998)".into()])?;
+                self.parcels = Some(ps);
+                self.row_opts = Some(ro);
+                Ok(json!({"result": out, "provenance": prov}))
+            }
             "generate_route_alternatives" => {
                 let b = self.need_basis()?.clone();
                 let (t, st) = self.tin.as_ref().ok_or("build_surface first")?;
@@ -1378,11 +1449,16 @@ impl Session {
                     Some(v) => serde_json::from_value(v.clone()).map_err(|e| e.to_string())?,
                     None => crate::workflow::Limits::default(),
                 };
+                let ro = self.row_opts.clone().unwrap_or_default();
+                let row_surface = match &self.parcels {
+                    Some(ps) if alts.iter().any(|s| s.w_row > 0.0) => Some(ps.cost_surface(&grid)),
+                    _ => None,
+                };
                 let mut found: Vec<Vec<[f64; 2]>> = vec![];
                 let mut rows = vec![];
                 self.route_inputs.clear();
                 for spec in &alts {
-                    let (path, cost, nexp) = match crate::route::least_cost(&grid, s0, s1, gmax, spec, &found) {
+                    let (path, cost, nexp) = match crate::route::least_cost_row(&grid, s0, s1, gmax, spec, &found, row_surface.as_deref()) {
                         Ok(r) => r,
                         Err(e) if spec.hard_grade => {
                             rows.push(json!({"name": spec.name, "weights": spec, "evaluation": {"error": e}}));
@@ -1474,6 +1550,10 @@ impl Session {
                         &rates,
                         wc.as_ref(),
                     );
+                    let row = match (&ev, &self.parcels) {
+                        (Ok((_, bt)), Some(ps)) => Some(ps.assess(&crate::parcels::row_polygon(&bt.cor, ro.buffer_m), &ro)),
+                        _ => None,
+                    };
                     let ev = ev.map(|(mut e, _)| {
                         if spec.hard_grade {
                             if let Some(h) = hairpin_r {
@@ -1492,7 +1572,7 @@ impl Session {
                         e
                     });
                     self.route_inputs.push((spec.name.clone(), ai));
-                    rows.push(json!({"name": spec.name, "weights": spec, "path": path, "pis": pis, "search_cost": cost, "nodes_expanded": nexp, "path_length_m": plen, "max_ground_grade_pct": pg, "overlap_with_earlier_pct": overlap_pct, "duplicate_of_earlier": overlap_pct > 90.0, "transition_notes": transition_notes, "fitted_radii": radii, "spirals": spirals,
+                    rows.push(json!({"name": spec.name, "weights": spec, "path": path, "pis": pis, "search_cost": cost, "nodes_expanded": nexp, "path_length_m": plen, "max_ground_grade_pct": pg, "overlap_with_earlier_pct": overlap_pct, "duplicate_of_earlier": overlap_pct > 90.0, "transition_notes": transition_notes, "fitted_radii": radii, "spirals": spirals, "row": row,
                         "evaluation": ev.as_ref().map(|e| serde_json::to_value(e).unwrap()).unwrap_or_else(|e| json!({"error": e}))}));
                 }
                 // infeasibility: every alternative fails a mandatory check or could not be built
@@ -1539,7 +1619,55 @@ impl Session {
                 let key = |r: &Value| {
                     (r["evaluation"]["geometry_mandatory_failures"].as_u64().unwrap_or(999), r["evaluation"]["cost_proxy"].as_f64().unwrap_or(f64::INFINITY))
                 };
-                let best = rows.iter().min_by(|x, y| key(x).partial_cmp(&key(y)).unwrap()).cloned().ok_or("no alternatives")?;
+                // ROW: known for every built alternative, or left out of the score (never zero)
+                let built = |r: &Value| r["evaluation"].get("error").is_none();
+                let infeasible_nogo = ro.no_go == "infeasible";
+                let nogo_hit = |r: &Value| r["row"]["no_go_hits"].as_array().is_some_and(|v| !v.is_empty());
+                // alternatives ranked last for crossing a no-go parcel do not need a known ROW cost
+                let row_known =
+                    self.parcels.is_some() && rows.iter().filter(|r| built(r) && !(infeasible_nogo && nogo_hit(r))).all(|r| r["row"]["cost"].is_number());
+                let score = |r: &Value| -> f64 {
+                    let cp = r["evaluation"]["cost_proxy"].as_f64().unwrap_or(f64::INFINITY);
+                    let w = &r["row"];
+                    let mut sc = ro.w_construction * cp + ro.relocation_penalty * w["relocations"].as_f64().unwrap_or(0.0);
+                    if row_known {
+                        sc += ro.w_row * w["cost"].as_f64().unwrap_or(0.0);
+                    }
+                    if !infeasible_nogo {
+                        sc += ro.no_go_penalty * w["no_go_hits"].as_array().map_or(0, |v| v.len()) as f64;
+                    }
+                    sc
+                };
+                let key_row = |r: &Value| -> (u64, u64, f64) {
+                    let nogo = infeasible_nogo && nogo_hit(r);
+                    (nogo as u64, key(r).0, score(r))
+                };
+                if self.parcels.is_some() {
+                    for r in rows.iter_mut() {
+                        let sc = score(r);
+                        let tot = match (r["evaluation"]["cost_proxy"].as_f64(), r["row"]["cost"].as_f64()) {
+                            (Some(c), Some(w)) => json!(c + w),
+                            _ => Value::Null,
+                        };
+                        r["total_with_row"] = tot;
+                        r["row_score"] = json!(sc);
+                    }
+                }
+                let order = |k: &dyn Fn(&Value) -> (u64, u64, f64)| {
+                    let mut v: Vec<&Value> = rows.iter().collect();
+                    v.sort_by(|x, y| k(x).partial_cmp(&k(y)).unwrap());
+                    v.iter().map(|r| r["name"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>()
+                };
+                let ranking_without_row = order(&|r: &Value| {
+                    let (f, c) = key(r);
+                    (0, f, c)
+                });
+                let ranking_with_row = self.parcels.as_ref().map(|_| order(&key_row));
+                let best = match &ranking_with_row {
+                    Some(rk) => rows.iter().find(|r| r["name"].as_str() == rk.first().map(|s| s.as_str())).cloned(),
+                    None => rows.iter().min_by(|x, y| key(x).partial_cmp(&key(y)).unwrap()).cloned(),
+                }
+                .ok_or("no alternatives")?;
                 let mut reasons = vec![];
                 for r in &rows {
                     if r["name"] == best["name"] {
@@ -1555,11 +1683,89 @@ impl Session {
                         eb["length_m"].as_f64().unwrap_or(0.0), e["length_m"].as_f64().unwrap_or(0.0), eb["cut_m3"].as_f64().unwrap_or(0.0) + eb["fill_m3"].as_f64().unwrap_or(0.0), e["cut_m3"].as_f64().unwrap_or(0.0) + e["fill_m3"].as_f64().unwrap_or(0.0),
                         eb["imbalance_m3"].as_f64().unwrap_or(0.0), e["imbalance_m3"].as_f64().unwrap_or(0.0), eb["wall_concrete_m3"].as_f64().unwrap_or(0.0), e["wall_concrete_m3"].as_f64().unwrap_or(0.0), eb["max_design_grade_pct"].as_f64().unwrap_or(0.0), e["max_design_grade_pct"].as_f64().unwrap_or(0.0), eb["geometry_mandatory_failures"], e["geometry_mandatory_failures"]));
                 }
-                let rec = json!({"recommended": best["name"], "rule": "fewest mandatory geometry failures, then lowest cost proxy (unit rates are agent placeholders unless the engineer enters rates)", "reasons": reasons, "rates": rates, "grid_cell_m": cell, "max_grade_pct_used": gmax, "r_min_m": rs.r_min});
+                let mut rule =
+                    "fewest mandatory geometry failures, then lowest cost proxy (unit rates are agent placeholders unless the engineer enters rates)"
+                        .to_string();
+                let mut row_note = Value::Null;
+                if let Some(ps) = &self.parcels {
+                    rule = format!(
+                        "{}fewest mandatory geometry failures, then lowest score = {} × cost proxy{} + {} × relocations{} (unit rates are agent placeholders unless the engineer enters rates)",
+                        if infeasible_nogo { "alternatives crossing a no-go parcel last, then " } else { "" },
+                        ro.w_construction,
+                        if row_known { format!(" + {} × ROW cost", ro.w_row) } else { String::new() },
+                        ro.relocation_penalty,
+                        if infeasible_nogo { String::new() } else { format!(" + {} × no-go parcels hit", ro.no_go_penalty) }
+                    );
+                    row_note = json!(if row_known {
+                        format!("ROW cost from user parcel values (currency: {}); ROW and the cost proxy are added as entered, so they should be in the same currency. Screening estimate from user data, not an appraisal.", if ps.currency.is_empty() { "not stated" } else { &ps.currency })
+                    } else {
+                        "ROW cost is unknown for at least one alternative (parcels without value, rate or fallback rate, or full takes without an improvement value), so it is left out of the ranking; see row.unknown_cost_parcels and row.cost_known_part (a lower bound).".to_string()
+                    });
+                    for r in &rows {
+                        if r["name"] == best["name"] || !built(r) {
+                            continue;
+                        }
+                        let (w, wb) = (&r["row"], &best["row"]);
+                        let c = |x: &Value| x["cost"].as_f64().map_or("unknown".to_string(), |v| format!("{v:.0}"));
+                        reasons.push(format!(
+                            "ROW vs {}: cost {} vs {}, take {:.0} vs {:.0} m², full takes {} vs {}, relocations {} vs {}, no-go parcels hit {} vs {}",
+                            r["name"].as_str().unwrap_or(""),
+                            c(wb),
+                            c(w),
+                            wb["row_area_m2"].as_f64().unwrap_or(0.0) - wb["row_area_outside_parcels_m2"].as_f64().unwrap_or(0.0),
+                            w["row_area_m2"].as_f64().unwrap_or(0.0) - w["row_area_outside_parcels_m2"].as_f64().unwrap_or(0.0),
+                            wb["full_takes"],
+                            w["full_takes"],
+                            wb["relocations"],
+                            w["relocations"],
+                            wb["no_go_hits"].as_array().map_or(0, |v| v.len()),
+                            w["no_go_hits"].as_array().map_or(0, |v| v.len())
+                        ));
+                    }
+                    use std::fmt::Write as _;
+                    let mut csv = String::from("alternative,parcel_id,zoning,parcel_area_m2,take_area_m2,remnant_area_m2,take,buildings_hit,no_go,land_cost,improvement_cost,severance_cost,admin_cost,cost\n");
+                    let o = |x: &Value| x.as_f64().map_or("unknown".to_string(), |v| format!("{v:.2}"));
+                    for r in &rows {
+                        for t in r["row"]["takes"].as_array().into_iter().flatten() {
+                            let _ = writeln!(
+                                csv,
+                                "{},{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{}",
+                                r["name"].as_str().unwrap_or(""),
+                                t["parcel_id"].as_str().unwrap_or(""),
+                                t["zoning"].as_str().unwrap_or(""),
+                                t["parcel_area_m2"].as_f64().unwrap_or(0.0),
+                                t["take_area_m2"].as_f64().unwrap_or(0.0),
+                                t["remnant_area_m2"].as_f64().unwrap_or(0.0),
+                                if t["full_take"].as_bool().unwrap_or(false) { "full" } else { "partial" },
+                                t["buildings_hit"].as_array().map_or(String::new(), |v| v.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ")),
+                                t["no_go"].as_bool().unwrap_or(false),
+                                o(&t["land_cost"]),
+                                o(&t["improvement_cost"]),
+                                o(&t["severance_cost"]),
+                                o(&t["admin_cost"]),
+                                o(&t["cost"])
+                            );
+                        }
+                    }
+                    self.write("row-takes.csv", csv.as_bytes())?;
+                }
+                let rec = json!({"recommended": best["name"], "rule": rule, "reasons": reasons, "rates": rates, "grid_cell_m": cell, "max_grade_pct_used": gmax, "r_min_m": rs.r_min,
+                    "ranking_without_row": ranking_without_row, "ranking_with_row": ranking_with_row, "row_in_score": row_known, "row_note": row_note, "row_options": self.parcels.as_ref().map(|_| &ro)});
                 let full = json!({"alternatives": rows, "recommendation": rec});
                 let h = self.write("route-alternatives.json", full.to_string().as_bytes())?;
                 let summary: Vec<Value> =
-                    rows.iter().map(|r| json!({"name": r["name"], "pis": r["pis"].as_array().map_or(0, |p| p.len()), "overlap_with_earlier_pct": r["overlap_with_earlier_pct"], "duplicate_of_earlier": r["duplicate_of_earlier"], "evaluation": r["evaluation"]})).collect();
+                    rows.iter()
+                    .map(|r| {
+                        let mut x = json!({"name": r["name"], "pis": r["pis"].as_array().map_or(0, |p| p.len()), "overlap_with_earlier_pct": r["overlap_with_earlier_pct"], "duplicate_of_earlier": r["duplicate_of_earlier"], "evaluation": r["evaluation"]});
+                        if !r["row"].is_null() {
+                            let w = &r["row"];
+                            x["row"] = json!({"cost": w["cost"], "cost_known_part": w["cost_known_part"], "unknown_cost_parcels": w["unknown_cost_parcels"], "row_area_m2": w["row_area_m2"], "row_area_outside_parcels_m2": w["row_area_outside_parcels_m2"], "parcels_affected": w["parcels_affected"], "full_takes": w["full_takes"], "partial_takes": w["partial_takes"], "relocations": w["relocations"], "no_go_hits": w["no_go_hits"]});
+                            x["total_with_row"] = r["total_with_row"].clone();
+                            x["row_score"] = r["row_score"].clone();
+                        }
+                        x
+                    })
+                    .collect();
                 let prov = self.log(
                     "agent",
                     name,

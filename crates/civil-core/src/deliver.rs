@@ -575,6 +575,53 @@ fn design_report(s: &Session, rs: &standards::Resolved, stage: &str, dep: &[[Str
         for x in rt["recommendation"]["reasons"].as_array().unwrap() {
             let _ = writeln!(r, "- {}", x.as_str().unwrap_or(""));
         }
+        let rk = &rt["recommendation"];
+        if rk["ranking_with_row"].is_array() {
+            let _ = writeln!(
+                r,
+                "\n### Right-of-way (ROW) screening\n\nParcels: {} (user data; ROW cost is a screening estimate from the entered values, not an appraisal). ROW = daylight lines + {:.1} m buffer.\n\n| Alternative | ROW take | Parcels | Full takes | Partial takes | Relocations | No-go parcels hit | ROW cost | Cost proxy + ROW |\n|---|---:|---:|---:|---:|---:|---|---:|---:|",
+                s.parcels.as_ref().map_or(String::new(), |p| p.source.rsplit('/').next().unwrap_or("").to_string()),
+                rk["row_options"]["buffer_m"].as_f64().unwrap_or(0.0)
+            );
+            for a in rt["alternatives"].as_array().unwrap() {
+                let w = &a["row"];
+                if w.is_null() {
+                    let _ = writeln!(r, "| {} | not built | | | | | | | |", a["name"].as_str().unwrap_or(""));
+                    continue;
+                }
+                let take = w["row_area_m2"].as_f64().unwrap_or(0.0) - w["row_area_outside_parcels_m2"].as_f64().unwrap_or(0.0);
+                let cost = match w["cost"].as_f64() {
+                    Some(c) => format!("{c:.0}"),
+                    None => format!(
+                        "unknown (known part {:.0}; no value for {})",
+                        w["cost_known_part"].as_f64().unwrap_or(0.0),
+                        w["unknown_cost_parcels"].as_array().map_or(String::new(), |v| v.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
+                    ),
+                };
+                let _ = writeln!(
+                    r,
+                    "| {} | {:.0} m² ({:.2} ha) | {} | {} | {} | {} | {} | {} | {} |",
+                    a["name"].as_str().unwrap_or(""),
+                    take,
+                    take / 10000.0,
+                    w["parcels_affected"],
+                    w["full_takes"],
+                    w["partial_takes"],
+                    w["relocations"],
+                    w["no_go_hits"].as_array().map_or(String::new(), |v| v.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")),
+                    cost,
+                    a["total_with_row"].as_f64().map_or("unknown".to_string(), |c| format!("{c:.0}"))
+                );
+            }
+            let names = |v: &serde_json::Value| v.as_array().map_or(String::new(), |a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" > "));
+            let _ = writeln!(
+                r,
+                "\nRanking without ROW: {}. Ranking with ROW: {}.\n\n{}\n\nPer-parcel takes: row-takes.csv.",
+                names(&rk["ranking_without_row"]),
+                names(&rk["ranking_with_row"]),
+                rk["row_note"].as_str().unwrap_or("")
+            );
+        }
     }
     if let Some(c) = &s.route_choice {
         let _ = writeln!(r, "\nSelected: **{}** by {}.", c["selected"].as_str().unwrap_or(""), c["by"].as_str().unwrap_or(""));

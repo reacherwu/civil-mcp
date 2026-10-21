@@ -18,6 +18,9 @@ pub struct Model<'a> {
     pub pr: Option<&'a Profile>,
     pub cor: Option<&'a Corridor>,
     pub nets: Vec<&'a Network>,
+    /// imported parcels (user data) and the ROW polygon of the current corridor, draped on EG
+    pub parcels: Option<&'a crate::parcels::ParcelSet>,
+    pub row_polygon: Option<Vec<[f64; 2]>>,
 }
 
 #[derive(Default, serde::Serialize)]
@@ -142,6 +145,24 @@ pub fn write(m: &Model, dp: &DProfile, map: &BTreeMap<String, String>) -> (Strin
         for s in &n.structures {
             w.circle(&ls, [s.1, s.2, s.3], 0.6);
         }
+    }
+    let drape = |r: &[[f64; 2]]| -> Vec<[f64; 3]> {
+        let mut v: Vec<[f64; 3]> = r.iter().map(|q| [q[0], q[1], m.eg.and_then(|t| t.elevation_at(q[0], q[1])).unwrap_or(0.0)]).collect();
+        if let Some(f) = v.first().copied() {
+            v.push(f);
+        }
+        v
+    };
+    if let Some(ps) = m.parcels {
+        let l = ln("PARCEL");
+        for p in &ps.parcels {
+            for r in &p.rings {
+                w.poly3d(&l, &drape(r));
+            }
+        }
+    }
+    if let Some(r) = &m.row_polygon {
+        w.poly3d(&ln("ROW-TAKE"), &drape(r));
     }
     let mut o = String::from(concat!(
         "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n9\n$DWGCODEPAGE\n3\nANSI_1252\n9\n$INSUNITS\n70\n6\n9\n$TEXTSTYLE\n7\nSANS\n0\nENDSEC\n",

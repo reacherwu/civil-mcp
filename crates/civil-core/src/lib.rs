@@ -29,6 +29,7 @@ pub mod landuse;
 pub mod landxml;
 pub mod lea;
 pub mod mech;
+pub mod parcels;
 pub mod pavement;
 pub mod pipes;
 pub mod points;

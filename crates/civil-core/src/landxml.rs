@@ -354,6 +354,8 @@ pub struct Export<'a> {
     pub corridor: Option<&'a crate::corridor::Corridor>,
     /// horizontal CRS of the coordinates, when known (from import_terrain)
     pub epsg: Option<u32>,
+    /// imported parcels (user data), written as Parcels
+    pub parcels: Option<&'a crate::parcels::ParcelSet>,
 }
 
 pub fn write(x: &Export) -> String {
@@ -386,6 +388,34 @@ pub fn write(x: &Export) -> String {
             let _ = writeln!(o, "        </Faces>\n      </Definition>\n    </Surface>");
         }
         let _ = writeln!(o, "  </Surfaces>");
+    }
+    if let Some(ps) = x.parcels.filter(|p| !p.parcels.is_empty()) {
+        let _ = writeln!(
+            o,
+            "  <Parcels name=\"imported parcels\" desc=\"user data from {}; ROW screening only, not a boundary survey\">",
+            esc(ps.source.rsplit('/').next().unwrap_or(""))
+        );
+        for p in &ps.parcels {
+            let holes = p.rings.iter().filter(|r| crate::parcels::signed_area(r) < 0.0).count();
+            let mut desc = p.zoning.clone().map(|z| format!("zoning {z}")).unwrap_or_default();
+            if p.no_go {
+                desc = format!("{desc}{}no-go: {}", if desc.is_empty() { "" } else { "; " }, p.no_go_reason.clone().unwrap_or_default());
+            }
+            if holes > 0 {
+                desc = format!("{desc}{}{holes} interior ring(s) not written", if desc.is_empty() { "" } else { "; " });
+            }
+            let _ = writeln!(o, "    <Parcel name=\"{}\" area=\"{:.4}\" desc=\"{}\">", esc(&p.id), p.area_m2, esc(&desc));
+            for r in p.rings.iter().filter(|r| crate::parcels::signed_area(r) > 0.0) {
+                let _ = writeln!(o, "      <CoordGeom>");
+                for k in 0..r.len() {
+                    let (a, b) = (r[k], r[(k + 1) % r.len()]);
+                    let _ = writeln!(o, "        <Line><Start>{:.4} {:.4}</Start><End>{:.4} {:.4}</End></Line>", a[1], a[0], b[1], b[0]);
+                }
+                let _ = writeln!(o, "      </CoordGeom>");
+            }
+            let _ = writeln!(o, "    </Parcel>");
+        }
+        let _ = writeln!(o, "  </Parcels>");
     }
     if let Some(al) = x.alignment {
         let _ = writeln!(

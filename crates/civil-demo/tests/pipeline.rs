@@ -13,6 +13,11 @@ fn full_pipeline_and_approval_rules() {
     // route selection: four alternatives (A-C weighted, D switchback search), the recommended one passes every mandatory geometry check
     let ra = log.iter().find(|e| e["tool"] == "generate_route_alternatives").unwrap();
     assert_eq!(ra["result"]["alternatives"].as_array().unwrap().len(), 4, "{ra}");
+    // synthetic parcels: the house on B's line moves B behind D once ROW is scored; C crosses the no-go park
+    let rk = &ra["result"]["recommendation"];
+    assert_eq!(rk["ranking_without_row"], serde_json::json!(["A-direct", "B-contour-following", "D-switchback", "C-separate-corridor"]), "{rk}");
+    assert_eq!(rk["ranking_with_row"], serde_json::json!(["A-direct", "D-switchback", "B-contour-following", "C-separate-corridor"]), "{rk}");
+    assert_eq!(rk["row_in_score"], true);
     // construction set: continuous match lines, full coverage, standard scale; missing engineer inputs flagged
     let cs = log.iter().find(|e| e["tool"] == "generate_construction_set").unwrap();
     let ck = |id: &str| cs["result"]["checks"].as_array().unwrap().iter().find(|c| c["id"] == id).unwrap()["pass"].as_bool().unwrap();
