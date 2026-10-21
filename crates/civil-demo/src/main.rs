@@ -122,7 +122,7 @@ pub fn run_units(out: &str, us: bool) -> Session {
                 "soil":{"gamma_kn_m3":19.0,"phi_deg":30.0,"base_friction":0.45,"bearing_kpa":250.0,"surcharge_kpa":10.0}}}),
     );
     // route alternatives over the terrain
-    let v = r.call("generate_route_alternatives", json!({"start":[573520.0,4139660.0],"end":[574280.0,4140380.0],"cell_m":10.0,"radius_pref_m":200.0,"spiral_m":40.0,"simplify_tol_m":15.0,"vpi_spacing_m":150.0,"interval_m":20.0,"shrink":0.9}));
+    let v = r.call("generate_route_alternatives", json!({"start":[573520.0,4139660.0],"end":[574280.0,4140380.0],"cell_m":10.0,"radius_pref_m":200.0,"spiral_m":40.0,"simplify_tol_m":15.0,"vpi_spacing_m":150.0,"interval_m":20.0,"shrink":0.9,"limits":{"max_fill_m":20.0,"max_cut_m":20.0,"max_wall_m":20.0,"source":"demo engineer input (TEST)"}}));
     for a in v["result"]["alternatives"].as_array().unwrap() {
         let e = &a["evaluation"];
         println!(

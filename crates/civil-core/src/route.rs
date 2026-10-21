@@ -21,13 +21,19 @@ pub struct AltSpec {
     /// penalise cells within this distance (m) of previously found paths (0 = off)
     #[serde(default)]
     pub avoid_previous_m: f64,
+    /// forbid moves whose ground grade exceeds 2 × the design maximum (switchback / hairpin
+    /// search; the factor 2 is an agent choice so that hairpin turns can pass through steeper
+    /// headings briefly, with cut/fill absorbing the excess)
+    #[serde(default)]
+    pub hard_grade: bool,
 }
 
 pub fn default_alts() -> Vec<AltSpec> {
     vec![
-        AltSpec { name: "A-direct".into(), w_grade: 1.0, w_terrain: 0.0, w_turn: 2.0, avoid_previous_m: 0.0 },
-        AltSpec { name: "B-contour-following".into(), w_grade: 10.0, w_terrain: 0.3, w_turn: 2.0, avoid_previous_m: 0.0 },
-        AltSpec { name: "C-separate-corridor".into(), w_grade: 4.0, w_terrain: 0.1, w_turn: 2.0, avoid_previous_m: 80.0 },
+        AltSpec { name: "A-direct".into(), w_grade: 1.0, w_terrain: 0.0, w_turn: 2.0, avoid_previous_m: 0.0, hard_grade: false },
+        AltSpec { name: "B-contour-following".into(), w_grade: 10.0, w_terrain: 0.3, w_turn: 2.0, avoid_previous_m: 0.0, hard_grade: false },
+        AltSpec { name: "C-separate-corridor".into(), w_grade: 4.0, w_terrain: 0.1, w_turn: 2.0, avoid_previous_m: 80.0, hard_grade: false },
+        AltSpec { name: "D-switchback".into(), w_grade: 200.0, w_terrain: 0.0, w_turn: 0.5, avoid_previous_m: 0.0, hard_grade: true },
     ]
 }
 
@@ -181,6 +187,9 @@ pub fn least_cost(
             } else {
                 (z1 - z0).abs() / l
             };
+            if spec.hard_grade && gr > 2.0 * gm {
+                continue;
+            }
             let ex = (gr - gm).max(0.0) * 100.0;
             let per_m = 1.0 + spec.w_grade * ex * ex + spec.w_terrain * 100.0 * gr + pen[nj * g.nx + ni];
             let cost = c + per_m * l + spec.w_turn * (dd.abs() as f64) * g.cell;
@@ -192,7 +201,15 @@ pub fn least_cost(
             }
         }
     }
-    let goal = goal.ok_or("no path between start and end inside the surface")?;
+    let goal = goal.ok_or(if spec.hard_grade {
+        format!(
+            "no path between start and end inside the surface keeps the ground grade within {:.1} % (2 × the {gmax_pct:.1} % design maximum, grid {:.1} m)",
+            2.0 * gmax_pct,
+            g.cell
+        )
+    } else {
+        "no path between start and end inside the surface".to_string()
+    })?;
     let mut path = Vec::new();
     let mut u = goal;
     loop {
@@ -207,6 +224,14 @@ pub fn least_cost(
     path[0] = start;
     *path.last_mut().unwrap() = end;
     Ok((path, dist[goal], expanded))
+}
+
+/// Share of path `p` (by vertex count) lying within `d` metres of polyline `q`.
+pub fn overlap(p: &[[f64; 2]], q: &[[f64; 2]], d: f64) -> f64 {
+    if p.is_empty() {
+        return 0.0;
+    }
+    p.iter().filter(|x| dist_to_poly(**x, q) < d).count() as f64 / p.len() as f64
 }
 
 /// Douglas–Peucker simplification.
@@ -314,5 +339,25 @@ mod tests {
         let g = Grid { x0: 0.0, y0: 0.0, cell: 10.0, nx: 30, ny: 30, z };
         let (p, _, _) = least_cost(&g, [0.0, 0.0], [290.0, 0.0], 8.0, &default_alts()[1], &[]).unwrap();
         assert!(p.iter().any(|q| q[1] >= 200.0), "path should detour through the gap");
+    }
+    #[test]
+    fn hard_grade_search_switches_back_on_a_slope() {
+        // plane rising 15 % in +x: the 10 % alternative must lengthen the path (switchbacks)
+        let (nx, ny) = (40, 40);
+        let z = (0..nx * ny).map(|k| Some((k % nx) as f64 * 10.0 * 0.15)).collect();
+        let g = Grid { x0: 0.0, y0: 0.0, cell: 10.0, nx, ny, z };
+        let spec = &default_alts()[3];
+        let (p, _, _) = least_cost(&g, [0.0, 200.0], [100.0, 200.0], 10.0, spec, &[]).unwrap();
+        let len: f64 = p.windows(2).map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt()).sum();
+        assert!(len >= 140.0, "path {len} m should approach Δz/gmax = 150 m");
+        for w in p.windows(2) {
+            let l = ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt();
+            assert!(0.15 * (w[1][0] - w[0][0]).abs() / l <= 0.2 + 1e-9);
+        }
+        // a 60 % plane admits no move within 20 %: clear error
+        let z2 = (0..nx * ny).map(|k| Some((k % nx) as f64 * 10.0 * 0.60)).collect();
+        let g2 = Grid { x0: 0.0, y0: 0.0, cell: 10.0, nx, ny, z: z2 };
+        let e = least_cost(&g2, [0.0, 200.0], [100.0, 200.0], 10.0, spec, &[]).unwrap_err();
+        assert!(e.contains("keeps the ground grade within 20.0 %"), "{e}");
     }
 }

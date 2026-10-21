@@ -92,6 +92,44 @@ pub struct Evaluation {
     pub cost_proxy: f64,
     /// ∫|M| ds of the mass diagram (filled by the optimiser)
     pub haul_moment_m3m: f64,
+    /// largest centreline fill / cut height and largest retaining-wall height (m)
+    pub max_fill_height_m: f64,
+    pub max_cut_height_m: f64,
+    pub max_wall_height_m: f64,
+    /// curves accepted below the standard minimum radius as engineer-entered design exceptions
+    pub design_exceptions: Vec<String>,
+}
+
+/// Plausibility limits on earthwork and wall heights. The defaults are agent screening
+/// values (not taken from any standard); the engineer should confirm or replace them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Limits {
+    pub max_fill_m: f64,
+    pub max_cut_m: f64,
+    pub max_wall_m: f64,
+    #[serde(default = "agent_src")]
+    pub source: String,
+}
+fn agent_src() -> String {
+    "engineer".into()
+}
+impl Default for Limits {
+    fn default() -> Self {
+        Limits { max_fill_m: 15.0, max_cut_m: 15.0, max_wall_m: 10.0, source: "agent screening default - engineer to confirm".into() }
+    }
+}
+
+/// Adds EW-FILL / EW-CUT / EW-WALL mandatory failures when heights exceed the limits.
+pub fn apply_limits(e: &mut Evaluation, l: &Limits) {
+    e.failed_checks.retain(|c| !c.starts_with("EW-"));
+    for (id, v, m) in
+        [("EW-FILL", e.max_fill_height_m, l.max_fill_m), ("EW-CUT", e.max_cut_height_m, l.max_cut_m), ("EW-WALL", e.max_wall_height_m, l.max_wall_m)]
+    {
+        if v > m {
+            e.failed_checks.push(format!("{id} {v:.1} m > {m:.1} m ({})", l.source));
+        }
+    }
+    e.geometry_mandatory_failures = e.failed_checks.len();
 }
 
 pub struct Built {
@@ -149,6 +187,15 @@ pub fn summarize(b: &DesignBasis, al: &Alignment, pr: &Profile, cor: &Corridor, 
         daylight_warnings: cor.sections_with_warnings,
         cost_proxy: cost,
         haul_moment_m3m: crate::quantities::mass_haul(cor, shrink, 0.0).haul_moment_m3m,
+        max_fill_height_m: cor.sections.iter().map(|s| s.cl_elev - s.ground_cl).fold(0.0, f64::max),
+        max_cut_height_m: cor.sections.iter().map(|s| s.ground_cl - s.cl_elev).fold(0.0, f64::max),
+        max_wall_height_m: cor
+            .sections
+            .iter()
+            .flat_map(|s| [&s.left.wall, &s.right.wall])
+            .filter_map(|w| w.as_ref().map(|w| w.top_z - w.bottom_z))
+            .fold(0.0, f64::max),
+        design_exceptions: vec![],
     }
 }
 

@@ -522,7 +522,8 @@ pub fn read_las(bytes: &[u8], o: &Options) -> crate::Result<Import> {
             continue;
         }
         gi += 1;
-        if !(gi - 1).is_multiple_of(st) {
+        #[allow(clippy::manual_is_multiple_of)]
+        if (gi - 1) % st != 0 {
             continue;
         }
         let xi = i32::from_le_bytes(rec[0..4].try_into().unwrap()) as f64;

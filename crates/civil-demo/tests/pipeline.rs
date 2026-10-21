@@ -10,9 +10,9 @@ fn full_pipeline_and_approval_rules() {
     let out = out.to_str().unwrap().to_string();
     let mut s = demo::run(&out);
     let log: Vec<Value> = std::fs::read_to_string(format!("{out}/run-log.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-    // route selection: three alternatives, the recommended one passes every mandatory geometry check
+    // route selection: four alternatives (A-C weighted, D switchback search), the recommended one passes every mandatory geometry check
     let ra = log.iter().find(|e| e["tool"] == "generate_route_alternatives").unwrap();
-    assert_eq!(ra["result"]["alternatives"].as_array().unwrap().len(), 3, "{ra}");
+    assert_eq!(ra["result"]["alternatives"].as_array().unwrap().len(), 4, "{ra}");
     let first_check = log.iter().find(|e| e["tool"] == "check_standards").unwrap();
     assert_eq!(first_check["result"]["mandatory_failures"], 0, "{first_check}");
     // profile optimiser reduces the earthwork imbalance

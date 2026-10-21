@@ -95,7 +95,7 @@ pub fn tool_list() -> Value {
       {"name":"record_review","description":"Record the engineer's decision. actor must be 'engineer:<name>'. approve is refused while mandatory checks fail. Any later design change voids the approval.","inputSchema":obj(json!({"actor":s,"decision":{"type":"string","enum":["approve","reject","comment"]},"note":s}),&["actor","decision","note"])},
       {"name":"verify_audit_log","description":"Recompute the hash chain of the audit log and report the first tampered entry, if any.","inputSchema":obj(json!({}),&[])},
       {"name":"design_pavement","description":"Pavement thickness design using the method of the project's standards profile. US/CA: AASHTO 1993 flexible (SN with layered analysis) or rigid (D). AU/NZ: Austroads AGPT02 empirical granular chart (Figure 8.4 equation). UK: DMRB CD 226 (Eq 2.24 HBGM asphalt, Eq 2.43 URC; Figure 2.20 asphalt-base thickness entered by the engineer). Optional traffic block computes design traffic from AADT. Layers feed create_assembly when it has no pavement.","inputSchema":obj(json!({"kind":{"type":"string","enum":["flexible","rigid"]},"subgrade_cbr":num,"subgrade_mr_mpa":num,"design_traffic":num,"traffic":{"type":"object","description":"aadt, hv_frac, esa_per_hv, growth, years, dir_factor, lane_factor"},"reliability_zr":num,"s0":num,"p0":num,"pt":num,"layers":arr(json!({"type":"object"})),"sc_mpa":num,"ec_mpa":num,"j":num,"cd":num,"k_mpa_m":num,"surfacing_mm":num,"base_mm":num,"foundation_class":num,"uk_type":s,"uk_chart_asphalt_mm":num,"uk_chart_hbgm_mm":num,"uk_rc_mpa":num,"uk_tied_shoulder":b}),&["kind","subgrade_cbr"])},
-      {"name":"generate_route_alternatives","description":"Route/corridor selection. Least-cost paths over the terrain grid between start and end, with heading-constrained moves and a penalty on grades above the profile maximum. Several weightings or a separate-corridor penalty give distinct alternatives. Each path is simplified to PIs and given fitted radii. Each alternative is then built in full (alignment, superelevation, suggested profile, corridor with the current assembly) and compared on length, radii, max grade, cut/fill, imbalance, walls, mandatory failures and a unit-rate cost proxy. Returns the agent's recommendation with reasons.","inputSchema":obj(json!({"start":{"type":"array","items":num},"end":{"type":"array","items":num},"cell_m":num,"radius_pref_m":num,"spiral_m":num,"simplify_tol_m":num,"vpi_spacing_m":num,"interval_m":num,"shrink":num,"rates":{"type":"object"},"alternatives":arr(json!({"type":"object"}))}),&["start","end"])},
+      {"name":"generate_route_alternatives","description":"Route/corridor selection. Least-cost paths over the terrain grid between start and end, with heading-constrained moves and a penalty on grades above the profile maximum. Several weightings or a separate-corridor penalty give distinct alternatives. Each path is simplified to PIs and given fitted radii. Each alternative is then built in full (alignment, superelevation, suggested profile, corridor with the current assembly) and compared on length, radii, max grade, cut/fill, imbalance, walls, mandatory failures and a unit-rate cost proxy. Returns the agent's recommendation with reasons.","inputSchema":obj(json!({"hairpin_min_radius_m":num,"limits":{"type":"object","properties":{"max_fill_m":num,"max_cut_m":num,"max_wall_m":num,"source":s}},"allow_infeasible":b,"start":{"type":"array","items":num},"end":{"type":"array","items":num},"cell_m":num,"radius_pref_m":num,"spiral_m":num,"simplify_tol_m":num,"vpi_spacing_m":num,"interval_m":num,"shrink":num,"rates":{"type":"object"},"alternatives":arr(json!({"type":"object"}))}),&["start","end"])},
       {"name":"select_route","description":"Adopt one route alternative as the alignment and record the choice and reasons in the audit log. actor 'agent' records a recommendation; 'engineer:<name>' records the engineer's decision.","inputSchema":obj(json!({"alternative":s,"actor":s,"reasons":arr(s.clone())}),&["alternative"])},
       {"name":"optimize_profile","description":"Earthwork-balance optimiser. Coordinate descent on interior VPI elevations of the current profile to minimise |cut·shrink − fill| + w_volume·(cut+fill) + w_wall·wall concrete + w_haul·haul moment. Every candidate must pass all mandatory grade and vertical-curve checks. Adopts the result; before/after values are logged.","inputSchema":obj(json!({"interval_m":num,"shrink":num,"w_volume":num,"w_wall":num,"w_haul":num,"steps_m":arr(num.clone())}),&[])},
       {"name":"design_protection","description":"Protection works on the built corridor. Roadside hazards inside the engineer-entered clear zone (critical fill slopes above the warrant height, wall faces and drop-offs) give barrier runs with length of need X = L_R(L_A − L_2)/L_A. Ditch linings are chosen by HEC-15 shear stress (bare soil → engineer linings → gravel mulch → riprap D50 by Eq 6.8 → concrete). Slope-protection areas are reported by slope class.","inputSchema":obj(json!({"clear_zone_m":num,"clear_zone_source":s,"recoverable_h":num,"traversable_h":num,"embankment_warrant_height_m":num,"barrier_offset_m":num,"runout_length_m":num,"barrier_type":s,"runoff_c":num,"intensity_mm_h":num,"catchment_width_m":num,"soil_tau_p":num,"soil_name":s,"extra_linings":arr(json!({"type":"object"})),"riprap_sg":num,"seed_flatter_than_h":num,"blanket_flatter_than_h":num}),&["clear_zone_m","recoverable_h","traversable_h","embankment_warrant_height_m","barrier_offset_m","runout_length_m","runoff_c","intensity_mm_h","catchment_width_m","soil_tau_p"])},
@@ -1173,22 +1173,45 @@ impl Session {
                 let tol = f(a, "simplify_tol_m").unwrap_or(15.0);
                 let shrink = f(a, "shrink").unwrap_or(0.9);
                 let wc = self.wall_criteria().ok();
+                let hairpin_r = f(a, "hairpin_min_radius_m");
+                let limits: crate::workflow::Limits = match a.get("limits").filter(|v| !v.is_null()) {
+                    Some(v) => serde_json::from_value(v.clone()).map_err(|e| e.to_string())?,
+                    None => crate::workflow::Limits::default(),
+                };
                 let mut found: Vec<Vec<[f64; 2]>> = vec![];
                 let mut rows = vec![];
                 self.route_inputs.clear();
                 for spec in &alts {
-                    let (path, cost, nexp) = crate::route::least_cost(&grid, s0, s1, gmax, spec, &found)?;
+                    let (path, cost, nexp) = match crate::route::least_cost(&grid, s0, s1, gmax, spec, &found) {
+                        Ok(r) => r,
+                        Err(e) if spec.hard_grade => {
+                            rows.push(json!({"name": spec.name, "weights": spec, "evaluation": {"error": e}}));
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                    };
+                    let overlap_pct = found.iter().map(|q| crate::route::overlap(&path, q, 2.0 * cell)).fold(0.0, f64::max) * 100.0;
                     found.push(path.clone());
                     let (plen, pg) = crate::route::path_stats(t, &path);
                     let mut pis = crate::route::clean_pis(crate::route::simplify(&path, tol), 4.0, 40.0);
                     let mut radii = crate::route::fit_radii(&pis, r_pref, ls, 0.45);
                     // drop PIs whose fitted radius is below the minimum and refit
+                    // switchback alternatives keep their hairpins when the engineer has entered a
+                    // hairpin minimum radius (design exception); others drop sub-minimum PIs
+                    let r_floor = if spec.hard_grade { hairpin_r.unwrap_or(rs.r_min) } else { rs.r_min };
+                    if spec.hard_grade && hairpin_r.is_some() {
+                        let pref = radii.clone();
+                        radii = pref.iter().map(|r| r.max(r_floor)).collect();
+                    }
                     for _ in 0..60 {
-                        match radii.iter().position(|r| *r < rs.r_min) {
+                        match radii.iter().position(|r| *r < r_floor) {
                             Some(k) if pis.len() > 3 => {
                                 pis.remove(k + 1);
                                 pis = crate::route::clean_pis(pis, 4.0, 40.0);
                                 radii = crate::route::fit_radii(&pis, r_pref, ls, 0.45);
+                                if spec.hard_grade && hairpin_r.is_some() {
+                                    radii = radii.iter().map(|r| if *r >= r_floor * 0.999 { *r } else { r.max(r_floor) }).collect();
+                                }
                             }
                             _ => break,
                         }
@@ -1214,9 +1237,66 @@ impl Session {
                         &rates,
                         wc.as_ref(),
                     );
+                    let ev = ev.map(|(mut e, _)| {
+                        if spec.hard_grade {
+                            if let Some(h) = hairpin_r {
+                                let mut ex = vec![];
+                                e.failed_checks.retain(|c| {
+                                    let hp = c.starts_with("H-RMIN") || c.starts_with("H-RDES") || c.starts_with("H-LS");
+                                    if hp {
+                                        ex.push(format!("{c} accepted as hairpin design exception (engineer-entered minimum radius {h:.0} m)"));
+                                    }
+                                    !hp
+                                });
+                                e.design_exceptions = ex;
+                            }
+                        }
+                        crate::workflow::apply_limits(&mut e, &limits);
+                        e
+                    });
                     self.route_inputs.push((spec.name.clone(), ai));
-                    rows.push(json!({"name": spec.name, "weights": spec, "path": path, "pis": pis, "search_cost": cost, "nodes_expanded": nexp, "path_length_m": plen, "max_ground_grade_pct": pg,
-                        "evaluation": ev.as_ref().map(|e| serde_json::to_value(&e.0).unwrap()).unwrap_or_else(|e| json!({"error": e}))}));
+                    rows.push(json!({"name": spec.name, "weights": spec, "path": path, "pis": pis, "search_cost": cost, "nodes_expanded": nexp, "path_length_m": plen, "max_ground_grade_pct": pg, "overlap_with_earlier_pct": overlap_pct, "duplicate_of_earlier": overlap_pct > 90.0,
+                        "evaluation": ev.as_ref().map(|e| serde_json::to_value(e).unwrap()).unwrap_or_else(|e| json!({"error": e}))}));
+                }
+                // infeasibility: every alternative fails a mandatory check or could not be built
+                // (physical: search failure, maximum grade or earthwork/wall limits; other geometry
+                // failures such as superelevation runoff remain fixable and do not stop the run)
+                let ok = |r: &Value| {
+                    r["evaluation"].get("error").is_none()
+                        && !r["evaluation"]["failed_checks"]
+                            .as_array()
+                            .is_some_and(|v| v.iter().filter_map(|x| x.as_str()).any(|c| c.starts_with("EW-") || c.starts_with("V-GMAX")))
+                };
+                if !rows.iter().any(ok) && !a["allow_infeasible"].as_bool().unwrap_or(false) {
+                    let zs = t.elevation_at(s0[0], s0[1]).unwrap_or(f64::NAN);
+                    let ze = t.elevation_at(s1[0], s1[1]).unwrap_or(f64::NAN);
+                    let d = ((s1[0] - s0[0]).powi(2) + (s1[1] - s0[1]).powi(2)).sqrt();
+                    let why: Vec<String> = rows
+                        .iter()
+                        .map(|r| {
+                            let e = &r["evaluation"];
+                            match e.get("error") {
+                                Some(x) => format!("{}: {}", r["name"].as_str().unwrap_or(""), x.as_str().unwrap_or("")),
+                                None => {
+                                    let fc: Vec<&str> =
+                                        e["failed_checks"].as_array().map(|v| v.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+                                    let phys: Vec<&str> = fc.iter().copied().filter(|c| c.starts_with("EW-") || c.starts_with("V-GMAX")).collect();
+                                    format!(
+                                        "{}: {} (+{} other mandatory geometry failures)",
+                                        r["name"].as_str().unwrap_or(""),
+                                        phys.join("; "),
+                                        fc.len() - phys.len()
+                                    )
+                                }
+                            }
+                        })
+                        .collect();
+                    let full = json!({"alternatives": rows, "infeasible": true});
+                    self.write("route-alternatives.json", full.to_string().as_bytes())?;
+                    return Err(format!(
+                        "INFEASIBLE: every alternative fails the maximum grade or the earthwork/wall height limits, or could not be found. Elevation difference {:.1} m over {:.0} m straight distance needs at least {:.0} m of road at the {:.1} % maximum grade. Earthwork limits: fill {:.1} m, cut {:.1} m, wall {:.1} m ({}). Per alternative: {}. Options: enlarge the surface so switchbacks fit, enter hairpin_min_radius_m (design exception), raise limits after engineering review, or move the end points. Detail written to route-alternatives.json; pass allow_infeasible=true to inspect the alternatives anyway.",
+                        (ze - zs).abs(), d, (ze - zs).abs() / (gmax / 100.0), gmax, limits.max_fill_m, limits.max_cut_m, limits.max_wall_m, limits.source, why.join(" | ")
+                    ));
                 }
                 // recommendation: fewest mandatory failures, then lowest cost proxy
                 let key = |r: &Value| {

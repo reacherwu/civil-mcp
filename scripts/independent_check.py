@@ -444,6 +444,8 @@ for alt in RA["alternatives"]:
             ex = np.clip(gr - gm, 0, None) * 100
             c_ = (1 + sp["w_grade"] * ex * ex + sp["w_terrain"] * 100 * gr + pen[j1, i1]) * l + sp["w_turn"] * abs(dd) * cell
             good = np.isfinite(c_)
+            if sp.get("hard_grade"):
+                good &= ~(gr > 2 * gm)  # switchback search: moves steeper than 2 x max grade are forbidden
             rows_.append(((j0 * nx + i0) * 16 + d)[good]); cols_.append(((j1 * nx + i1) * 16 + nd)[good]); vals_.append(c_[good])
     N = nx * ny * 16
     Gm = coo_matrix((np.concatenate(vals_), (np.concatenate(rows_), np.concatenate(cols_))), shape=(N, N)).tocsr()
