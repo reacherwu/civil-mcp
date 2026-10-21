@@ -16,6 +16,7 @@ pub mod cset;
 pub mod culvert;
 pub mod deliver;
 pub mod drawing;
+pub mod dwg;
 pub mod ext;
 pub mod ext6;
 pub mod font;

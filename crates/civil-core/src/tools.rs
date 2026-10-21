@@ -79,7 +79,7 @@ pub fn tool_list() -> Value {
       {"name":"export_landxml","description":"Write LandXML 1.2 with points, existing-ground and corridor surfaces, alignment and profile.","inputSchema":obj(json!({"file":s}),&[])},
       {"name":"generate_construction_set","description":"Write the construction-scale sheet set (construction-set.pdf, cs-NN.dxf/svg, construction-register.csv): survey control and curve/vertical data tables, plan-and-profile sheets split at match lines at a standard scale (1:500 metric, 1\" = 50' US), existing-conditions base (contours, engineer-entered property lines and right-of-way), gridded cross sections at a standard interval (20 m / 50 ft) with ROW and construction limits, and a quantity summary by pay item with earthwork per plan sheet. Missing engineer inputs are flagged on the sheets and in the checks. The main set (generate_drawings) is unchanged.","inputSchema":obj(json!({"row_left_m":num,"row_right_m":num,"property_lines":arr(json!({"type":"object","properties":{"id":s,"pts":arr(arr(num.clone()))}})),"control":arr(json!({"type":"object","properties":{"id":s,"e":num,"n":num,"z":num,"desc":s}})),"xs_interval_m":num,"plan_scale":num}),&[])},
       {"name":"export_blender_scene","description":"Write a Blender-ready visualisation scene: scene.glb (glTF 2.0: existing ground, road pavement, earthwork slopes, retaining walls, pipes, structures, route alternatives as coloured ribbons), scene.json (georeference origin E0/N0/Z0 + EPSG, camera path along the design centreline, alternative metrics) and blender_scene.py, a headless script (blender -b -P blender_scene.py -- <dir>) that builds materials, lighting and camera, renders an overview, one still per alternative, driver-eye stills and a flythrough MP4, and exports USD (scene.usdc) and scene.blend. Concept / preliminary visualisation only.","inputSchema":obj(json!({}),&[])},
-      {"name":"export_cad_model","description":"Write a 3D CAD model for Civil 3D / MicroStation handoff (DXF R12, metres, world coordinates): existing and finished-grade TIN faces, 3D centreline, corridor feature lines by point code, wall tops, pipes at invert, structures at rim. Layers follow the active drafting profile (NCS for US, ISO 13567 elsewhere) or 'layer_map' {internal: agency layer} (keys SURF-EG, SURF-FG, ALIGNMENT, FEATURE, WALL, PIPE, STRUCTURE). Use with export_landxml for alignments, profiles, cross sections and pipe networks.","inputSchema":obj(json!({"file":s,"layer_map":{"type":"object"}}),&[])},
+      {"name":"export_cad_model","description":"Write a 3D CAD model for Civil 3D / MicroStation handoff (DXF R12, metres, world coordinates): existing and finished-grade TIN faces, 3D centreline, corridor feature lines by point code, wall tops, pipes at invert, structures at rim. Layers follow the active drafting profile (NCS for US, ISO 13567 elsewhere) or 'layer_map' {internal: agency layer} (keys SURF-EG, SURF-FG, ALIGNMENT, FEATURE, WALL, PIPE, STRUCTURE). Use with export_landxml for alignments, profiles, cross sections and pipe networks. Optional DWG: 'dwg_version' (ACAD2013 = AC1027, ACAD2018 = AC1032) converts the model (and with 'dwg_include_sheets' every sheet-NN / cs-NN DXF in the project) into dwg/ through ODA File Converter when it is installed (ODA_FILE_CONVERTER or ODAFileConverter on PATH); errors if it is not.","inputSchema":obj(json!({"file":s,"layer_map":{"type":"object"},"dwg_version":{"type":"string","enum":["ACAD2004","ACAD2007","ACAD2010","ACAD2013","ACAD2018"]},"dwg_include_sheets":{"type":"boolean"}}),&[])},
       {"name":"import_terrain","description":"Import terrain from a GeoTIFF / Cloud-Optimised GeoTIFF DEM, an ESRI ASCII grid (.asc), or a LAS/LAZ point cloud (ASPRS classes, default [2] ground), and build the existing-ground TIN. CRS: EPSG from GeoTIFF keys or LAS VLRs (or 'epsg'); geographic and Web Mercator data are projected to UTM; projected data (UTM, MGA, state plane, national grids) are kept planar with foot units (US survey / international) converted to metres. 'crop' [xmin,ymin,xmax,ymax] in output metres, 'step' subsamples, 'z_units' m|ft|us_ft.","inputSchema":obj(json!({"path":s,"step":num,"crop":arr(num.clone()),"epsg":num,"target_epsg":num,"xy_units":{"type":"string","enum":["m","ft","us_ft"]},"z_units":{"type":"string","enum":["m","ft","us_ft"]},"classes":arr(num.clone()),"max_points":num,"max_edge_m":num,"build_surface":b}),&["path"])},
       {"name":"build_surface","description":"Build a Delaunay TIN from loaded points. Optional max_edge_m drops long hull triangles.","inputSchema":obj(json!({"max_edge_m":num}),&[])},
       {"name":"create_alignment","description":"Horizontal alignment from PIs, circular radii and optional symmetric clothoid lengths (tangent–spiral–arc–spiral–tangent). Fails if curves overlap.","inputSchema":obj(json!({"name":s,"pis":xy,"radii":arr(num.clone()),"spirals":arr(num.clone()),"start_station":num}),&["name","pis","radii"])},
@@ -711,8 +711,36 @@ impl Session {
                 };
                 let (dxf, st) = crate::cad3d::write(&m, &rf.profile, &map);
                 let h = self.write(&file, dxf.as_bytes())?;
+                // optional DWG through an installed ODA File Converter (not bundled)
+                let dwg = match a.get("dwg_version").and_then(|v| v.as_str()) {
+                    None => json!("not written: no DWG writer is bundled; convert with ODA File Converter or LibreDWG dxf2dwg"),
+                    Some(ver) => {
+                        let dir = self.dir()?;
+                        let mut files = vec![file.clone()];
+                        if a["dwg_include_sheets"].as_bool().unwrap_or(false) {
+                            let mut sh: Vec<String> = std::fs::read_dir(&dir)
+                                .map_err(|e| e.to_string())?
+                                .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+                                .filter(|n| n.ends_with(".dxf") && (n.starts_with("sheet-") || n.starts_with("cs-")))
+                                .collect();
+                            sh.sort();
+                            files.extend(sh);
+                        }
+                        let paths = crate::dwg::convert(&dir, &files, ver, "dwg")?;
+                        let mut list = vec![];
+                        for p in &paths {
+                            let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+                            let rel = format!("dwg/{}", p.file_name().unwrap().to_string_lossy());
+                            let hh = sha256_hex(&bytes);
+                            self.files.retain(|f| f.0 != rel);
+                            self.files.push((rel.clone(), hh.clone()));
+                            list.push(json!({"file": rel, "sha256": hh, "magic": String::from_utf8_lossy(&bytes[..6.min(bytes.len())])}));
+                        }
+                        json!({"version": ver, "converter": "ODA File Converter (external, not bundled)", "files": list})
+                    }
+                };
                 let out = json!({"file": file, "sha256": h, "format": "DXF R12 (AC1009), metres, world coordinates", "drafting_profile": rf.country, "stats": st, "epsg": self.crs_epsg,
-                    "dwg": "not written: no DWG writer is bundled; convert with ODA File Converter or LibreDWG dxf2dwg", "note": "verified by re-reading with ezdxf in CI; not opened in Civil 3D"});
+                    "dwg": dwg, "note": "verified by re-reading with ezdxf in CI; not opened in Civil 3D"});
                 let prov = self.log("agent", name, a, &out, &["DXF R12 reference (Autodesk DXF), layer names from the drafting profile".into()])?;
                 Ok(json!({"result": out, "provenance": prov}))
             }

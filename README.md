@@ -37,7 +37,7 @@
 | Terrain | GeoTIFF / COG, ESRI ASCII grid, LAS / LAZ, with CRS handling; 11 real-terrain runs documented |
 | Outputs | PDF, per-sheet DXF and SVG, LandXML 1.2 with cross sections, 3D DXF model, glTF / Blender scene, CSV / Markdown / HTML reports |
 | Verification | 269 independent Python re-checks, CI on every push, Rust unit and pipeline tests |
-| Not yet | DWG writer, a Civil 3D open test, end-to-end tests in MCP clients, remote (HTTP) transport |
+| Not yet | built-in DWG writer (DWG needs ODA File Converter), a Civil 3D / 12d / BricsCAD open test, end-to-end tests in MCP clients, remote (HTTP) transport |
 
 ## Works with (MCP clients)
 
@@ -467,8 +467,8 @@ Every tool call is appended to `audit.jsonl` with its actor, inputs, outputs, SH
 | Format | Direction | Verification |
 |---|---|---|
 | LandXML 1.2 | import + export | XSD-valid (0 errors), with cross sections. Civil 3D 2022/2023/2025 exports: surfaces to 2e-12, a 23.47 km alignment to 2.6e-10 m, 411 pipes to 1.3e-9 m |
-| DXF (AC1009 / R12) | export: 38 sheets, 14 construction sheets, `model.dxf`, `civil3d-model.dxf` | ezdxf audit 0 errors in CI. An earlier local run rendered the sheet DXFs in LibreCAD 2.2 and round-tripped them DXF→DWG→DXF through ODA File Converter with identical entity counts; that run was not repeated for this build |
-| DWG | not written | convert with ODA File Converter |
+| DXF (AC1009 / R12) | export: 38 sheets, 14 construction sheets, `model.dxf`, `civil3d-model.dxf` | ezdxf audit 0 errors in CI |
+| DWG (AC1027 / AC1032) | optional, through an installed ODA File Converter (`export_cad_model` `dwg_version`) | ODA File Converter 27.9 on Linux (a substitute; not opened in Civil 3D or AutoCAD): 53 DXF → DWG 2013 and 2018 → DXF, 164,122 entities, **0** count / layer / extents mismatches ([docs/interop-tests.md](docs/interop-tests.md)) |
 | glTF 2.0 (`scene.glb`) | export | container, accessor bounds and ground mesh checked against the LandXML TIN in CI |
 | PDF | export | 38-sheet set and 14-sheet construction set, title block, audit head hash, seal box |
 
@@ -526,7 +526,8 @@ An independent Python re-check recomputes e, L, spiral ≥ L, spirals within the
 
 - `export_landxml` writes `CrossSects` as well as the surface, alignment, profile and pipe networks: EG and FG at every corridor station, offsets negative to the left, with cut/fill areas. When the terrain came from `import_terrain` in metres, it also writes `CoordinateSystem` with the EPSG code. The file validates against the LandXML 1.2 XSD, and CI re-reads the sections to check FG at the centreline against an independent parabola evaluation.
 - `export_cad_model` writes `civil3d-model.dxf`, a 3D model in world coordinates and metres. In the demo it holds 12,691 3D faces (11,089 EG TIN faces on `V-TOPO-SURF`, 1,602 FG faces on `C-ROAD-SURF`), the 3D centreline, 18 corridor feature lines, the wall tops, 25 pipes at invert and 27 structures at rim. Layers follow the drafting profile (NCS names in the US) or an agency `layer_map`. CI re-reads the file with ezdxf: the face count matches the LandXML TIN, and the centreline z matches the profile.
-- No DWG is written. LibreDWG 0.13.3 `dxf2dwg`, tried on this model, produced a DWG that read back empty, so DWG conversion stays with ODA File Converter. None of these files has been opened in Civil 3D.
+- DWG is optional. With ODA File Converter installed, `export_cad_model` with `dwg_version` (`ACAD2013` = AC1027, `ACAD2018` = AC1032) and `dwg_include_sheets` converts the model and every sheet into `dwg/`. ODA File Converter is a separate free download under its own terms and is not bundled. LibreDWG 0.13.3 `dxf2dwg`, tried earlier on this model, produced a DWG that read back empty.
+- Substitute testing on Linux ([docs/interop-tests.md](docs/interop-tests.md)): ODA File Converter 27.9 round trip of all 53 DXF files through DWG 2013 and 2018, 0 mismatches in entity counts, layers and extents. ODA and ezdxf stand in for Civil 3D and 12d here. None of these files has been opened in Civil 3D, AutoCAD, 12d or BricsCAD (the BricsCAD download needs an account).
 
 ## Construction-scale sheet set
 
@@ -698,6 +699,7 @@ Full record: **[docs/VALIDATION.md](docs/VALIDATION.md)**. Every row runs in [CI
 | Independent re-checks, v6 ([`independent_check_v6.py`](scripts/independent_check_v6.py)) | layered elastic vs PyMastic and KENPAVE, MSE, wall shear/crack/footing, signals, capacity, rigid, landscape, locality | **81 / 81** OK |
 | Layered elastic vs published KENPAVE 3-layer example | deflection, σz, εr, εz | ≤ **0.088 %** |
 | Civil 3D LandXML fixtures (2022/2023/2025) | surfaces, a 23.47 km alignment, 411 pipes | ≤ 2e-12 rel. / 2.6e-10 m / 1.3e-9 m |
+| DWG round trip through ODA File Converter 27.9 (local run; CI skips it) | 53 DXF → DWG AC1027 and AC1032 → DXF, entity counts, layers, extents ([`dwg_compare.py`](scripts/dwg_compare.py)) | **0** mismatches over 164,122 entities ([details](docs/interop-tests.md)) |
 | Real-terrain batch (local run; CI skips it) | 11 runs, 9 surfaces; runoff re-check on every fitted curve | see [docs/terrain-tests.md](docs/terrain-tests.md) |
 | Rust tests (`cargo test`) | unit tests with worked examples, LandXML round trip, MCP stdio, profiles, frames, terrain import, full pipeline | all pass; `cargo fmt --check` and `clippy -D warnings` clean |
 
@@ -715,7 +717,7 @@ The re-check scripts share no code with the Rust tools. They re-derive each valu
 
 - **Depth is concept / 30 %.** The sheets follow a 60 %-style format (title blocks, match lines, gridded sections, quantities), but the content is concept level: no detailed drainage profiles per structure, no signing details, no specifications.
 - **This is not engineering approval.** The demo "engineer" is a placeholder. Nothing here has been reviewed by a licensed engineer, and every sheet stays PRELIMINARY until a real engineer approves it.
-- **No DWG, and not opened in Civil 3D.** The tools write DXF and LandXML only. Neither the LandXML nor the 3D DXF has been opened in Civil 3D or AutoCAD, and corridor volumes and hydraulics have not been compared with Civil 3D runs (no public files were found).
+- **DWG needs ODA, and nothing has been opened in Civil 3D.** DWG comes only through an installed ODA File Converter; its round trip was checked with ezdxf, a substitute. Neither the LandXML, the DXF nor the DWG has been opened in Civil 3D, AutoCAD, 12d or BricsCAD, and corridor volumes and hydraulics have not been compared with Civil 3D runs (no public files were found).
 - **MCP clients are not tested end to end.** Client configs follow each client's docs; only the raw stdio protocol is tested. See [Works with](#works-with-mcp-clients).
 - **Copyrighted tables are not shipped.** Values such as Green Book side friction, TAC, Austroads, CD 226 figures and AGPT02 equivalent-stress tables are engineer inputs. Transcribed values must be checked against the edition in use.
 - **Geotechnical inputs are placeholders.** Slope, wall and foundation soil parameters stand in for a ground-investigation report. MSE internal stability, global stability and detailing belong to the supplier and the geotechnical engineer.
