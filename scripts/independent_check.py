@@ -555,6 +555,34 @@ pl = sum(p["length"] for n_ in nets.values() for p in n_["pipes"])
 report("BoQ pipe length = network pipe lengths (m)", sum(float(r_[-2]) for r_ in bq if " pipe " in r_[1] and "Culvert" not in r_[1]), pl, 0.2, "m", rel=False)
 report("BoQ barrier length = barrier runs (m)", sum(float(r_[-2]) for r_ in bq if "guardrail" in r_[1].lower()), sum(b_["length_m"] for b_ in PR["barriers"]), 0.2, "m", rel=False)
 
+# ---------- 15. LandXML cross sections re-read with ElementTree: count, FG at CL vs parabola, EG at CL vs TIN ----------
+import xml.etree.ElementTree as ET_
+NS_ = {"l": "http://www.landxml.org/schema/LandXML-1.2"}
+xs_ = ET_.parse(f"{out}/design.xml").findall(".//l:CrossSects/l:CrossSect", NS_)
+secs_ = corr["sections"]
+report("LandXML CrossSect count = corridor sections", len(xs_), len(secs_), 0, "", rel=False)
+def at0(el, nm):
+    v = np.array(el.find(f"l:CrossSectSurf[@name='{nm}']/l:PntList2D", NS_).text.split(), float).reshape(-1, 2)
+    return float(np.interp(0.0, v[:, 0], v[:, 1]))
+report("LandXML FG at CL vs independent parabola, max abs diff (m)", max(abs(at0(e_, "FG") - zprof(float(e_.get("sta")))) for e_ in xs_), 0, 1e-3, "m", rel=False)
+report("LandXML EG at CL vs EG TIN at section point, max abs diff (m)", max(abs(at0(e_, "EG") - float(eg(np.array([s_["x"]]), np.array([s_["y"]]))[0])) for e_, s_ in zip(xs_, secs_)), 0, 0.01, "m", rel=False)  # EG sampled every 1 m across; interpolation between samples
+
+# ---------- 16. 3D CAD model (DXF R12) re-read with ezdxf: faces = LandXML TIN faces, 3D centreline z vs parabola ----------
+import ezdxf as EZ_
+cm_ = EZ_.readfile(f"{out}/civil3d-model.dxf"); msp_ = cm_.modelspace()
+nf_ = sum(len(sf_.findall(".//l:Faces/l:F", NS_)) for sf_ in ET_.parse(f"{out}/design.xml").findall(".//l:Surfaces/l:Surface", NS_))
+report("CAD model 3DFACE count = LandXML surface faces", len(msp_.query("3DFACE")), nf_, 0, "", rel=False)
+cl_pl_ = [e_ for e_ in msp_.query("POLYLINE") if e_.dxf.layer == [e2 for e2 in msp_.query("POLYLINE")][0].dxf.layer][0]
+vz_ = []
+for v_ in cl_pl_.vertices:
+    x_, y_, z_ = v_.dxf.location
+    vz_.append((x_, y_, z_))
+AL_ = [e_ for e_ in LOG if e_["tool"] == "export_cad_model"][-1]["result"]
+report("CAD model layers present (centreline, surfaces, features)", float(all(any(k_ in l_ for l_ in AL_["stats"]["layers"]) for k_ in ["CNTR", "SURF", "FEAT"])), 1.0, 0, "", rel=False)
+# centreline vertices are written at equal station steps from the first to the last station
+sv_ = np.linspace(float(xs_[0].get("sta")), float(xs_[-1].get("sta")), len(vz_))
+report("CAD centreline z vs independent parabola, max abs diff (m)", max(abs(vz_[i_][2] - zprof(sv_[i_])) for i_ in range(len(vz_))), 0, 1e-3, "m", rel=False)
+
 json.dump([dict(zip(["check", "civil_mcp", "independent", "diff", "unit", "ok"], r_)) for r_ in rows], open(f"{out}/independent-checks.json", "w"), ensure_ascii=False, indent=1)
 print(f"\n{len(rows)} checks, {len(fails)} failed")
 sys.exit(1 if fails else 0)

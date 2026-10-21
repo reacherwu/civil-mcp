@@ -10,6 +10,7 @@
 //! checks, earthwork, drawings, and an append-only audit log.
 pub mod align;
 pub mod audit;
+pub mod cad3d;
 pub mod corridor;
 pub mod culvert;
 pub mod deliver;

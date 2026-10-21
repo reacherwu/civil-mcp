@@ -350,6 +350,10 @@ pub struct Export<'a> {
     pub alignment: Option<&'a Alignment>,
     pub profiles: Vec<&'a Profile>,
     pub networks: Vec<&'a crate::pipes::Network>,
+    /// corridor cross sections (EG and FG per station), written as CrossSects in the alignment
+    pub corridor: Option<&'a crate::corridor::Corridor>,
+    /// horizontal CRS of the coordinates, when known (from import_terrain)
+    pub epsg: Option<u32>,
 }
 
 pub fn write(x: &Export) -> String {
@@ -358,6 +362,9 @@ pub fn write(x: &Export) -> String {
     let _ = writeln!(o, "<LandXML xmlns=\"http://www.landxml.org/schema/LandXML-1.2\" version=\"1.2\" date=\"2026-01-01\" time=\"00:00:00\">");
     let _ = writeln!(o, "  <Units><Metric areaUnit=\"squareMeter\" linearUnit=\"meter\" volumeUnit=\"cubicMeter\" temperatureUnit=\"celsius\" pressureUnit=\"milliBars\" angularUnit=\"decimal degrees\" directionUnit=\"decimal degrees\"/></Units>");
     let _ = writeln!(o, "  <Application name=\"civil-mcp\" manufacturer=\"civil-mcp\" version=\"{}\"/>", env!("CARGO_PKG_VERSION"));
+    if let Some(e) = x.epsg {
+        let _ = writeln!(o, "  <CoordinateSystem name=\"EPSG:{e}\" epsgCode=\"{e}\" desc=\"horizontal CRS of the source terrain; coordinates in metres\"/>");
+    }
     if !x.points.is_empty() {
         let _ = writeln!(o, "  <CgPoints>");
         for p in x.points {
@@ -428,6 +435,23 @@ pub fn write(x: &Export) -> String {
                 }
             }
             let _ = writeln!(o, "        </ProfAlign>\n      </Profile>");
+        }
+        if let Some(c) = x.corridor.filter(|c| !c.sections.is_empty()) {
+            // offsets: left negative, right positive (LandXML / Civil 3D convention)
+            let _ = writeln!(o, "      <CrossSects name=\"{} sections\" calcMethod=\"AverageEndArea\">", esc(&al.name));
+            let pl = |v: &[[f64; 2]]| v.iter().map(|q| format!("{:.4} {:.4}", q[0], q[1])).collect::<Vec<_>>().join(" ");
+            for sct in &c.sections {
+                let mut eg: Vec<[f64; 2]> = sct.ground.iter().map(|q| [-q[0], q[1]]).collect();
+                eg.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
+                let mut fg: Vec<[f64; 2]> = sct.left.fg.iter().rev().map(|q| [-q[0], q[1]]).collect();
+                fg.extend(sct.right.fg.iter().skip(1).copied());
+                let _ = writeln!(
+                    o,
+                    "        <CrossSect sta=\"{:.4}\" name=\"{:.3}\" areaCut=\"{:.4}\" areaFill=\"{:.4}\">\n          <CrossSectSurf name=\"EG\"><PntList2D>{}</PntList2D></CrossSectSurf>\n          <CrossSectSurf name=\"FG\"><PntList2D>{}</PntList2D></CrossSectSurf>\n        </CrossSect>",
+                    sct.station, sct.station, sct.cut_area, sct.fill_area, pl(&eg), pl(&fg)
+                );
+            }
+            let _ = writeln!(o, "      </CrossSects>");
         }
         let _ = writeln!(o, "    </Alignment>\n  </Alignments>");
     }

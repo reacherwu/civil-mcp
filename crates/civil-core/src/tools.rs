@@ -31,6 +31,8 @@ pub struct Session {
     pub assembly: Option<Assembly>,
     pub corridor: Option<Corridor>,
     pub corridor_fg: Option<Tin>,
+    /// horizontal EPSG code of the imported terrain (None for local / unknown)
+    pub crs_epsg: Option<u32>,
     pub corridor_datum: Option<Tin>,
     pub composite: Option<(f64, f64, usize, f64)>,
     pub gradings: Vec<Grading>,
@@ -75,6 +77,7 @@ pub fn tool_list() -> Value {
       {"name":"load_points","description":"Load survey points from CSV (id,easting,northing,elevation,desc) or LandXML CgPoints. Rejected rows are reported.","inputSchema":obj(json!({"path":s,"format":{"type":"string","enum":["csv","landxml"]}}),&["path"])},
       {"name":"import_landxml","description":"Import a LandXML 1.x file: TIN surface (as existing ground), alignment (line/arc/clothoid) and profile. Reports differences against values stored in the file (areas, elevations, lengths, element end points).","inputSchema":obj(json!({"path":s,"surface":s,"alignment":s,"use_surface":b,"use_alignment":b}),&["path"])},
       {"name":"export_landxml","description":"Write LandXML 1.2 with points, existing-ground and corridor surfaces, alignment and profile.","inputSchema":obj(json!({"file":s}),&[])},
+      {"name":"export_cad_model","description":"Write a 3D CAD model for Civil 3D / MicroStation handoff (DXF R12, metres, world coordinates): existing and finished-grade TIN faces, 3D centreline, corridor feature lines by point code, wall tops, pipes at invert, structures at rim. Layers follow the active drafting profile (NCS for US, ISO 13567 elsewhere) or 'layer_map' {internal: agency layer} (keys SURF-EG, SURF-FG, ALIGNMENT, FEATURE, WALL, PIPE, STRUCTURE). Use with export_landxml for alignments, profiles, cross sections and pipe networks.","inputSchema":obj(json!({"file":s,"layer_map":{"type":"object"}}),&[])},
       {"name":"import_terrain","description":"Import terrain from a GeoTIFF / Cloud-Optimised GeoTIFF DEM, an ESRI ASCII grid (.asc), or a LAS/LAZ point cloud (ASPRS classes, default [2] ground), and build the existing-ground TIN. CRS: EPSG from GeoTIFF keys or LAS VLRs (or 'epsg'); geographic and Web Mercator data are projected to UTM; projected data (UTM, MGA, state plane, national grids) are kept planar with foot units (US survey / international) converted to metres. 'crop' [xmin,ymin,xmax,ymax] in output metres, 'step' subsamples, 'z_units' m|ft|us_ft.","inputSchema":obj(json!({"path":s,"step":num,"crop":arr(num.clone()),"epsg":num,"target_epsg":num,"xy_units":{"type":"string","enum":["m","ft","us_ft"]},"z_units":{"type":"string","enum":["m","ft","us_ft"]},"classes":arr(num.clone()),"max_points":num,"max_edge_m":num,"build_surface":b}),&["path"])},
       {"name":"build_surface","description":"Build a Delaunay TIN from loaded points. Optional max_edge_m drops long hull triangles.","inputSchema":obj(json!({"max_edge_m":num}),&[])},
       {"name":"create_alignment","description":"Horizontal alignment from PIs, circular radii and optional symmetric clothoid lengths (tangent–spiral–arc–spiral–tangent). Fails if curves overlap.","inputSchema":obj(json!({"name":s,"pis":xy,"radii":arr(num.clone()),"spirals":arr(num.clone()),"start_station":num}),&["name","pis","radii"])},
@@ -542,10 +545,40 @@ impl Session {
                     alignment: self.alignment.as_ref(),
                     profiles: self.profile.iter().collect(),
                     networks: self.networks.iter().collect(),
+                    corridor: self.corridor.as_ref(),
+                    epsg: self.crs_epsg,
                 });
                 let h = self.write(&file, xml.as_bytes())?;
                 let out = json!({"file": file, "sha256": h, "bytes": xml.len()});
                 let prov = self.log("agent", name, a, &out, &["LandXML 1.2 schema".into()])?;
+                Ok(json!({"result": out, "provenance": prov}))
+            }
+            "export_cad_model" => {
+                let b = self.need_basis()?.clone();
+                let file = a["file"].as_str().unwrap_or("civil3d-model.dxf").to_string();
+                let spec: crate::frame::FrameSpec = self.frame.clone().unwrap_or_default();
+                let rf = crate::frame::resolve(&spec, b.standard)?;
+                let mut map = rf.spec.layer_map.clone();
+                if let Some(m) = a.get("layer_map").and_then(|v| v.as_object()) {
+                    for (k, v) in m {
+                        if let Some(v) = v.as_str() {
+                            map.insert(k.clone(), v.to_string());
+                        }
+                    }
+                }
+                let m = crate::cad3d::Model {
+                    eg: self.tin.as_ref().map(|t| &t.0),
+                    fg: self.corridor_fg.as_ref(),
+                    al: self.alignment.as_ref(),
+                    pr: self.profile.as_ref(),
+                    cor: self.corridor.as_ref(),
+                    nets: self.networks.iter().collect(),
+                };
+                let (dxf, st) = crate::cad3d::write(&m, &rf.profile, &map);
+                let h = self.write(&file, dxf.as_bytes())?;
+                let out = json!({"file": file, "sha256": h, "format": "DXF R12 (AC1009), metres, world coordinates", "drafting_profile": rf.country, "stats": st, "epsg": self.crs_epsg,
+                    "dwg": "not written: no DWG writer is bundled; convert with ODA File Converter or LibreDWG dxf2dwg", "note": "verified by re-reading with ezdxf in CI; not opened in Civil 3D"});
+                let prov = self.log("agent", name, a, &out, &["DXF R12 reference (Autodesk DXF), layer names from the drafting profile".into()])?;
                 Ok(json!({"result": out, "provenance": prov}))
             }
             "import_terrain" => {
@@ -576,6 +609,7 @@ impl Session {
                     .enumerate()
                     .map(|(i, q)| points::SurveyPoint { id: format!("T{}", i + 1), e: q[0], n: q[1], z: q[2], desc: imp.format.clone() })
                     .collect();
+                self.crs_epsg = imp.crs.target_epsg.filter(|_| imp.crs.xy_unit_m == 1.0);
                 let mut out = serde_json::to_value(&imp).unwrap();
                 out["file_sha256"] = json!(sha256_hex(&bytes));
                 if a["build_surface"].as_bool().unwrap_or(true) {

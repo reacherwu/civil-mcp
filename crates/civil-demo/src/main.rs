@@ -537,6 +537,7 @@ pub fn run_units(out: &str, us: bool) -> Session {
     let c = r.call("check_standards", json!({}));
     println!("all checks: {} total, {} mandatory failures, {} advisory", c["result"]["total"], c["result"]["mandatory_failures"], c["result"]["advisory"]);
     r.call("export_landxml", json!({"file":"design.xml"}));
+    r.call("export_cad_model", json!({"file":"civil3d-model.dxf"}));
     // sheet frame: US drafting profile defaults (ANSI D, NCS layers, UDS sheet ids) + title-block content
     r.call(
         "set_sheet_frame",
