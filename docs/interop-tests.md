@@ -27,6 +27,11 @@ Sheet 3 and construction sheet CS-C-101, drawn with ezdxf from the DXF read back
 
 `export_cad_model` takes `dwg_version` (`ACAD2004`, `ACAD2007`, `ACAD2010`, `ACAD2013`, `ACAD2018`) and `dwg_include_sheets`. When ODA File Converter is installed (`ODA_FILE_CONVERTER=/path/to/ODAFileConverter` or `ODAFileConverter` on PATH) the model, and optionally every `sheet-NN` / `cs-NN` DXF, is converted into `dwg/` and each DWG is hashed into the audit log. Without the converter the call returns an error that says what to install. ODA File Converter is a separate program under ODA's own terms; it is not bundled. The test `crates/civil-demo/tests/dwg.rs` covers both cases (CI runs the no-converter case).
 
-## BricsCAD (Linux trial)
+## BricsCAD V27 (Linux trial): installed, not yet activated
 
-Not installed. The download at <https://bricscad.octave.com/cad-download> requires signing in with a Bricsys account before the Linux `.deb` can be downloaded. The trial itself is 30 days, no credit card. Release notes state that V27 needs Ubuntu 24.04 or a distribution newer than April 2024, and that civil TIN surfaces and alignments need the Pro level or higher (the trial runs as Ultimate). LandXML import in BricsCAD has therefore not been tried.
+- Package: BricsCAD V27.1.05 Linux `.deb` (downloaded by the user with a Bricsys account). Installed on Debian 13 with `apt install ./BricsCAD-V27.1.05-1-en_US-amd64.deb` after adding `libxcb-xinerama0`, `libsecret-1-0` and `libegl1`.
+- Launch: starts under Xvfb (`/usr/bin/bricscadv27`). A script run with `-b script.scr` does not execute: the first screen is the licence dialog ("Log in to activate trial" / "Activate license"), and nothing runs until the trial is activated through a Bricsys login in the GUI.
+
+![BricsCAD activation dialog under Xvfb](img/interop/bricscad-v27-activation.png)
+
+**Status: no civil-mcp file has been opened in BricsCAD yet.** The DWG (AC1027 / AC1032), DXF and LandXML checks (AUDIT, entity counts by type and layer, extents, `LANDXMLIMPORT` of surfaces and alignments, screenshots) are scripted and wait for the trial activation. Release notes say civil TIN surfaces and alignments need the Pro level or higher; the trial runs as Ultimate.
