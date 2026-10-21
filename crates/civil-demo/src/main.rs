@@ -36,12 +36,26 @@ impl Run {
 
 #[allow(dead_code)]
 fn main() {
-    let out = std::env::args().nth(1).unwrap_or_else(|| "demo-out".into());
-    run(&out);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let us = args.windows(2).any(|w| w[0] == "--units" && w[1].eq_ignore_ascii_case("us"));
+    let out = args
+        .iter()
+        .enumerate()
+        .find(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--units"))
+        .map(|x| x.1.clone())
+        .unwrap_or_else(|| "demo-out".into());
+    run_units(&out, us);
 }
 
-/// Runs the whole demo into `out` and returns the live session.
+/// Runs the whole demo into `out` (SI) and returns the live session.
+#[allow(dead_code)]
 pub fn run(out: &str) -> Session {
+    run_units(out, false)
+}
+
+/// Runs the demo; with `us` the drawings, reports, BoQ and files are in US
+/// customary units (the demo's own inputs stay SI: the survey data are UTM metres).
+pub fn run_units(out: &str, us: bool) -> Session {
     let root = env!("CARGO_MANIFEST_DIR");
     let data = format!("{root}/../../data/usgs3dep_palo_alto_points.csv");
     let _ = std::fs::remove_dir_all(out);
@@ -49,6 +63,9 @@ pub fn run(out: &str) -> Session {
     let log = std::fs::File::create(format!("{out}/run-log.jsonl")).unwrap();
     let mut r = Run { s: Session::default(), log };
     r.call("open_project", json!({"dir": out}));
+    if us {
+        r.call("set_units", json!({"system": "US", "foot": "international", "inputs": "SI", "outputs": "SI"}));
+    }
     // US profile. Values the profile cannot ship (f_max, max grade) are entered by the engineer.
     let v = r.call(
         "set_design_basis",

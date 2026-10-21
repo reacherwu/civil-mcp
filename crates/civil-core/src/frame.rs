@@ -236,7 +236,7 @@ pub fn profile(s: Standard) -> Profile {
             ));
             params.push(dp(
                 "Units",
-                "metric (SI) as designed by civil-mcp; US customary plan sets need unit conversion (not implemented)",
+                "SI by default; US customary (ft, CY, SY, LF, 100 ft stations, engineering scales) with set_units",
                 "engineer",
                 "Agency policy",
             ));
@@ -467,6 +467,9 @@ pub fn profile(s: Standard) -> Profile {
         } else {
             let mut v = iso_scales();
             v.extend([120.0, 240.0, 250.0, 360.0, 480.0, 600.0, 720.0, 1200.0, 2400.0, 2500.0]);
+            if crate::units::cur().us() {
+                v.extend([12.0, 24.0, 48.0, 60.0, 3600.0, 4800.0, 6000.0, 12000.0, 24000.0]);
+            }
             v
         },
         params,
@@ -1210,7 +1213,7 @@ pub fn field_values(r: &Resolved, info: &SheetInfo, meta: &SheetMeta, id: &str) 
         f.status_code.clone().unwrap_or_else(|| if approved && r.profile.code == "UK" { "A1".into() } else { r.profile.status_code.into() }),
     );
     m.insert("status", if approved { "APPROVED IN AUDIT LOG - seal/sign by engineer".into() } else { "PRELIMINARY - NOT FOR CONSTRUCTION".into() });
-    m.insert("scale", meta.scale.clone());
+    m.insert("scale", crate::units::scale_text(&meta.scale));
     m.insert("standard", info.standard.clone());
     m.insert("audit_head", info.audit_head.clone());
     m.insert("size", r.size.clone());
@@ -1320,10 +1323,11 @@ fn north_arrow(d: &mut Drawing, c: [f64; 2], s: f64, h: f64) {
 /// Graphic scale bar at the plotted scale (layout ratio / layout factor).
 fn scale_bar(d: &mut Drawing, x: f64, y: f64, maxw: f64, n_layout: f64, k: f64, h: f64) {
     let n_plot = n_layout / k;
-    let target_m = (maxw * n_plot / 1000.0).max(1e-6);
+    let lf = crate::units::lf();
+    let target_m = (maxw * n_plot / 1000.0 / lf).max(1e-6);
     let e = 10f64.powf(target_m.log10().floor());
     let l = [5.0, 2.0, 1.0].iter().map(|m| m * e).find(|v| *v <= target_m).unwrap_or(e);
-    let len = l * 1000.0 / n_plot;
+    let len = l * lf * 1000.0 / n_plot;
     for i in 0..4 {
         let (a, b) = (x + len * i as f64 / 4.0, x + len * (i + 1) as f64 / 4.0);
         if i % 2 == 0 {
@@ -1336,7 +1340,7 @@ fn scale_bar(d: &mut Drawing, x: f64, y: f64, maxw: f64, n_layout: f64, k: f64, 
     if len > 28.0 {
         d.text("SCALEBAR", [x + len / 2.0 - 1.5, y - h - 1.0], h, &fmt(l / 2.0));
     }
-    d.text("SCALEBAR", [x + len - 1.5, y - h - 1.0], h, &format!("{} m", fmt(l)));
+    d.text("SCALEBAR", [x + len - 1.5, y - h - 1.0], h, &format!("{} {}", fmt(l), crate::units::lu()));
 }
 
 /// Place one A1-layout sheet on the resolved frame.
@@ -1565,7 +1569,8 @@ pub fn compose(content: &Drawing, r: &Resolved, info: &SheetInfo, id: &str) -> D
     let by1 = y4;
     let by0 = by1 - bh;
     d.line("TB", [c3[0], by0], [c3[1], by0]);
-    let sline = if n_layout.is_some() { format!("Scale {}", meta.scale) } else { format!("Scale {} (not to scale)", meta.scale) };
+    let shown = crate::units::scale_text(&meta.scale);
+    let sline = if n_layout.is_some() { format!("Scale {shown}") } else { format!("Scale {shown} (not to scale)") };
     d.text("TB-TEXT", [c3[0] + 2.0, by1 - h0 * 1.45], h0, &clip(&sline, c3[1] - c3[0] - 18.0, h0));
     if r.north_arrow && plan {
         north_arrow(&mut d, [c3[1] - 8.0, by0 + bh * 0.35], (bh * 0.3).min(8.0), h0);

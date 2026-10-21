@@ -12,6 +12,10 @@ from matplotlib.path import Path
 from scipy.optimize import brentq, fsolve
 
 out = sys.argv[1]
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from si_view import si_dir
+out = si_dir(out)
 fails, rows = [], []
 G = 9.80665
 

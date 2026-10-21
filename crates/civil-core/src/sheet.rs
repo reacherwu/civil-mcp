@@ -14,10 +14,15 @@ pub const SHEET_W: f64 = 841.0;
 pub const SHEET_H: f64 = 594.0;
 
 pub fn sta_label(s: f64) -> String {
-    // metric station / chainage: km + metres
+    // SI: km + metres (0+123.45); US customary: 100 ft stations (12+34.56)
+    if crate::units::cur().us() {
+        return crate::units::sta(s);
+    }
     let k = (s / 1000.0).floor();
     format!("{}+{:06.2}", k as i64, s - k * 1000.0)
 }
+
+use crate::units::len as ul;
 
 fn sample_al(al: &Alignment, step: f64) -> Vec<(f64, f64, f64, f64)> {
     let mut v = Vec::new();
@@ -129,16 +134,19 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
     let pad = 40.0;
     let (mnx, mny, mxx, mxy) = (mnx - pad, mny - pad, mxx + pad, mxy + pad);
     let need = ((mxx - mnx) / (px1 - px0 - 10.0) * 1000.0).max((mxy - mny) / (py1 - py0 - 10.0) * 1000.0);
-    let n = [500.0, 1000.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.0, 10000.0, 20000.0].into_iter().find(|&n| n >= need).unwrap_or(need.ceil());
+    let n = crate::units::pick_scale(need, &[500.0, 1000.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.0, 10000.0, 20000.0], crate::units::US_PLAN_FT_PER_IN);
     let sc = 1000.0 / n;
     let (cx, cy) = ((mnx + mxx) / 2.0, (mny + mxy) / 2.0);
     let (vx, vy) = ((px0 + px1) / 2.0, (py0 + py1) / 2.0);
     let tp = |x: f64, y: f64| [vx + (x - cx) * sc, vy + (y - cy) * sc];
     let inside = |p: [f64; 2]| p[0] > px0 && p[0] < px1 && p[1] > py0 && p[1] < py1;
-    for (lv, a, b) in tin.contours(1.0) {
+    let us = crate::units::cur().us();
+    let (ci, cmaj) = if us { (2.0 * crate::units::lf(), 5.0) } else { (1.0, 5.0) };
+    for (lv, a, b) in tin.contours(ci) {
         let (pa, pb) = (tp(a[0], a[1]), tp(b[0], b[1]));
         if inside(pa) && inside(pb) {
-            let major = (lv / 5.0 - (lv / 5.0).round()).abs() < 1e-6;
+            let q = lv / ci / cmaj;
+            let major = (q - q.round()).abs() < 1e-6;
             d.line(if major { "CONTOUR-MAJOR" } else { "CONTOUR-MINOR" }, pa, pb);
         }
     }
@@ -171,7 +179,7 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
             let b = net.structures.iter().find(|s| s.0 == p.to).unwrap();
             d.line("PIPE", tp(a.1, a.2), tp(b.1, b.2));
             let m = tp((a.1 + b.1) / 2.0, (a.2 + b.2) / 2.0);
-            d.text("PIPE", [m[0] + 1.5, m[1] + 1.5], 1.8, &format!("{} D{:.0} S{:.2}%", p.id, p.diameter_m * 1000.0, p.slope * 100.0));
+            d.text("PIPE", [m[0] + 1.5, m[1] + 1.5], 1.8, &format!("{} D{} S{:.2}%", p.id, crate::units::dia(p.diameter_m), p.slope * 100.0));
         }
         for s in &net.structures {
             let c = tp(s.1, s.2);
@@ -180,25 +188,35 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         }
     }
     d.poly("ALIGNMENT", samp.iter().map(|p| tp(p.1, p.2)).collect());
-    let mut st = (al.start_station() / 100.0).ceil() * 100.0;
+    let sstep = crate::units::sta_step();
+    let mut st = (al.start_station() / sstep).ceil() * sstep;
     while st <= al.end_station() + 1e-9 {
         let (x, y, h) = al.point_at(st).unwrap();
         let (nx, ny) = (-h.sin(), h.cos());
         d.line("ALIGNMENT", tp(x - 3.0 / sc * nx, y - 3.0 / sc * ny), tp(x + 3.0 / sc * nx, y + 3.0 / sc * ny));
         d.text("TEXT", tp(x + 5.0 / sc * nx, y + 5.0 / sc * ny), 2.2, &sta_label(st));
-        st += 100.0;
+        st += sstep;
     }
     for c in al.curves() {
         let (x, y, _) = al.point_at((c.sta_start + c.sta_end) / 2.0).unwrap();
         let p = tp(x, y);
         let txt = if c.ls_in > 0.0 {
-            format!("JD{} R={:.0} Ls={:.0} α={:.2}°", c.index, c.radius, c.ls_in, c.delta_deg.abs())
+            format!("JD{} R={:.0} Ls={:.0} α={:.2}°", c.index, ul(c.radius), ul(c.ls_in), c.delta_deg.abs())
         } else {
-            format!("JD{} R={:.0} L={:.1} α={:.2}°", c.index, c.radius, c.arc_len, c.delta_deg.abs())
+            format!("JD{} R={:.0} L={:.1} α={:.2}°", c.index, ul(c.radius), ul(c.arc_len), c.delta_deg.abs())
         };
         d.text("TEXT", [p[0] + 3.0, p[1] - 6.0], 2.2, &txt);
     }
-    d.text("TEXT", [px0 + 4.0, py1 - 7.0], 4.0, &format!("PLAN  1:{n:.0}   contours 1 m (index 5 m)  N↑"));
+    d.text(
+        "TEXT",
+        [px0 + 4.0, py1 - 7.0],
+        4.0,
+        &if us {
+            format!("PLAN  {}   contours 2 ft (index 10 ft)  N↑", crate::units::scale(n))
+        } else {
+            format!("PLAN  1:{n:.0}   contours 1 m (index 5 m)  N↑")
+        },
+    );
     d.poly("TEXT", vec![[px1 - 15.0, py1 - 25.0], [px1 - 12.0, py1 - 10.0], [px1 - 9.0, py1 - 25.0]]);
     // profile
     let (qx0, qy0, qx1, qy1) = (20.0, 20.0, SHEET_W - 160.0, 290.0);
@@ -220,51 +238,58 @@ pub fn plan_profile(ds: &Design, info: &SheetInfo, page: usize, pages: usize) ->
         }
         s += 2.0;
     }
-    let zmin = (zs.iter().cloned().fold(f64::MAX, f64::min) / 10.0).floor() * 10.0 - 10.0;
-    let zmax = (zs.iter().cloned().fold(f64::MIN, f64::max) / 10.0).ceil() * 10.0 + 10.0;
-    let hs = (qx1 - qx0 - 40.0) / (s1 - s0);
-    let vs = ((qy1 - qy0 - 40.0) / (zmax - zmin)).min(hs * 10.0);
+    let lf = crate::units::lf();
+    let zg = 10.0 * lf;
+    let zmin = (zs.iter().cloned().fold(f64::MAX, f64::min) / zg).floor() * zg - zg;
+    let zmax = (zs.iter().cloned().fold(f64::MIN, f64::max) / zg).ceil() * zg + zg;
+    let mut hs = (qx1 - qx0 - 40.0) / (s1 - s0);
+    let mut vs = ((qy1 - qy0 - 40.0) / (zmax - zmin)).min(hs * 10.0);
+    if us {
+        // snap to engineering scales (1" = 50' H, 1" = 5' V ...)
+        hs = 1000.0 / crate::units::pick_scale(1000.0 / hs, &[], crate::units::US_PLAN_FT_PER_IN);
+        vs = 1000.0 / crate::units::pick_scale(1000.0 / vs, &[], crate::units::US_VERT_FT_PER_IN);
+    }
     let tq = |s: f64, z: f64| [qx0 + 30.0 + (s - s0) * hs, qy0 + 25.0 + (z - zmin) * vs];
     let mut z = zmin;
     while z <= zmax + 1e-9 {
         d.line("GRID", tq(s0, z), tq(s1, z));
-        d.text("TEXT", [qx0 + 3.0, tq(s0, z)[1] - 1.0], 2.0, &format!("{z:.0}"));
-        z += 10.0;
+        d.text("TEXT", [qx0 + 3.0, tq(s0, z)[1] - 1.0], 2.0, &format!("{:.0}", ul(z)));
+        z += zg;
     }
-    let mut st = (s0 / 100.0).ceil() * 100.0;
+    let mut st = (s0 / sstep).ceil() * sstep;
     while st <= s1 + 1e-9 {
         d.line("GRID", tq(st, zmin), tq(st, zmax));
         d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 14.0], 2.0, &sta_label(st));
         if let (Some(zd), Some(zg)) = (pr.elevation_at(st), al.point_at(st).and_then(|(x, y, _)| tin.elevation_at(x, y))) {
-            d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 9.0], 1.8, &format!("FG {zd:.2}"));
-            d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 5.0], 1.8, &format!("EG {zg:.2}"));
+            d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 9.0], 1.8, &format!("FG {:.2}", ul(zd)));
+            d.text("TEXT", [tq(st, zmin)[0] - 8.0, qy0 + 5.0], 1.8, &format!("EG {:.2}", ul(zg)));
         }
-        st += 100.0;
+        st += sstep;
     }
     d.poly("PROFILE-GROUND", g.iter().map(|p| tq(p.0, p.1)).collect());
     d.poly("PROFILE-DESIGN", fg.iter().map(|p| tq(p.0, p.1)).collect());
     for (i, gr) in pr.grades_pct.iter().enumerate() {
         let (a, b) = (pr.input.vpis[i], pr.input.vpis[i + 1]);
         let m = tq((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0);
-        d.text("TEXT", [m[0], m[1] + 4.0], 2.2, &format!("i={gr:+.2}% L={:.0}", b[0] - a[0]));
+        d.text("TEXT", [m[0], m[1] + 4.0], 2.2, &format!("i={gr:+.2}% L={:.0}", ul(b[0] - a[0])));
     }
     for c in &pr.curves {
         let v = pr.input.vpis[c.vpi_index];
         let p = tq(v[0], v[1]);
         d.poly("PROFILE-DESIGN", vec![[p[0], p[1]], [p[0], p[1] + 12.0]]);
-        d.text("TEXT", [p[0] - 10.0, p[1] + 14.0], 2.0, &format!("VPI {} EL {:.2}", sta_label(v[0]), v[1]));
+        d.text("TEXT", [p[0] - 10.0, p[1] + 14.0], 2.0, &format!("VPI {} EL {:.2}", sta_label(v[0]), ul(v[1])));
         d.text(
             "TEXT",
             [p[0] - 10.0, p[1] + 17.0],
             2.0,
-            &format!("{} R={:.0} L={:.0}", if c.crest { "CREST" } else { "SAG" }, c.length / (c.a_pct.abs() / 100.0).max(1e-9), c.length),
+            &format!("{} R={:.0} L={:.0}", if c.crest { "CREST" } else { "SAG" }, ul(c.length / (c.a_pct.abs() / 100.0).max(1e-9)), ul(c.length)),
         );
     }
     d.text(
         "TEXT",
         [qx0 + 4.0, qy1 - 7.0],
         4.0,
-        &format!("PROFILE  H 1:{:.0}  V 1:{:.0}  (existing ground brown, finished grade red)", 1000.0 / hs, 1000.0 / vs),
+        &format!("PROFILE  H {}  V {}  (existing ground brown, finished grade red)", crate::units::scale(1000.0 / hs), crate::units::scale(1000.0 / vs)),
     );
     title_block_s(&mut d, info, "Plan and profile", &format!("plan 1:{n:.0}; profile as shown"), page, pages);
     d
@@ -372,11 +397,22 @@ pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) 
     let hs = (x1 - x0 - 50.0) / total;
     let vs = (y1 - y0 - 50.0) / (zhi - zlo);
     let tp = |c: f64, z: f64| [x0 + 35.0 + c * hs, y0 + 30.0 + (z - zlo) * vs];
-    let zstep = if zhi - zlo > 20.0 { 5.0 } else { 1.0 };
-    let mut z = zlo;
+    let lfp = crate::units::lf();
+    let zstep = if crate::units::cur().us() {
+        if (zhi - zlo) / lfp > 60.0 {
+            10.0 * lfp
+        } else {
+            2.0 * lfp
+        }
+    } else if zhi - zlo > 20.0 {
+        5.0
+    } else {
+        1.0
+    };
+    let mut z = if crate::units::cur().us() { (zlo / zstep).ceil() * zstep } else { zlo };
     while z <= zhi + 1e-9 {
         d.line("GRID", tp(0.0, z), tp(total, z));
-        d.text("TEXT", [x0 + 3.0, tp(0.0, z)[1] - 1.0], 2.0, &format!("{z:.0}"));
+        d.text("TEXT", [x0 + 3.0, tp(0.0, z)[1] - 1.0], 2.0, &format!("{:.0}", ul(z)));
         z += zstep;
     }
     let mut rim = vec![];
@@ -389,15 +425,41 @@ pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) 
         d.line("HGL", tp(ca, p.hgl_up), tp(cb, p.hgl_dn));
         d.line("EGL", tp(ca, p.egl_up), tp(cb, p.egl_dn));
         let m = tp((ca + cb) / 2.0, p.invert_up.min(p.invert_dn));
-        d.text("PIPE", [m[0] - 12.0, m[1] - 6.0], 1.8, &format!("{} DN{:.0} i={:.2}% L={:.1}", p.id, p.diameter_m * 1000.0, p.slope * 100.0, p.length));
-        d.text("PIPE", [m[0] - 12.0, m[1] - 9.5], 1.6, &format!("Q={:.1} L/s v={:.2} m/s {}", p.q_design * 1000.0, p.v_design, p.regime));
+        d.text(
+            "PIPE",
+            [m[0] - 12.0, m[1] - 6.0],
+            1.8,
+            &format!(
+                "{} {}{} i={:.2}% L={:.1}",
+                p.id,
+                if crate::units::cur().us() { "D" } else { "DN" },
+                crate::units::dia(p.diameter_m),
+                p.slope * 100.0,
+                ul(p.length)
+            ),
+        );
+        d.text(
+            "PIPE",
+            [m[0] - 12.0, m[1] - 9.5],
+            1.6,
+            &if crate::units::cur().us() {
+                format!("Q={:.2} cfs v={:.2} ft/s {}", p.q_design / 0.3048f64.powi(3), p.v_design / 0.3048, p.regime)
+            } else {
+                format!("Q={:.1} L/s v={:.2} m/s {}", p.q_design * 1000.0, p.v_design, p.regime)
+            },
+        );
         for (c, id) in [(ca, &p.from), (cb, &p.to)] {
             if let Some(h) = hyd(id) {
                 rim.push(tp(c, h.rim));
                 d.line("STRUCTURE", tp(c, h.rim), tp(c, p.invert_up.min(p.invert_dn) - 0.3));
                 d.line("HGL", [tp(c, h.hgl)[0] - 1.5, tp(c, h.hgl)[1]], [tp(c, h.hgl)[0] + 1.5, tp(c, h.hgl)[1]]);
                 if c == ca {
-                    d.text("STRUCTURE", [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} RIM {:.2} HGL {:.2} K={:.2}", id, h.rim, h.hgl, h.k));
+                    d.text(
+                        "STRUCTURE",
+                        [tp(c, h.rim)[0] - 2.0, tp(c, h.rim)[1] + 2.0],
+                        1.8,
+                        &format!("{} RIM {:.2} HGL {:.2} K={:.2}", id, ul(h.rim), ul(h.hgl), h.k),
+                    );
                 }
             }
         }
@@ -405,11 +467,16 @@ pub fn pipe_profile(net: &Network, info: &SheetInfo, page: usize, pages: usize) 
     if let Some(p) = best.last() {
         if let Some(h) = hyd(&p.to) {
             let c = total;
-            d.text("STRUCTURE", [tp(c, h.rim)[0] - 32.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} OUTFALL HGL {:.2}", p.to, h.hgl));
+            d.text("STRUCTURE", [tp(c, h.rim)[0] - 32.0, tp(c, h.rim)[1] + 2.0], 1.8, &format!("{} OUTFALL HGL {:.2}", p.to, ul(h.hgl)));
         }
     }
     d.poly("PROFILE-GROUND", rim);
-    d.text("TEXT", [x0 + 4.0, y1 - 7.0], 4.0, &format!("PIPE PROFILE - {}  H 1:{:.0} V 1:{:.0}", net.name, 1000.0 / hs, 1000.0 / vs));
+    d.text(
+        "TEXT",
+        [x0 + 4.0, y1 - 7.0],
+        4.0,
+        &format!("PIPE PROFILE - {}  H {} V {}", net.name, crate::units::scale(1000.0 / hs), crate::units::scale(1000.0 / vs)),
+    );
     d.text("TEXT", [x0 + 4.0, y1 - 13.0], 2.2, &format!("cyan = HGL, red = EGL, brown = rim; method {}", net.hgl_method));
     let mut y = y0 - 8.0;
     for c in net.checks.iter().filter(|c| !c.pass) {
@@ -455,10 +522,11 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
             hmax = hmax.max(hi - lo + 3.0);
         }
         let scale_h = ((cw - 10.0) / (2.0 * wmax)).min((ch - 26.0) / hmax);
-        let nice = [50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0]
-            .into_iter()
-            .find(|n| 1000.0 / n <= scale_h)
-            .unwrap_or(2000.0);
+        let nice = if crate::units::cur().us() {
+            crate::units::pick_scale(1000.0 / scale_h, &[], &[1.0, 2.0, 4.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0, 100.0, 200.0])
+        } else {
+            [50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0].into_iter().find(|n| 1000.0 / n <= scale_h).unwrap_or(2000.0)
+        };
         let sc = 1000.0 / nice;
         let mut d = Drawing::default();
         base(&mut d);
@@ -508,7 +576,7 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
                     d.fill("WALL", vec![tp(o, zt), tp(o, zbt), tp(o + back * wd.stem_bot, zbt), tp(o + back * wd.stem_top, zt)], [0.7, 0.7, 0.75]);
                     let (a, b) = (o - back * wd.toe, o - back * wd.toe + back * wd.base_b);
                     d.fill("WALL", vec![tp(a, zb), tp(b, zb), tp(b, zbt), tp(a, zbt)], [0.7, 0.7, 0.75]);
-                    d.text("TEXT", [tp(o, zt)[0] - 6.0, tp(o, zt)[1] + 2.0], 1.5, &format!("WALL H={:.1} B={:.2}", wd.h, wd.base_b));
+                    d.text("TEXT", [tp(o, zt)[0] - 6.0, tp(o, zt)[1] + 2.0], 1.5, &format!("WALL H={:.1} B={:.2}", ul(wd.h), ul(wd.base_b)));
                 }
             }
             d.line("GRID", tp(0.0, zlo), tp(0.0, zlo + hmax - 2.0));
@@ -517,7 +585,7 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
                 "TEXT",
                 [x0 + 4.0, y0 + 7.0],
                 1.8,
-                &format!("FG {:.2} EG {:.2}  cut {:.1} m² fill {:.1} m²", s.cl_elev, s.ground_cl, s.cut_area, s.fill_area),
+                &format!("FG {:.2} EG {:.2}  cut {:.1} m² fill {:.1} m²", ul(s.cl_elev), ul(s.ground_cl), s.cut_area, s.fill_area),
             );
             d.text(
                 "TEXT",
@@ -532,7 +600,7 @@ pub fn cross_sections(c: &Corridor, info: &SheetInfo, first_page: usize, pages: 
                 ),
             );
         }
-        d.text("TEXT", [20.0, 12.0], 2.5, &format!("CROSS SECTIONS 1:{nice:.0}  (red = cut, green = fill, green line = subgrade datum)"));
+        d.text("TEXT", [20.0, 12.0], 2.5, &format!("CROSS SECTIONS {}  (red = cut, green = fill, green line = subgrade datum)", crate::units::scale(nice)));
         title_block(&mut d, info, "Cross sections", first_page + pi, pages);
         out.push(d);
     }
@@ -562,11 +630,12 @@ pub fn mass_haul_sheet(
     let span = (hi - lo).max(1.0);
     let tp = |s: f64, m: f64| [x0 + 30.0 + (s - s0) / (s1 - s0) * (x1 - x0 - 40.0), y0 + 20.0 + (m - lo) / span * (y1 - y0 - 40.0)];
     d.line("GRID", tp(s0, 0.0), tp(s1, 0.0));
-    let step = 10f64.powf((span / 5.0).log10().floor());
+    let vf = if crate::units::cur().us() { crate::units::Kind::Volume.factor(crate::units::cur()) } else { 1.0 };
+    let step = 10f64.powf((span / vf / 5.0).log10().floor()) * vf;
     let mut m = (lo / step).floor() * step;
     while m <= hi {
         d.line("GRID", tp(s0, m), tp(s1, m));
-        d.text("TEXT", [x0 + 2.0, tp(s0, m)[1] - 1.0], 1.8, &format!("{m:.0}"));
+        d.text("TEXT", [x0 + 2.0, tp(s0, m)[1] - 1.0], 1.8, &format!("{:.0}", m / vf));
         m += step;
     }
     d.poly("PROFILE-DESIGN", mh.ordinates.iter().map(|p| tp(p[0], p[1])).collect());
@@ -575,7 +644,17 @@ pub fn mass_haul_sheet(
         d.line("ALIGNMENT", [p[0], p[1] - 4.0], [p[0], p[1] + 4.0]);
         d.text("TEXT", [p[0] + 1.0, p[1] + 5.0], 1.8, &format!("BAL {}", sta_label(*b)));
     }
-    d.text("TEXT", [x0 + 4.0, y1 - 7.0], 4.0, &format!("MASS HAUL (m³)  cut factor {:.2}  final ordinate {:.0} m³", mh.cut_factor, mh.final_ordinate));
+    d.text(
+        "TEXT",
+        [x0 + 4.0, y1 - 7.0],
+        4.0,
+        &format!(
+            "MASS HAUL ({})  cut factor {:.2}  final ordinate {:.0} m³",
+            if crate::units::cur().us() { "CY" } else { "m³" },
+            mh.cut_factor,
+            mh.final_ordinate
+        ),
+    );
     // material table
     let mut y = y0 - 12.0;
     let row = |d: &mut Drawing, cols: &[String], y: f64, h: f64| {
@@ -584,21 +663,22 @@ pub fn mass_haul_sheet(
             d.text("TEXT", [xs[i.min(7)], y], h, c);
         }
     };
-    let mut head = vec!["Station range".to_string(), "Cut m³".into(), "Fill m³".into()];
-    head.extend(c.assembly.pavement.iter().map(|l| format!("{} m³", l.name)));
+    let vu = if crate::units::cur().us() { "CY" } else { "m³" };
+    let mut head = vec!["Station range".to_string(), format!("Cut {vu}"), format!("Fill {vu}")];
+    head.extend(c.assembly.pavement.iter().map(|l| format!("{} {vu}", l.name)));
     row(&mut d, &head, y, 2.5);
     y -= 6.0;
     for r in rows {
-        let mut cols = vec![format!("{}–{}", sta_label(r.from), sta_label(r.to)), format!("{:.0}", r.cut_m3), format!("{:.0}", r.fill_m3)];
-        cols.extend(r.layers_m3.iter().map(|v| format!("{v:.1}")));
+        let mut cols = vec![format!("{}–{}", sta_label(r.from), sta_label(r.to)), format!("{:.0}", r.cut_m3 / vf), format!("{:.0}", r.fill_m3 / vf)];
+        cols.extend(r.layers_m3.iter().map(|v| format!("{:.1}", v / vf)));
         row(&mut d, &cols, y, 2.0);
         y -= 4.5;
         if y < 120.0 {
             break;
         }
     }
-    let mut tot = vec!["Total".to_string(), format!("{:.0}", c.cut_m3), format!("{:.0}", c.fill_m3)];
-    tot.extend(c.layer_m3.iter().map(|v| format!("{:.1}", v.1)));
+    let mut tot = vec!["Total".to_string(), format!("{:.0}", c.cut_m3 / vf), format!("{:.0}", c.fill_m3 / vf)];
+    tot.extend(c.layer_m3.iter().map(|v| format!("{:.1}", v.1 / vf)));
     row(&mut d, &tot, y, 2.5);
     y -= 10.0;
     for n in nets {
@@ -609,7 +689,12 @@ pub fn mass_haul_sheet(
             *by.entry((p.material.clone(), (p.diameter_m * 1000.0).round() as i64)).or_default() += p.length;
         }
         for ((m, dmm), l) in by {
-            d.text("TEXT", [20.0, y], 2.0, &format!("{m} DN{dmm}: {l:.1} m"));
+            d.text(
+                "TEXT",
+                [20.0, y],
+                2.0,
+                &if crate::units::cur().us() { format!("{m} D{:.0}\": {l:.1} m", dmm as f64 / 25.4) } else { format!("{m} DN{dmm}: {l:.1} m") },
+            );
             y -= 4.5;
         }
         d.text("TEXT", [20.0, y], 2.0, &format!("Structures: {}", n.structures.len()));

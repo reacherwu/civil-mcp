@@ -589,6 +589,24 @@ The re-check scripts share no code with the Rust tools. They re-derive each valu
 |---:|---:|---:|---:|
 | **52** | 1 (structures: bridges) | 2 | **0** |
 
+## Units: SI or US customary
+
+civil-mcp works in SI (metres) by default. You can switch between SI and US customary at any time with the `set_units` tool, and switch back the same way:
+
+```json
+{"name":"set_units","arguments":{"system":"US"}}
+{"name":"set_units","arguments":{"system":"US","foot":"survey"}}
+{"name":"set_units","arguments":{"system":"SI"}}
+```
+
+With `system` set to `US`:
+- Tool results use US units, and keys are renamed to match (`radius_m` becomes `radius_ft`, `cut_m3` becomes `cut_cy`, `design_speed_kmh` becomes `design_speed_mph`).
+- Inputs can use US keys (`radius_ft`, `design_speed_mph`) or SI keys. Lengths without a suffix are read in feet.
+- Drawings use 100 ft stations (12+34.56), engineering scales (1" = 50', 1" = 5' vertical), labels in ft and in, and a scale bar in feet.
+- Reports and CSV files are in US units, and the bill of quantities uses CY, SY, LF, TON and EA.
+
+`foot` is `international` (0.3048 m, the default) or `survey` (1200/3937 m, for older state plane data). `inputs` and `outputs` can be set separately from `system` for the JSON results only. Design calculations and checks always run in SI, and the audit log stays in SI. The demo runs in US units with `cargo run --release -p civil-demo -- demo-out-us --units us`.
+
 ## Limits
 
 - **This is not engineering approval.** The demo "engineer" is a placeholder. Nothing here has been reviewed by a licensed engineer, and every sheet stays PRELIMINARY until a real engineer approves it.

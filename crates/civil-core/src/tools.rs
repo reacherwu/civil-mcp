@@ -54,6 +54,8 @@ pub struct Session {
     pub frame: Option<crate::frame::FrameSpec>,
     /// drawing-standard checks of the last generate_drawings run
     pub frame_checks: Vec<Check>,
+    /// unit system chosen with set_units (None = SI)
+    pub units: Option<crate::units::UnitSpec>,
 }
 
 fn obj(props: Value, req: &[&str]) -> Value {
@@ -98,7 +100,8 @@ pub fn tool_list() -> Value {
       {"name":"design_protection","description":"Protection works on the built corridor. Roadside hazards inside the engineer-entered clear zone (critical fill slopes above the warrant height, wall faces and drop-offs) give barrier runs with length of need X = L_R(L_A − L_2)/L_A. Ditch linings are chosen by HEC-15 shear stress (bare soil → engineer linings → gravel mulch → riprap D50 by Eq 6.8 → concrete). Slope-protection areas are reported by slope class.","inputSchema":obj(json!({"clear_zone_m":num,"clear_zone_source":s,"recoverable_h":num,"traversable_h":num,"embankment_warrant_height_m":num,"barrier_offset_m":num,"runout_length_m":num,"barrier_type":s,"runoff_c":num,"intensity_mm_h":num,"catchment_width_m":num,"soil_tau_p":num,"soil_name":s,"extra_linings":arr(json!({"type":"object"})),"riprap_sg":num,"seed_flatter_than_h":num,"blanket_flatter_than_h":num}),&["clear_zone_m","recoverable_h","traversable_h","embankment_warrant_height_m","barrier_offset_m","runout_length_m","runoff_c","intensity_mm_h","catchment_width_m","soil_tau_p"])},
       {"name":"record_departure","description":"Add an entry to the departures / design-exceptions / relaxations register (UK GG 101 departure, US design exception, AU/NZ design exception). Failing checks are added automatically at generate_deliverables. The engineer's justification is recorded here.","inputSchema":obj(json!({"actor":s,"check_id":s,"element":s,"kind":s,"justification":s}),&["actor","check_id","element","justification"])},
       {"name":"generate_deliverables","description":"Write the design-stage deliverables: design report, drainage report, pavement design report, parameter register (verified vs engineer input), departures register, bill of quantities grouped by the profile's measurement method, setting-out report, cost-proxy estimate and deliverables matrix status (Markdown/CSV).","inputSchema":obj(json!({"stage":s}),&[])},
-      {"name":"get_state","description":"Summary of what is loaded/designed.","inputSchema":obj(json!({}),&[])}
+      {"name":"get_state","description":"Summary of what is loaded/designed.","inputSchema":obj(json!({}),&[])},
+      {"name":"set_units","description":"Choose the unit system. Default SI (metres). system US switches to US customary: tool outputs (keys renamed _m→_ft, _m3→_cy, _kmh→_mph, _mm→_in ...; stations, coordinates and radii in ft), drawings (engineering scales 1\" = 50', stations 12+34.56, labels in ft/in), reports, BoQ (CY, SY, LF, TON, EA) and CSV/Markdown files. foot: international (0.3048 m, default) or survey (1200/3937 m, legacy state plane). inputs/outputs override the system for the JSON boundary only. In US mode, inputs may use US-suffixed keys (radius_ft, design_speed_mph) or SI keys; unsuffixed lengths are read in feet. Design and checks stay in SI internally; the audit log is SI. Call with no arguments to read the current setting.","inputSchema":obj(json!({"system":{"type":"string","enum":["SI","US"]},"foot":{"type":"string","enum":["international","survey"]},"inputs":{"type":"string","enum":["SI","US"]},"outputs":{"type":"string","enum":["SI","US"]}}),&[])}
     ]);
     if let Some(a) = v.as_array_mut() {
         a.extend(crate::ext::tool_list());
@@ -142,6 +145,8 @@ impl Session {
     }
     pub(crate) fn write(&mut self, name: &str, bytes: &[u8]) -> crate::Result<String> {
         let p = self.dir()?.join(name);
+        let conv = crate::units::file_in(name, bytes, crate::units::cur());
+        let bytes: &[u8] = conv.as_deref().unwrap_or(bytes);
         std::fs::write(&p, bytes).map_err(|e| e.to_string())?;
         let h = sha256_hex(bytes);
         self.files.retain(|f| f.0 != name);
@@ -373,7 +378,55 @@ impl Session {
         self.earthwork = None;
     }
 
+    /// Unit settings: SI unless set_units chose US customary.
+    pub fn unit_spec(&self) -> crate::units::UnitSpec {
+        self.units.unwrap_or(crate::units::UnitSpec { system: crate::units::System::Si, foot: crate::units::Foot::International, inputs: None, outputs: None })
+    }
+
     pub fn call(&mut self, name: &str, a: &Value) -> crate::Result<Value> {
+        let spec = self.unit_spec();
+        if name == "set_units" {
+            return self.set_units(a);
+        }
+        if !spec.files().us() && !spec.inputs().us() && !spec.outputs().us() {
+            crate::units::set_cur(crate::units::Units::SI);
+            return self.call_si(name, a);
+        }
+        crate::units::set_plain_lengths(!crate::units::RATIO_XY_TOOLS.contains(&name));
+        let si = crate::units::args_to_si(a, spec.inputs());
+        let r = crate::units::with(spec.files(), || self.call_si(name, &si));
+        let spec = self.unit_spec();
+        match r {
+            Ok(v) if spec.outputs().us() => {
+                let mut v = crate::units::result_to_us(&v, spec.outputs());
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("units".into(), json!(spec.outputs().label()));
+                }
+                Ok(v)
+            }
+            Err(e) if spec.outputs().us() => Err(crate::units::text_in(&e, spec.outputs())),
+            r => r,
+        }
+    }
+
+    fn set_units(&mut self, a: &Value) -> crate::Result<Value> {
+        if a.get("system").is_some() {
+            let spec: crate::units::UnitSpec = serde_json::from_value(a.clone()).map_err(|e| format!("units: {e}"))?;
+            self.units = Some(spec);
+            let d = crate::units::describe(&spec, false);
+            if self.dir.is_some() {
+                self.write("units.json", serde_json::to_string_pretty(&d).unwrap().as_bytes())?;
+            }
+            if self.log.is_some() {
+                let prov = self.log("agent", "set_units", a, &d, &["unit system".to_string()])?;
+                return Ok(json!({"result": d, "provenance": prov}));
+            }
+            return Ok(json!({"result": d}));
+        }
+        Ok(json!({"result": crate::units::describe(&self.unit_spec(), self.units.is_none())}))
+    }
+
+    fn call_si(&mut self, name: &str, a: &Value) -> crate::Result<Value> {
         let r = if crate::frame::TOOLS.contains(&name) {
             self.call_frame(name, a)
         } else {
@@ -394,7 +447,9 @@ impl Session {
                 let d = PathBuf::from(a["dir"].as_str().ok_or("dir required")?);
                 std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
                 let log = AuditLog::open(&d.join("audit.jsonl"))?;
+                let units = self.units;
                 *self = Session::default();
+                self.units = units;
                 let r = json!({"dir": d, "existing_entries": log.seq, "head": log.head});
                 self.dir = Some(d);
                 self.log = Some(log);
@@ -860,7 +915,12 @@ impl Session {
                 let mut files = json!({});
                 files["model.dxf"] = json!(self.write("model.dxf", model.as_bytes())?);
                 files["sheets.pdf"] = json!(self.write("sheets.pdf", &pdf)?);
-                let mut reg = String::from("page,sheet_id,title,revision,status,size,dxf,svg\n");
+                let usu = crate::units::cur().us();
+                let mut reg = String::from(if usu {
+                    "page,sheet_id,title,revision,status,size,dxf,svg,scale,units\n"
+                } else {
+                    "page,sheet_id,title,revision,status,size,dxf,svg\n"
+                });
                 let rev = rf.spec.fields.revisions.last().map(|x| x.rev.clone()).unwrap_or_else(|| rf.profile.initial_revision.to_string());
                 for (i, d) in sheets.iter().enumerate() {
                     let n = format!("sheet-{:02}.dxf", i + 1);
@@ -876,10 +936,21 @@ impl Session {
                         if info.approved_seq.is_some() && info.checks_failed == 0 { "approved" } else { "preliminary" },
                         rf.size
                     );
+                    if usu {
+                        reg.pop();
+                        let sc = d.meta.as_ref().map(|m| crate::units::scale_text(&m.scale)).unwrap_or_default();
+                        reg += &format!(",{},US customary\n", crate::ext::csvq(&sc));
+                    }
                 }
                 files["sheet-register.csv"] = json!(self.write("sheet-register.csv", reg.as_bytes())?);
                 let fail = fchecks.iter().filter(|c| !c.pass && c.severity == "mandatory").count();
-                let fjson = json!({"frame": rf, "checks": fchecks, "mandatory_failures": fail});
+                let mut fjson = json!({"frame": rf, "checks": fchecks, "mandatory_failures": fail});
+                if usu {
+                    let u = crate::units::cur();
+                    fjson["checks"] = crate::units::result_to_us(&fjson["checks"], u);
+                    fjson["units"] = crate::units::describe(&self.unit_spec(), false);
+                    fjson["sheet_in"] = json!([rf.w / 25.4, rf.h / 25.4]);
+                }
                 files["drawing-standards.json"] = json!(self.write("drawing-standards.json", serde_json::to_string_pretty(&fjson).unwrap().as_bytes())?);
                 self.frame_checks = fchecks.clone();
                 let status = if info.approved_seq.is_some() && info.checks_failed == 0 {

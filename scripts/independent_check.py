@@ -15,6 +15,10 @@ from scipy.spatial import Delaunay
 from matplotlib.path import Path
 
 out = sys.argv[1]
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from si_view import si_dir
+out = si_dir(out)
 xsd = sys.argv[sys.argv.index("--xsd") + 1] if "--xsd" in sys.argv else None
 fails = []
 rows = []

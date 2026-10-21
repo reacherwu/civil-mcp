@@ -37,6 +37,7 @@ fn para(d: &mut Drawing, x: f64, y: &mut f64, h: f64, max_em: f64, s: &str) {
 
 /// Simple table: header + rows, fixed column widths (mm).
 fn table(d: &mut Drawing, x: f64, y: f64, widths: &[f64], h: f64, rows: &[Vec<String>]) -> f64 {
+    let rows = &crate::units::table(rows);
     let rh = h * 2.0;
     let w: f64 = widths.iter().sum();
     let mut yy = y;
@@ -140,7 +141,7 @@ pub fn route_sheet(tin: &Tin, route: &Value, selected: &str, info: &SheetInfo, p
     let pad = 60.0;
     let (mnx, mny, mxx, mxy) = (mnx - pad, mny - pad, mxx + pad, mxy + pad);
     let need = ((mxx - mnx) / (px1 - px0 - 10.0) * 1000.0).max((mxy - mny) / (py1 - py0 - 10.0) * 1000.0);
-    let n = [1000.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.0, 10000.0, 20000.0].into_iter().find(|&n| n >= need).unwrap_or(need.ceil());
+    let n = crate::units::pick_scale(need, &[1000.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.0, 10000.0, 20000.0], crate::units::US_PLAN_FT_PER_IN);
     let sc = 1000.0 / n;
     let (cx, cy, vx, vy) = ((mnx + mxx) / 2.0, (mny + mxy) / 2.0, (px0 + px1) / 2.0, (py0 + py1) / 2.0);
     let tp = |x: f64, y: f64| [vx + (x - cx) * sc, vy + (y - cy) * sc];
@@ -496,7 +497,7 @@ pub fn protection_sheet(pt: &Protection, c: &Corridor, info: &SheetInfo, page: u
         &mut d,
         info,
         "Roadside protection layout (straight-line diagram)",
-        &format!("H 1:{:.0}", ((s1 - s0) / (x1 - x0) * 1000.0 / 100.0).ceil() * 100.0),
+        &crate::units::scale_text(&format!("H 1:{:.0}", ((s1 - s0) / (x1 - x0) * 1000.0 / 100.0).ceil() * 100.0)),
         page,
         pages,
     );

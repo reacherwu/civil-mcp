@@ -9,6 +9,9 @@ import csv, json, math, sys, os
 import numpy as np
 
 out = sys.argv[1]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from si_view import si_dir
+out = si_dir(out)
 pm_dir = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("PYMASTIC", "/workspace/tools/PyMastic")
 sys.path.insert(0, os.path.join(pm_dir, "Main"))
 from MLE import PyMastic  # noqa: E402

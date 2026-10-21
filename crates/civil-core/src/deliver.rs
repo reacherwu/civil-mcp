@@ -430,8 +430,10 @@ pub fn write_all(s: &Session, stage: &str) -> crate::Result<Vec<(String, Vec<u8>
         "# Quantities from boq.csv. Rates are left blank for the estimator; this tool does not supply market prices.\ncode,item,unit,quantity,rate,amount\n",
     );
     for r in &rows {
-        let _ = writeln!(q, "{},{},{},{:.1},{}", csv(&r.code), csv(&r.item), r.unit, r.qty, csv(&r.basis));
-        let _ = writeln!(cst, "{},{},{},{:.1},,", csv(&r.code), csv(&r.item), r.unit, r.qty);
+        let (unit, qty) = crate::units::boq(&r.unit, r.qty);
+        let dq = if crate::units::cur().us() { 2 } else { 1 };
+        let _ = writeln!(q, "{},{},{},{:.*},{}", csv(&r.code), csv(&r.item), unit, dq, qty, csv(&r.basis));
+        let _ = writeln!(cst, "{},{},{},{:.*},,", csv(&r.code), csv(&r.item), unit, dq, qty);
     }
     out.push(("boq.csv".into(), q.into_bytes()));
     out.push(("cost-estimate.csv".into(), cst.into_bytes()));

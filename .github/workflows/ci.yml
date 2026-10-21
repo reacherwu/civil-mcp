@@ -22,3 +22,9 @@ jobs:
         run: |
           git clone -q https://github.com/Mostafa-Nakhaei/PyMastic.git /tmp/PyMastic && git -C /tmp/PyMastic checkout -q be301be2fa996495b753966b86fd440a0c618cd2
           python scripts/independent_check_v6.py demo-out /tmp/PyMastic
+      - name: US customary run (same demo, drawings / reports / BoQ in ft, CY, SY, LF) + independent checks on its SI view
+        run: |
+          cargo run --release -p civil-demo -- demo-out-us --units us
+          python scripts/independent_check.py demo-out-us --xsd schema/LandXML-1.2.xsd
+          python scripts/independent_check_v5.py demo-out-us
+          python scripts/independent_check_v6.py demo-out-us /tmp/PyMastic

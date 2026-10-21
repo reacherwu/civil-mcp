@@ -92,7 +92,7 @@ impl Drawing {
         }
     }
     pub fn text(&mut self, l: &str, p: [f64; 2], h: f64, s: &str) {
-        self.ents.push(Ent::Text { layer: l.into(), p, h, s: s.into() })
+        self.ents.push(Ent::Text { layer: l.into(), p, h, s: crate::units::text(s) })
     }
     pub fn rect(&mut self, l: &str, x0: f64, y0: f64, x1: f64, y1: f64) {
         self.poly(l, vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]])

@@ -297,6 +297,7 @@ fn scale_pts(pts: &[[f64; 2]], ext: [f64; 4], win: [f64; 4], equal: bool) -> Vec
 }
 
 fn table(d: &mut Drawing, x: f64, y: f64, widths: &[f64], h: f64, rows: &[Vec<String>]) -> f64 {
+    let rows = &crate::units::table(rows);
     let rh = h * 2.0;
     let w: f64 = widths.iter().sum();
     let mut yy = y;
@@ -383,13 +384,14 @@ pub fn render(sh: &ExtSheet, info: &SheetInfo, page: usize, pages: usize) -> Dra
         }
         if p.equal {
             let sc = ((win[2] - win[0]) / (ext[2] - ext[0])).min((win[3] - win[1]) / (ext[3] - ext[1]));
-            let mut bar = 10f64.powf((40.0 / sc).log10().floor());
-            if bar * sc < 20.0 {
+            let lf = crate::units::lf();
+            let mut bar = 10f64.powf((40.0 / (sc * lf)).log10().floor());
+            if bar * lf * sc < 20.0 {
                 bar *= 2.0;
             }
             let (bx, by) = (win[0], win[1] - 5.0);
-            d.poly("TEXT", vec![[bx, by], [bx + bar * sc, by]]);
-            d.text("TEXT", [bx + bar * sc + 2.0, by - 1.0], 2.0, &format!("{bar} m"));
+            d.poly("TEXT", vec![[bx, by], [bx + bar * lf * sc, by]]);
+            d.text("TEXT", [bx + bar * lf * sc + 2.0, by - 1.0], 2.0, &format!("{bar} {}", crate::units::lu()));
             d.poly("TEXT", vec![[win[2] - 4.0, win[3] - 14.0], [win[2] - 4.0, win[3] - 4.0]]);
             d.text("TEXT", [win[2] - 5.5, win[3] - 3.0], 2.5, "N");
         }
