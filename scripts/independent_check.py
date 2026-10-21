@@ -18,6 +18,7 @@ out = sys.argv[1]
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from si_view import si_dir
+out_orig = out
 out = si_dir(out)
 xsd = sys.argv[sys.argv.index("--xsd") + 1] if "--xsd" in sys.argv else None
 fails = []
@@ -61,6 +62,9 @@ report("SSD = 0.278·V·t + 0.039·V²/a (AASHTO, t 2.5 s, a 3.4 m/s²) (m)", ss
 # ---------- 4. LandXML: clothoid geometry vs scipy Fresnel, schema ----------
 ns = {"l": "http://www.landxml.org/schema/LandXML-1.2"}
 root = ET.parse(f"{out}/design.xml").getroot()
+# file linear unit -> metres (US runs write LandXML in feet)
+_u = root.find("l:Units/*", ns)
+LF = {"foot": 0.3048, "USSurveyFoot": 1200 / 3937, "meter": 1.0}[_u.get("linearUnit")]
 ne = lambda e: np.array([float(v) for v in e.text.split()][::-1])  # N E -> E N
 for sp in root.iter("{%s}Spiral" % ns["l"]):
     L = float(sp.get("length")); R = float(sp.get("radiusEnd") if sp.get("radiusEnd") != "INF" else sp.get("radiusStart"))
@@ -113,7 +117,7 @@ class TriInterp:
 
 for sf in root.iter("{%s}Surface" % ns["l"]):
     if sf.get("name") == "EG":
-        P_ = np.array([[float(v) for v in p.text.split()] for p in sf.iter("{%s}P" % ns["l"])])
+        P_ = np.array([[float(v) for v in p.text.split()] for p in sf.iter("{%s}P" % ns["l"])]) * LF
         # interpolate on the surface's own triangles (<Faces>): the EG points are a regular DEM
         # grid, where an independent Delaunay splits each square on an arbitrary diagonal
         F_ = np.array([[int(v) - 1 for v in f.text.split()] for f in sf.iter("{%s}F" % ns["l"])])
@@ -322,7 +326,7 @@ for xf in sorted(glob.glob(f"{out}/intersection-*.json")):
 # ---------- 6. grading volume: separate Delaunay triangulation + 0.1 m grid ----------
 for sf in root.iter("{%s}Surface" % ns["l"]):
     if sf.get("name") == "EG":
-        P = np.array([[float(v) for v in p.text.split()] for p in sf.iter("{%s}P" % ns["l"])])
+        P = np.array([[float(v) for v in p.text.split()] for p in sf.iter("{%s}P" % ns["l"])]) * LF
         egD = LinearNDInterpolator(P[:, [1, 0]], P[:, 2])
 # Analytic mitred-offset model for a convex pad: outward distance d = max over edges of
 # the signed edge-normal distance; design = z_pad ± d/slope_h, clipped by EG. No triangulation.
@@ -453,7 +457,7 @@ for alt in RA["alternatives"]:
     si, sj = snap(ra_args["start"]); ei, ej = snap(ra_args["end"])
     dist = dijkstra(Gm, indices=[(sj * nx + si) * 16 + d for d in range(16)], min_only=True)
     ref = min(dist[(ej * nx + ei) * 16 + d] for d in range(16))
-    report(f"route {alt['name']}: least-cost search cost vs scipy csgraph Dijkstra", alt["search_cost"], float(ref), 1e-6)
+    report(f"route {alt['name']}: least-cost search cost vs scipy csgraph Dijkstra", alt["search_cost"], float(ref), 1e-6 if LF == 1.0 else 1e-4)  # feet files: 6-decimal text rounding of the EG TIN
     found.append(alt["path"])
     plen = sum(math.dist(alt["path"][k_], alt["path"][k_ + 1]) for k_ in range(len(alt["path"]) - 1))
     report(f"route {alt['name']}: path length (m)", alt["path_length_m"], plen, 1e-9)
@@ -562,9 +566,9 @@ xs_ = ET_.parse(f"{out}/design.xml").findall(".//l:CrossSects/l:CrossSect", NS_)
 secs_ = corr["sections"]
 report("LandXML CrossSect count = corridor sections", len(xs_), len(secs_), 0, "", rel=False)
 def at0(el, nm):
-    v = np.array(el.find(f"l:CrossSectSurf[@name='{nm}']/l:PntList2D", NS_).text.split(), float).reshape(-1, 2)
+    v = np.array(el.find(f"l:CrossSectSurf[@name='{nm}']/l:PntList2D", NS_).text.split(), float).reshape(-1, 2) * LF
     return float(np.interp(0.0, v[:, 0], v[:, 1]))
-report("LandXML FG at CL vs independent parabola, max abs diff (m)", max(abs(at0(e_, "FG") - zprof(float(e_.get("sta")))) for e_ in xs_), 0, 1e-3, "m", rel=False)
+report("LandXML FG at CL vs independent parabola, max abs diff (m)", max(abs(at0(e_, "FG") - zprof(float(e_.get("sta")) * LF)) for e_ in xs_), 0, 1e-3, "m", rel=False)
 report("LandXML EG at CL vs EG TIN at section point, max abs diff (m)", max(abs(at0(e_, "EG") - float(eg(np.array([s_["x"]]), np.array([s_["y"]]))[0])) for e_, s_ in zip(xs_, secs_)), 0, 0.01, "m", rel=False)  # EG sampled every 1 m across; interpolation between samples
 
 # ---------- 16. 3D CAD model (DXF R12) re-read with ezdxf: faces = LandXML TIN faces, 3D centreline z vs parabola ----------
@@ -580,7 +584,7 @@ for v_ in cl_pl_.vertices:
 AL_ = [e_ for e_ in LOG if e_["tool"] == "export_cad_model"][-1]["result"]
 report("CAD model layers present (centreline, surfaces, features)", float(all(any(k_ in l_ for l_ in AL_["stats"]["layers"]) for k_ in ["CNTR", "SURF", "FEAT"])), 1.0, 0, "", rel=False)
 # centreline vertices are written at equal station steps from the first to the last station
-sv_ = np.linspace(float(xs_[0].get("sta")), float(xs_[-1].get("sta")), len(vz_))
+sv_ = np.linspace(float(xs_[0].get("sta")) * LF, float(xs_[-1].get("sta")) * LF, len(vz_))
 report("CAD centreline z vs independent parabola, max abs diff (m)", max(abs(vz_[i_][2] - zprof(sv_[i_])) for i_ in range(len(vz_))), 0, 1e-3, "m", rel=False)
 
 # ---------- 17. Blender scene (glTF 2.0 .glb): container, accessor bounds, ground mesh = EG TIN ----------
@@ -601,7 +605,7 @@ for a_ in gj_["accessors"]:
 report("glTF accessors consistent with buffer data (count, min/max, triangles)", bad_, 0, 0, "", rel=False)
 SJ_ = json.load(open(f"{out}/scene.json")); org_ = SJ_["origin"]
 eg_xml_ = ET_.parse(f"{out}/design.xml").find(".//l:Surfaces/l:Surface[@name='EG']", NS_)
-egp_ = np.array([p_.text.split() for p_ in eg_xml_.findall(".//l:Pnts/l:P", NS_)], float)  # LandXML: N E Z
+egp_ = np.array([p_.text.split() for p_ in eg_xml_.findall(".//l:Pnts/l:P", NS_)], float) * LF  # LandXML: N E Z
 m0_ = gj_["meshes"][0]["primitives"][0]; v0_ = gj_["bufferViews"][gj_["accessors"][m0_["attributes"]["POSITION"]]["bufferView"]]
 g0_ = np.frombuffer(bb_[v0_["byteOffset"]:v0_["byteOffset"] + v0_["byteLength"]], "<f4").reshape(-1, 3).astype(float)
 world_ = np.c_[g0_[:, 0] + org_["e"], -g0_[:, 2] + org_["n"], g0_[:, 1] + org_["z"]]
@@ -751,9 +755,19 @@ if imp_ and ra_ and any(a.get("row") for a in ra_["alternatives"]):
     if ok_: print("info: ranking with ROW", " > ".join(ref_rank))
     lx_ = glob.glob(f"{out}/*.xml")
     for f in lx_:
-        n_ = len(ET.parse(f).getroot().findall(".//{http://www.landxml.org/schema/LandXML-1.2}Parcel"))
+        n_ = len(ET.parse(f).getroot().findall("./{http://www.landxml.org/schema/LandXML-1.2}Parcels/{http://www.landxml.org/schema/LandXML-1.2}Parcel"))
         if n_:
             report(f"LandXML {os.path.basename(f)}: Parcel elements = imported parcels", float(n_), float(len(par_)), 0, "", rel=False)
+
+# ---------- design package v1: manifest hashes recomputed; package alignment end = LandXML alignment end ----------
+import hashlib as HL_
+pk_ = f"{out_orig}/design-package"  # package JSON is SI in both runs; read the original folder
+if os.path.exists(f"{pk_}/manifest.json"):
+    man_ = json.load(open(f"{pk_}/manifest.json"))
+    report("design package: files whose SHA-256 differs from manifest", float(sum(HL_.sha256(open(f"{pk_}/{f_['path']}", "rb").read()).hexdigest() != f_["sha256"] for f_ in man_["files"])), 0.0, 0, "", rel=False)
+    el_ = json.load(open(f"{pk_}/alignments.json"))["alignments"][0]["elements"][-1]
+    xe_ = root.find("l:Alignments/l:Alignment/l:CoordGeom", ns)[-1].find("l:End", ns).text.split()
+    report("design package alignment end vs LandXML End (m)", math.hypot(el_["end"][0] - float(xe_[1]) * LF, el_["end"][1] - float(xe_[0]) * LF), 0.0, 1e-3, "m", rel=False)
 
 print(f"\n{len(rows)} checks, {len(fails)} failed")
 sys.exit(1 if fails else 0)

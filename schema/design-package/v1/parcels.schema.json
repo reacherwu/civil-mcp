@@ -1,0 +1,130 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/parcels.schema.json",
+ "title": "Parcels and the corridor right-of-way line",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/parcels"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "source": {
+   "type": "string"
+  },
+  "parcels": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "area": {
+      "type": "number",
+      "minimum": 0
+     },
+     "zoning": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "no_go": {
+      "type": "boolean"
+     },
+     "outer_rings": {
+      "type": "array",
+      "items": {
+       "type": "array",
+       "items": {
+        "type": "array",
+        "items": {
+         "type": "number"
+        },
+        "minItems": 2,
+        "maxItems": 2
+       },
+       "minItems": 3
+      },
+      "minItems": 1
+     },
+     "holes": {
+      "type": "array",
+      "items": {
+       "type": "array",
+       "items": {
+        "type": "array",
+        "items": {
+         "type": "number"
+        },
+        "minItems": 2,
+        "maxItems": 2
+       },
+       "minItems": 3
+      },
+      "minItems": 0
+     }
+    },
+    "required": [
+     "id",
+     "area",
+     "zoning",
+     "no_go",
+     "outer_rings",
+     "holes"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 0
+  },
+  "row": {
+   "type": [
+    "object",
+    "null"
+   ],
+   "properties": {
+    "buffer": {
+     "type": "number",
+     "minimum": 0
+    },
+    "polygon": {
+     "type": "array",
+     "items": {
+      "type": "array",
+      "items": {
+       "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+     },
+     "minItems": 3
+    },
+    "area": {
+     "type": "number",
+     "minimum": 0
+    }
+   },
+   "required": [
+    "buffer",
+    "polygon",
+    "area"
+   ],
+   "additionalProperties": false
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "source",
+  "parcels",
+  "row"
+ ],
+ "additionalProperties": false
+}

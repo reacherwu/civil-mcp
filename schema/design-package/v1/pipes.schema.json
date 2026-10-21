@@ -1,0 +1,139 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/pipes.schema.json",
+ "title": "Pipe networks",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/pipes"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "networks": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "storm",
+       "sanitary",
+       "other"
+      ]
+     },
+     "structures": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "e": {
+         "type": "number"
+        },
+        "n": {
+         "type": "number"
+        },
+        "rim": {
+         "type": "number"
+        },
+        "sump": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "id",
+        "e",
+        "n",
+        "rim",
+        "sump"
+       ],
+       "additionalProperties": false
+      },
+      "minItems": 0
+     },
+     "pipes": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "from": {
+         "type": "string"
+        },
+        "to": {
+         "type": "string"
+        },
+        "length": {
+         "type": "number",
+         "minimum": 0
+        },
+        "diameter": {
+         "type": "number",
+         "minimum": 0
+        },
+        "material": {
+         "type": "string"
+        },
+        "invert_up": {
+         "type": "number"
+        },
+        "invert_dn": {
+         "type": "number"
+        },
+        "slope": {
+         "type": "number"
+        },
+        "design_flow": {
+         "type": "number",
+         "minimum": 0
+        }
+       },
+       "required": [
+        "id",
+        "from",
+        "to",
+        "length",
+        "diameter",
+        "material",
+        "invert_up",
+        "invert_dn",
+        "slope",
+        "design_flow"
+       ],
+       "additionalProperties": false
+      },
+      "minItems": 0
+     }
+    },
+    "required": [
+     "name",
+     "kind",
+     "structures",
+     "pipes"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 0
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "networks"
+ ],
+ "additionalProperties": false
+}

@@ -13,7 +13,7 @@ jobs:
       - run: cargo run --release -p civil-demo -- demo-out
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install numpy scipy ezdxf pypdf xmlschema matplotlib
+      - run: pip install numpy scipy ezdxf pypdf xmlschema matplotlib jsonschema
       - name: Independent checks (second method, no shared code) + XSD + DXF audit + PDF
         run: python scripts/independent_check.py demo-out --xsd schema/LandXML-1.2.xsd
       - name: independent re-checks of the v5 calculations (hydrology, culverts, slope, subsurface, mechanistic, walls, land, locality)
@@ -28,3 +28,12 @@ jobs:
           python scripts/independent_check.py demo-out-us --xsd schema/LandXML-1.2.xsd
           python scripts/independent_check_v5.py demo-out-us
           python scripts/independent_check_v6.py demo-out-us /tmp/PyMastic
+      - name: LandXML 1.2 - XSD validation of every exported LandXML file, independent round trip (SI and US)
+        run: |
+          python -c "import glob, sys, xmlschema; X = xmlschema.XMLSchema('schema/LandXML-1.2.xsd'); fs = sorted(glob.glob('demo-out*/**/*.xml', recursive=True)); bad = [(f, len(list(X.iter_errors(f)))) for f in fs]; [print(f, n, 'errors') for f, n in bad]; sys.exit(1 if not fs or any(n for _, n in bad) else 0)"
+          python scripts/landxml_roundtrip.py demo-out --xsd schema/LandXML-1.2.xsd
+          python scripts/landxml_roundtrip.py demo-out-us --xsd schema/LandXML-1.2.xsd
+      - name: Design package v1 - JSON Schema validation (jsonschema) and independent content checks (SI and US)
+        run: |
+          python scripts/package_check.py demo-out --xsd schema/LandXML-1.2.xsd
+          python scripts/package_check.py demo-out-us --xsd schema/LandXML-1.2.xsd

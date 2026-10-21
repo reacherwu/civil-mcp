@@ -1,0 +1,99 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/assemblies.schema.json",
+ "title": "Assemblies as ordered subassembly-like parameter sets",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/assemblies"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "assemblies": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "subassemblies": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/subassembly"
+      },
+      "minItems": 1
+     },
+     "source_parameters": {
+      "type": "object"
+     }
+    },
+    "required": [
+     "name",
+     "subassemblies",
+     "source_parameters"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 1
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "assemblies"
+ ],
+ "additionalProperties": false,
+ "$defs": {
+  "subassembly": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string",
+     "enum": [
+      "lane",
+      "shoulder",
+      "curb_gutter",
+      "sidewalk",
+      "ditch",
+      "daylight",
+      "wall",
+      "pavement_structure"
+     ]
+    },
+    "side": {
+     "type": "string",
+     "enum": [
+      "left",
+      "right",
+      "both"
+     ]
+    },
+    "order": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "params": {
+     "type": "object"
+    }
+   },
+   "required": [
+    "name",
+    "kind",
+    "side",
+    "order",
+    "params"
+   ],
+   "additionalProperties": false
+  }
+ }
+}

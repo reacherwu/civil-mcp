@@ -1,0 +1,91 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/surfaces.schema.json",
+ "title": "TIN surfaces stored in the LandXML file of the package",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/surfaces"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "surfaces": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "existing_ground",
+       "finished_grade",
+       "datum"
+      ]
+     },
+     "landxml_file": {
+      "type": "string"
+     },
+     "landxml_surface": {
+      "type": "string"
+     },
+     "points": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "triangles": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "elev_min": {
+      "type": "number"
+     },
+     "elev_max": {
+      "type": "number"
+     },
+     "breaklines": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "minItems": 0
+     },
+     "boundary": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "name",
+     "kind",
+     "landxml_file",
+     "landxml_surface",
+     "points",
+     "triangles",
+     "elev_min",
+     "elev_max",
+     "breaklines",
+     "boundary"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 1
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "surfaces"
+ ],
+ "additionalProperties": false
+}

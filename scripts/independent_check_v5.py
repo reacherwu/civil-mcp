@@ -36,9 +36,10 @@ rcsv = lambda f: list(csv.DictReader(l for l in open(f"{out}/{f}") if not l.star
 # ---------- H1. terrain sampling + priority flood + D8 accumulation (heapq, own neighbour logic) ----------
 ns = "{http://www.landxml.org/schema/LandXML-1.2}"
 root = ET.parse(f"{out}/design.xml").getroot()
+LF = {"foot": 0.3048, "USSurveyFoot": 1200 / 3937, "meter": 1.0}[[u for u in root.find(ns + "Units")][0].get("linearUnit")]  # file unit -> m
 for sf in root.iter(ns + "Surface"):
     if sf.get("name") == "EG":
-        P = np.array([[float(v) for v in p.text.split()] for p in sf.iter(ns + "P")])
+        P = np.array([[float(v) for v in p.text.split()] for p in sf.iter(ns + "P")]) * LF
         F = np.array([[int(v) - 1 for v in f.text.split()] for f in sf.iter(ns + "F")])
 tri = mtri.Triangulation(P[:, 1], P[:, 0], F)
 egi = mtri.LinearTriInterpolator(tri, P[:, 2])

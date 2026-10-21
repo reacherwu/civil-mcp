@@ -2,7 +2,7 @@
 
 # civil-mcp
 
-**Road design you can hand to an AI agent, and check.** 66 Civil 3D-style design tools served as a local MCP server. Every result cites the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
+**Road design you can hand to an AI agent, and check.** 68 Civil 3D-style design tools served as a local MCP server. Every result cites the clause it was checked against, every call goes into a hash-chained audit log, and nothing leaves *PRELIMINARY* until a licensed engineer approves it.
 
 [![CI](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/reacherwu/civil-mcp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -12,7 +12,7 @@
 
 ![The agent designing a road on USGS terrain. Every frame is drawn from files the demo wrote.](docs/media/civil-mcp-agent-design.gif)
 
-| **66** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set + **14**-sheet construction set | **304 / 304** independent re-checks within tolerance | **11** real-terrain runs on **9** surfaces |
+| **68** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set + **14**-sheet construction set | **351 / 351** independent re-checks within tolerance | **11** real-terrain runs on **9** surfaces |
 |:---:|:---:|:---:|:---:|:---:|
 
 <sub>Numbers come from a fresh run of the committed demo (US AASHTO profile, 50 km/h rural collector, 5,607 USGS 3DEP survey points near Palo Alto CA) and of `scripts/terrain_batch.py`, both on 2026-10-20 (PDT). Layered elastic pavement analysis matches the published KENPAVE example to ≤ 0.09 %.</sub>
@@ -25,7 +25,7 @@
 
 ## Contents
 
-[Status](#status-at-a-glance) · [Works with](#works-with-mcp-clients) · [How it works](#how-it-works) · [Why](#why) · [Quick start](#quick-start) · [Client setup](#mcp-client-setup) · [Feature gallery](#feature-gallery) · [Real terrain](#real-terrain-route-feasibility-and-switchbacks) · [Superelevation runoff](#superelevation-runoff-sized-during-alignment-design) · [Civil 3D handoff](#civil-3d-handoff-landxml-cross-sections-and-3d-cad-model) · [Construction set](#construction-scale-sheet-set) · [Blender](#blender-visualisation-concept--preliminary) · [Units](#units-si-or-us-customary) · [Drawing set](#drawing-set-all-38-sheets) · [Sheet frames](#sheet-frames-and-drafting-standards) · [Standards](#standards-coverage-by-country) · [Validation](#validation-summary) · [Deliverables](#deliverables-matrix) · [Status and limits](#status-and-limits) · [Roadmap](#roadmap) · [License](#license-and-attribution)
+[Status](#status-at-a-glance) · [Works with](#works-with-mcp-clients) · [How it works](#how-it-works) · [Why](#why) · [Quick start](#quick-start) · [Client setup](#mcp-client-setup) · [Feature gallery](#feature-gallery) · [Real terrain](#real-terrain-route-feasibility-and-switchbacks) · [Superelevation runoff](#superelevation-runoff-sized-during-alignment-design) · [Civil 3D handoff](#civil-3d-handoff-landxml-cross-sections-and-3d-cad-model) · [Design package](#design-package-v1) · [Construction set](#construction-scale-sheet-set) · [Blender](#blender-visualisation-concept--preliminary) · [Units](#units-si-or-us-customary) · [Drawing set](#drawing-set-all-38-sheets) · [Sheet frames](#sheet-frames-and-drafting-standards) · [Standards](#standards-coverage-by-country) · [Validation](#validation-summary) · [Deliverables](#deliverables-matrix) · [Status and limits](#status-and-limits) · [Roadmap](#roadmap) · [License](#license-and-attribution)
 
 ## Status at a glance
 
@@ -35,8 +35,8 @@
 | Standards profiles | US AASHTO, Canada TAC, UK DMRB, Australia Austroads, New Zealand Austroads + NZTA |
 | Units | SI by default; switch to US customary (international or survey foot) and back at any time |
 | Terrain | GeoTIFF / COG, ESRI ASCII grid, LAS / LAZ, with CRS handling; 11 real-terrain runs documented |
-| Outputs | PDF, per-sheet DXF and SVG, LandXML 1.2 with cross sections, 3D DXF model, glTF / Blender scene, CSV / Markdown / HTML reports |
-| Verification | 304 independent Python re-checks, CI on every push, Rust unit and pipeline tests |
+| Outputs | PDF, per-sheet DXF and SVG, LandXML 1.2 (metric or imperial) with cross sections, a versioned design package (JSON + LandXML), 3D DXF model, glTF / Blender scene, CSV / Markdown / HTML reports |
+| Verification | 351 independent Python re-checks, CI on every push, Rust unit and pipeline tests |
 | Not yet | built-in DWG writer (DWG needs ODA File Converter), a Civil 3D / 12d / BricsCAD open test, end-to-end tests in MCP clients, remote (HTTP) transport |
 
 ## Works with (MCP clients)
@@ -51,7 +51,7 @@ civil-mcp is a standard [Model Context Protocol](https://modelcontextprotocol.io
 | [Codex](https://developers.openai.com/codex/mcp) (CLI / IDE extension / ChatGPT desktop app) | `codex mcp add civil -- /path/to/civil-mcp`, or `~/.codex/config.toml` → `[mcp_servers.civil]` | per docs, not yet tested end to end |
 | [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/) | `gemini mcp add civil /path/to/civil-mcp`, or `~/.gemini/settings.json` → `mcpServers` | per docs, not yet tested end to end |
 | [VS Code (GitHub Copilot agent mode)](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) | `MCP: Add Server` → *Command (stdio)*, or `.vscode/mcp.json` → `servers` | per docs, not yet tested end to end |
-| Raw JSON-RPC over stdio | `initialize` → `tools/list` | **tested**: protocol `2024-11-05`, 66 tools listed. The CI test `crates/civil-mcp/tests/stdio.rs` drives a UK-profile session over stdio |
+| Raw JSON-RPC over stdio | `initialize` → `tools/list` | **tested**: protocol `2024-11-05`, 68 tools listed. The CI test `crates/civil-mcp/tests/stdio.rs` drives a UK-profile session over stdio |
 
 **What does not work yet**
 
@@ -89,13 +89,13 @@ cargo run --release -p civil-demo -- demo-out              # SI; a few seconds a
 cargo run --release -p civil-demo -- demo-out-us --units us   # the same design in US customary units
 ```
 
-<details><summary><b>What the demo writes to <code>demo-out/</code></b> (162 files)</summary>
+<details><summary><b>What the demo writes to <code>demo-out/</code></b> (164 files plus the 12-file `design-package/` folder)</summary>
 
 | Group | Files |
 |---|---|
 | Drawings | `sheets.pdf` (38 sheets), `sheet-01.dxf` … `sheet-38.dxf` + SVG, `model.dxf` |
 | Construction set | `construction-set.pdf` (14 sheets), `cs-01.dxf` … `cs-14.dxf` + SVG, `construction-register.csv` |
-| Model exchange | `design.xml` (LandXML 1.2: surface, alignment, profile, cross sections, pipe networks), `civil3d-model.dxf` (3D), `corridor.json`, `setting-out.csv` |
+| Model exchange | `design.xml` (LandXML 1.2: surfaces with FG breaklines and boundary, alignment, profiles, superelevation, cross sections, parcels, pipe networks), `design-package/` (manifest + 10 JSON files + LandXML), `civil3d-model.dxf` (3D), `corridor.json`, `setting-out.csv` |
 | Visualisation | `scene.glb` (glTF 2.0), `scene.json`, `blender_scene.py` |
 | Reports | `design-report.md`, `drainage-report.md`, `pavement-report.md`, `constructability.md`, `rsa-brief.md`, `specialist-handoffs.md`, `review.html` |
 | Registers | `parameter-register.csv`, `departures-register.csv`, `deliverables-status.csv`, `utility-register.csv` |
@@ -492,13 +492,14 @@ Every tool call is appended to `audit.jsonl` with its actor, inputs, outputs, SH
 
 | Format | Direction | Verification |
 |---|---|---|
-| LandXML 1.2 | import + export | XSD-valid (0 errors), with cross sections. Civil 3D 2022/2023/2025 exports: surfaces to 2e-12, a 23.47 km alignment to 2.6e-10 m, 411 pipes to 1.3e-9 m |
+| LandXML 1.2 | import + export (metric, international ft or US survey ft) | XSD-valid (0 errors) in CI for every exported file; independent round trip in SI and US ([docs/landxml.md](docs/landxml.md)). Civil 3D 2022/2023/2025 exports: surfaces to 2e-12, a 23.47 km alignment to 2.6e-10 m, 411 pipes to 1.3e-9 m |
 | DXF (AC1009 / R12) | export: 38 sheets, 14 construction sheets, `model.dxf`, `civil3d-model.dxf` | ezdxf audit 0 errors in CI |
 | DWG (AC1027 / AC1032) | optional, through an installed ODA File Converter (`export_cad_model` `dwg_version`) | ODA File Converter 27.9 on Linux (a substitute; not opened in Civil 3D or AutoCAD): 53 DXF → DWG 2013 and 2018 → DXF, 164,122 entities, **0** count / layer / extents mismatches ([docs/interop-tests.md](docs/interop-tests.md)) |
+| Design package v1 (`design-package/`) | export + validate | JSON Schema (committed, `jsonschema` in CI), SHA-256 manifest, content cross-checks ([docs/design-package.md](docs/design-package.md)) |
 | glTF 2.0 (`scene.glb`) | export | container, accessor bounds and ground mesh checked against the LandXML TIN in CI |
 | PDF | export | 38-sheet set and 14-sheet construction set, title block, audit head hash, seal box |
 
-**Tools:** `import_landxml`, `export_landxml`, `export_cad_model`, `export_blender_scene`, `generate_drawings`, `generate_construction_set`.
+**Tools:** `import_landxml`, `export_landxml`, `export_design_package`, `validate_design_package`, `export_cad_model`, `export_blender_scene`, `generate_drawings`, `generate_construction_set`.
 
 ---
 
@@ -550,10 +551,23 @@ An independent Python re-check recomputes e, L, spiral ≥ L, spirals within the
 
 ## Civil 3D handoff: LandXML cross sections and 3D CAD model
 
-- `export_landxml` writes `CrossSects` as well as the surface, alignment, profile and pipe networks: EG and FG at every corridor station, offsets negative to the left, with cut/fill areas. When the terrain came from `import_terrain` in metres, it also writes `CoordinateSystem` with the EPSG code. The file validates against the LandXML 1.2 XSD, and CI re-reads the sections to check FG at the centreline against an independent parabola evaluation.
+- `export_landxml` writes LandXML 1.2 in the session units (Metric, or Imperial in international or US survey feet; `units` overrides): `Project`, `Application`, `CoordinateSystem` (EPSG when known; the demo passes 32610), the EG TIN, the corridor FG TIN with breaklines (CL, edges of pavement, daylight lines) and the daylight outer boundary, parcels with holes as nested parcels, the alignment (Line / Curve / clothoid Spiral with `staStart`, radius, delta, chord, tangent, spiral constants), the design profile (PVI / ParaCurve) and a sampled EG `ProfSurf`, `Superelevation` stations per curve, `CrossSects` with `DesignCrossSectSurf`, and pipe networks (inverts, diameters in mm or inches, material). Before this release the file was always metric, had no breaklines, boundary, superelevation, EG profile, project metadata or parcel holes, and lines and curves had no stations. Element mapping, the documented Civil 3D and ORD import behaviour, and the checks are in [docs/landxml.md](docs/landxml.md). **Not yet tested in Civil 3D or OpenRoads Designer.**
+- CI validates every exported LandXML file against the LandXML 1.2 XSD and re-reads `design.xml` with an independent parser ([`landxml_roundtrip.py`](scripts/landxml_roundtrip.py)) in both demo runs: 25 / 25 checks each. Alignment positions at the 76 corridor stations agree with `corridor.json` to 1.07e-6 m (SI) and 6.6e-7 m (US, feet converted back), profile elevations to 4.07e-7 m and 1.34e-7 m, FG TIN at the centreline to 4.91e-5 m and 1.57e-7 m, and the 25 pipe inverts to 4.91e-5 m and 1.51e-5 m.
 - `export_cad_model` writes `civil3d-model.dxf`, a 3D model in world coordinates and metres. In the demo it holds 12,691 3D faces (11,089 EG TIN faces on `V-TOPO-SURF`, 1,602 FG faces on `C-ROAD-SURF`), the 3D centreline, 18 corridor feature lines, the wall tops, 25 pipes at invert and 27 structures at rim. Layers follow the drafting profile (NCS names in the US) or an agency `layer_map`. CI re-reads the file with ezdxf: the face count matches the LandXML TIN, and the centreline z matches the profile.
 - DWG is optional. With ODA File Converter installed, `export_cad_model` with `dwg_version` (`ACAD2013` = AC1027, `ACAD2018` = AC1032) and `dwg_include_sheets` converts the model and every sheet into `dwg/`. ODA File Converter is a separate free download under its own terms and is not bundled. LibreDWG 0.13.3 `dxf2dwg`, tried earlier on this model, produced a DWG that read back empty.
 - Substitute testing on Linux ([docs/interop-tests.md](docs/interop-tests.md)): ODA File Converter 27.9 round trip of all 53 DXF files through DWG 2013 and 2018, 0 mismatches in entity counts, layers and extents. ODA and ezdxf stand in for Civil 3D and 12d here. BricsCAD V27 (Linux trial, another substitute) is installed but stops at its trial-activation login, so no file has been opened in it yet. None of these files has been opened in Civil 3D, AutoCAD, 12d or BricsCAD.
+
+## Design package v1
+
+`export_design_package` writes `design-package/`: `manifest.json` (schema version 1.0.0, units, CRS, source run with the audit-log head, SHA-256 of every file) and canonical-SI JSON for alignments, profiles, superelevation, assemblies (ordered subassembly-like parameter sets), corridor regions (station range, assembly, frequency, targets), surfaces (references into the package LandXML), pipe networks, parcels and the ROW line, quantities (earthwork, mass haul, BoQ) and the sheet list, plus `design.xml`. `validate_design_package` checks a folder against the committed JSON Schemas in [`schema/design-package/v1/`](schema/design-package/v1) and against the manifest hashes.
+
+```
+design-package/
+  manifest.json  alignments.json  profiles.json  superelevation.json  assemblies.json  corridors.json
+  surfaces.json  pipes.json  parcels.json  quantities.json  sheets.json  design.xml
+```
+
+CI generates the package for the SI and US demos and runs [`package_check.py`](scripts/package_check.py) (full `jsonschema` validation, hashes, XSD, cross-checks against the run's own files): 20 / 20 checks in each run. [docs/design-package.md](docs/design-package.md) also gives the intended Civil 3D .NET mapping (`Alignment.Create`, `Profile.CreateByLayout`, assemblies and subassemblies, `CorridorCollection.Add`) as a specification only. No Civil 3D or ORD add-in reads the package yet.
 
 ## Construction-scale sheet set
 
@@ -609,6 +623,7 @@ With `system` set to `US`:
 - Inputs can use US keys (`radius_ft`, `design_speed_mph`) or SI keys. Lengths without a suffix are read in feet.
 - Drawings use 100 ft stations (12+34.56), engineering scales (1" = 50', 1" = 5' vertical), labels in ft and in, and a scale bar in feet.
 - Reports and CSV files are in US units, and the bill of quantities uses CY, SY, LF, TON and EA.
+- `export_landxml` writes `Imperial` LandXML (feet or US survey feet, pipe diameters in inches, flows in ft³/s); the design package JSON stays in SI and records the display units in its manifest.
 
 `foot` is `international` (0.3048 m, the default) or `survey` (1200/3937 m, for older state plane data). `inputs` and `outputs` can be set separately from `system` for the JSON results only. Design calculations and checks always run in SI, and the audit log stays in SI. The demo runs in US units with `cargo run --release -p civil-demo -- demo-out-us --units us`.
 
@@ -724,7 +739,9 @@ Full record: **[docs/VALIDATION.md](docs/VALIDATION.md)**. Every row runs in [CI
 
 | Check | What is compared | Result |
 |---|---|---|
-| Independent re-checks, base ([`independent_check.py`](scripts/independent_check.py)) | areas, volumes, mass haul, superelevation and runoff, clothoids, Manning/HGL, walls, route costs, pavement, HEC-15, BoQ, LandXML XSD and cross sections, DXF audit, 3D CAD model, glTF scene (incl. pavement layer thicknesses, trimmed ground on the survey surface), ROW take areas, costs and ranking, LandXML parcels | **153 / 153** OK |
+| Independent re-checks, base ([`independent_check.py`](scripts/independent_check.py)) | areas, volumes, mass haul, superelevation and runoff, clothoids, Manning/HGL, walls, route costs, pavement, HEC-15, BoQ, LandXML XSD and cross sections, DXF audit, 3D CAD model, glTF scene (incl. pavement layer thicknesses, trimmed ground on the survey surface), ROW take areas, costs and ranking, LandXML parcels, design package hashes | **155 / 155** OK |
+| LandXML round trip ([`landxml_roundtrip.py`](scripts/landxml_roundtrip.py)), SI and US files | own Line / Curve / Spiral and PVI evaluators vs corridor stations, TIN samples, FG breaklines and boundary, superelevation stations, pipe inverts, diameters and lengths | **25 / 25** OK per run |
+| Design package ([`package_check.py`](scripts/package_check.py)) | `jsonschema` validation of manifest and 10 JSON files, SHA-256, package LandXML XSD, alignment chain and tangency, content vs run files | **20 / 20** OK per run |
 | Independent re-checks, v5 ([`independent_check_v5.py`](scripts/independent_check_v5.py)) | hydrology, culverts (HDS-5), slope stability, subsurface drainage, walls, land, locality | **70 / 70** OK |
 | Independent re-checks, v6 ([`independent_check_v6.py`](scripts/independent_check_v6.py)) | layered elastic vs PyMastic and KENPAVE, MSE, wall shear/crack/footing, signals, capacity, rigid, landscape, locality | **81 / 81** OK |
 | Layered elastic vs published KENPAVE 3-layer example | deflection, σz, εr, εz | ≤ **0.088 %** |
@@ -732,7 +749,7 @@ Full record: **[docs/VALIDATION.md](docs/VALIDATION.md)**. Every row runs in [CI
 | DWG round trip through ODA File Converter 27.9 (local run; CI skips it) | 53 DXF → DWG AC1027 and AC1032 → DXF, entity counts, layers, extents ([`dwg_compare.py`](scripts/dwg_compare.py)) | **0** mismatches over 164,122 entities ([details](docs/interop-tests.md)) |
 | BricsCAD V27 Linux trial (substitute; local) | open DWG / DXF, AUDIT, LANDXMLIMPORT | **not run yet**: installed, blocked at trial activation ([details](docs/interop-tests.md)) |
 | Real-terrain batch (local run; CI skips it) | 11 runs, 9 surfaces; runoff re-check on every fitted curve | see [docs/terrain-tests.md](docs/terrain-tests.md) |
-| Rust tests (`cargo test`) | unit tests with worked examples, LandXML round trip, MCP stdio, profiles, frames, terrain import, full pipeline | all pass; `cargo fmt --check` and `clippy -D warnings` clean |
+| Rust tests (`cargo test`) | unit tests with worked examples, LandXML round trip (metric, international ft, US survey ft), design package validator, MCP stdio, profiles, frames, terrain import, full pipeline | all pass; `cargo fmt --check` and `clippy -D warnings` clean |
 
 The re-check scripts share no code with the Rust tools. They re-derive each value from the files the tools wrote, using NumPy, SciPy, ezdxf and PyMastic.
 
@@ -749,11 +766,12 @@ The re-check scripts share no code with the Rust tools. They re-derive each valu
 - **Depth is concept / 30 %.** The sheets follow a 60 %-style format (title blocks, match lines, gridded sections, quantities), but the content is concept level: no detailed drainage profiles per structure, no signing details, no specifications.
 - **This is not engineering approval.** The demo "engineer" is a placeholder. Nothing here has been reviewed by a licensed engineer, and every sheet stays PRELIMINARY until a real engineer approves it.
 - **DWG needs ODA, and nothing has been opened in Civil 3D.** DWG comes only through an installed ODA File Converter; its round trip was checked with ezdxf, a substitute. Neither the LandXML, the DXF nor the DWG has been opened in Civil 3D, AutoCAD, 12d or BricsCAD, and corridor volumes and hydraulics have not been compared with Civil 3D runs (no public files were found).
+- **LandXML and the design package are untested in Civil 3D and ORD.** Both are checked against their schemas and by independent parsers only. Civil 3D's documented import list does not include `CrossSects`; there are no station equations, `AlignPIs`, `Cant` or Manning's n; structure sizes are placeholders. The package has one alignment, one profile and one corridor region, no intersections, gradings or wall objects, and its Civil 3D API mapping is a written specification with no add-in behind it.
 - **MCP clients are not tested end to end.** Client configs follow each client's docs; only the raw stdio protocol is tested. See [Works with](#works-with-mcp-clients).
 - **Copyrighted tables are not shipped.** Values such as Green Book side friction, TAC, Austroads, CD 226 figures and AGPT02 equivalent-stress tables are engineer inputs. Transcribed values must be checked against the edition in use.
 - **Geotechnical inputs are placeholders.** Slope, wall and foundation soil parameters stand in for a ground-investigation report. MSE internal stability, global stability and detailing belong to the supplier and the geotechnical engineer.
 - **One full demo site.** The complete design, drawings and independent re-checks come from one terrain sample (Palo Alto). The 11 real-terrain runs stop at route alternatives.
-- **ROW cost is a screening estimate from your data.** civil-mcp has no valuation model and does not appraise. Every land value, rate, improvement value, fallback rate and admin or severance factor is user input, and missing values make the cost unknown. Takes come from the corridor daylight lines plus a buffer; they do not come from a legal ROW plan or a boundary survey. Partial-take remnants are judged by area only (no shape, access or zoning rules). Parcel geometry must be in the terrain's projected CRS (m, ft or US survey ft). Polygon holes count in areas but are not written to LandXML, and parcel lines in the CAD model and Blender scene are draped at their vertices only. The demo parcels are synthetic.
+- **ROW cost is a screening estimate from your data.** civil-mcp has no valuation model and does not appraise. Every land value, rate, improvement value, fallback rate and admin or severance factor is user input, and missing values make the cost unknown. Takes come from the corridor daylight lines plus a buffer; they do not come from a legal ROW plan or a boundary survey. Partial-take remnants are judged by area only (no shape, access or zoning rules). Parcel geometry must be in the terrain's projected CRS (m, ft or US survey ft). Polygon holes count in areas and go to LandXML as nested parcels (LandXML 1.2 has no hole element), and parcel lines in the CAD model and Blender scene are draped at their vertices only. The demo parcels are synthetic.
 - **Route search is approximate.** It runs on a grid (10 m or the import cell) and its cost proxy is relative. Earthwork limits are screening defaults.
 - **Runoff gaps.** The tangent runout before the first curve and after the last one is not checked against the alignment ends (demo: first curve starts 9.6 m from the start, runout 10.8 m; reported as a note). Hairpins with no room for spirals become simple curves whose runoff is covered by the overlap check only. The Python runoff re-check covers the AASHTO profile only.
 - **Bridges are out of scope.** They are handed to a structures specialist (`specialist_handoffs`).
@@ -766,6 +784,7 @@ The re-check scripts share no code with the Rust tools. They re-derive each valu
 
 - [ ] **Remote transport:** Streamable HTTP MCP with authentication, so web-only clients can connect and approval can be tied to a real identity.
 - [ ] **End-to-end client testing:** Claude Code, Claude Desktop, Cursor, Codex, Gemini CLI and VS Code, with recorded sessions.
+- [ ] A Civil 3D add-in that builds native objects from the design package (spec in [docs/design-package.md](docs/design-package.md)).
 - [ ] Open the LandXML and 3D DXF in Civil 3D and compare corridor volumes and pipe hydraulics, given a public or partner dataset.
 - [ ] Tangent-runout checks at the alignment ends, and runoff re-checks for the DMRB and Austroads profiles.
 - [ ] 3D wall and structure solids for clash checks, using a permissive B-rep kernel such as [truck](https://github.com/ricosjp/truck).

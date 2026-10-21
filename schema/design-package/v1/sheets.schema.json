@@ -1,0 +1,65 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/sheets.schema.json",
+ "title": "Sheets produced by the run",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/sheets"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "sheets": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "set": {
+      "type": "string"
+     },
+     "file": {
+      "type": "string"
+     },
+     "page": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "sheet_id": {
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "scale": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "set",
+     "file",
+     "page",
+     "sheet_id",
+     "title",
+     "scale"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 0
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "sheets"
+ ],
+ "additionalProperties": false
+}

@@ -1,0 +1,181 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/corridors.schema.json",
+ "title": "Corridors and regions",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/corridors"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "corridors": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "alignment": {
+      "type": "string"
+     },
+     "profile": {
+      "type": "string"
+     },
+     "regions": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "sta_start": {
+         "type": "number"
+        },
+        "sta_end": {
+         "type": "number"
+        },
+        "assembly": {
+         "type": "string"
+        },
+        "frequency": {
+         "type": "object",
+         "properties": {
+          "tangent": {
+           "type": "number",
+           "minimum": 0
+          },
+          "curve": {
+           "type": "number",
+           "minimum": 0
+          },
+          "spiral": {
+           "type": "number",
+           "minimum": 0
+          },
+          "min_spacing": {
+           "type": "number",
+           "minimum": 0
+          },
+          "max_spacing": {
+           "type": "number",
+           "minimum": 0
+          },
+          "sample_stations": {
+           "type": "integer",
+           "minimum": 0
+          }
+         },
+         "required": [
+          "tangent",
+          "curve",
+          "spiral",
+          "min_spacing",
+          "max_spacing",
+          "sample_stations"
+         ],
+         "additionalProperties": false
+        },
+        "targets": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "kind": {
+            "type": "string",
+            "enum": [
+             "surface",
+             "width",
+             "offset",
+             "elevation"
+            ]
+           },
+           "name": {
+            "type": "string"
+           },
+           "role": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "kind",
+           "name",
+           "role"
+          ],
+          "additionalProperties": false
+         },
+         "minItems": 0
+        }
+       },
+       "required": [
+        "name",
+        "sta_start",
+        "sta_end",
+        "assembly",
+        "frequency",
+        "targets"
+       ],
+       "additionalProperties": false
+      },
+      "minItems": 1
+     },
+     "results": {
+      "type": "object",
+      "properties": {
+       "cut_m3": {
+        "type": "number",
+        "minimum": 0
+       },
+       "fill_m3": {
+        "type": "number",
+        "minimum": 0
+       },
+       "sections": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "sections_with_warnings": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "method": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "cut_m3",
+       "fill_m3",
+       "sections",
+       "sections_with_warnings",
+       "method"
+      ],
+      "additionalProperties": false
+     }
+    },
+    "required": [
+     "name",
+     "alignment",
+     "profile",
+     "regions",
+     "results"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 1
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "corridors"
+ ],
+ "additionalProperties": false
+}

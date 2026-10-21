@@ -74,7 +74,7 @@ pub fn run_units(out: &str, us: bool) -> Session {
         "standard":"US_AASHTO_2018","design_speed_kmh":50.0,"e_max":0.08,"f_max":0.18,"max_grade_pct":8.0,"normal_crown":0.02,"lane_width_m":3.5}}),
     );
     println!("design basis: US AASHTO 2018, 50 km/h, SSD {:.1} m; engineer inputs: {}", v["result"]["ssd_m"].as_f64().unwrap(), v["result"]["engineer_inputs"]);
-    let v = r.call("load_points", json!({"path": data}));
+    let v = r.call("load_points", json!({"path": data, "epsg": 32610}));
     println!("points: {}", v["result"]["points"]);
     let v = r.call("build_surface", json!({}));
     println!("TIN: {} triangles", v["result"]["triangles"]);
@@ -588,6 +588,13 @@ pub fn run_units(out: &str, us: bool) -> Session {
     // survey control are not available for the demo and are flagged as missing engineer inputs
     let v = r.call("generate_construction_set", json!({"row_left_m":30.0,"row_right_m":30.0}));
     println!("construction set: {} sheets, checks {}", v["result"]["sheets"], v["result"]["checks"]);
+    let v = r.call("export_design_package", json!({}));
+    println!(
+        "design package v1: {} files, valid {}, LandXML unit {}",
+        v["result"]["files"].as_array().map_or(0, |f| f.len()),
+        v["result"]["validation"]["valid"],
+        v["result"]["landxml_linear_unit"]
+    );
     let v = r.call("export_blender_scene", json!({}));
     println!("blender scene: {} meshes, camera path {} points", v["result"]["meshes"].as_array().map_or(0, |m| m.len()), v["result"]["camera_path_points"]);
     let v = r.call("generate_review_report", json!({}));

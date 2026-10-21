@@ -35,8 +35,7 @@ fn roundtrip_alignment_profile_surface_points() {
         profiles: vec![&prof],
         networks: vec![],
         corridor: None,
-        epsg: None,
-        parcels: None,
+        ..Default::default()
     });
     let d = read(&x).unwrap();
     assert_eq!(d.points.len(), 1);
@@ -82,4 +81,47 @@ fn civil3d_alignment_fixture() {
     assert!(a.max_end_deviation < 1e-3, "{}", a.max_end_deviation);
     assert!(!a.profiles.is_empty());
     Profile::build(a.profiles[0].clone()).unwrap();
+}
+
+/// Imperial export (international and US survey foot) read back to metres.
+#[test]
+fn roundtrip_imperial_units() {
+    use civil_core::landxml::LxUnits;
+    let al = sample_alignment();
+    let prof =
+        Profile::build(ProfileInput { name: "FG".into(), vpis: vec![[0.0, 100.0], [300.0, 106.0], [al.length, 98.0]], curve_lengths: vec![120.0] }).unwrap();
+    let pts: Vec<[f64; 3]> = (0..60)
+        .map(|i| {
+            let (x, y) = ((i * 37 % 100) as f64, (i * 61 % 90) as f64);
+            [x, y, 50.0 + 0.1 * x - 0.05 * y]
+        })
+        .collect();
+    let (tin, _) = Tin::build(&pts, None).unwrap();
+    for (u, tag) in
+        [(LxUnits::Imperial { survey_foot: false }, "linearUnit=\"foot\""), (LxUnits::Imperial { survey_foot: true }, "linearUnit=\"USSurveyFoot\"")]
+    {
+        let x = write(&Export { surfaces: vec![("EG", &tin)], alignment: Some(&al), profiles: vec![&prof], units: u, ..Default::default() });
+        assert!(x.contains("<Imperial") && x.contains(tag), "{tag}");
+        let d = read(&x).unwrap();
+        let al2 = to_alignment(&d.alignments[0]).unwrap();
+        assert!((al2.length - al.length).abs() < 1e-5, "{} {}", al2.length, al.length);
+        let mut s = 0.0;
+        while s <= al.length {
+            let (p, q) = (al.point_at(s).unwrap(), al2.point_at(s).unwrap());
+            assert!(((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt() < 1e-5, "station {s}");
+            s += 7.3;
+        }
+        let p2 = Profile::build(d.alignments[0].profiles[0].clone()).unwrap();
+        let mut s = 0.0;
+        while s <= al.length {
+            assert!((p2.elevation_at(s).unwrap() - prof.elevation_at(s).unwrap()).abs() < 1e-5);
+            s += 5.0;
+        }
+        let (t2, _) = Tin::from_faces(&d.surfaces[0].points, &d.surfaces[0].faces).unwrap();
+        for (x, y) in [(10.0, 10.0), (50.0, 40.0), (77.0, 33.0)] {
+            if let (Some(a), Some(b)) = (tin.elevation_at(x, y), t2.elevation_at(x, y)) {
+                assert!((a - b).abs() < 1e-5);
+            }
+        }
+    }
 }

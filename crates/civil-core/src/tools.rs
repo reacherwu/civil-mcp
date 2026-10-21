@@ -77,9 +77,11 @@ pub fn tool_list() -> Value {
     let mut v = json!([
       {"name":"open_project","description":"Open (or create) a project directory. The audit log lives at <dir>/audit.jsonl and is verified on open.","inputSchema":obj(json!({"dir":s}),&["dir"])},
       {"name":"set_design_basis","description":"Record the design basis chosen by the engineer in responsible charge: the standards profile (US/CA/UK/AU/NZ) and design parameters. Values the profile cannot ship (copyrighted or unverified tables) must be entered here; the call fails and lists them otherwise. Returns the parameter register with the provenance of every value. actor must be 'engineer:<name>'.","inputSchema":obj(json!({"actor":s,"basis":{"type":"object","properties":{"project":s,"engineer_of_record":s,"standard":{"type":"string","enum":["US_AASHTO_2018","CA_TAC_2017","UK_DMRB","AU_AUSTROADS","NZ_AUSTROADS_NZTA"]},"design_speed_kmh":num,"e_max":num,"f_max":num,"max_grade_pct":num,"road_type":{"type":"string","enum":["motorway","dual","single"]},"perception_reaction_s":num,"deceleration_mps2":num,"deceleration_coeff":num,"eye_height_m":num,"object_height_m":num,"sag_k_min":num,"max_relative_gradient_pct":num,"transition_q":num,"wall_criteria":{"type":"object"},"normal_crown":num,"lane_width_m":num,"lanes_rotated_per_side":num},"required":["project","engineer_of_record","standard","design_speed_kmh","e_max"]}}),&["actor","basis"])},
-      {"name":"load_points","description":"Load survey points from CSV (id,easting,northing,elevation,desc) or LandXML CgPoints. Rejected rows are reported.","inputSchema":obj(json!({"path":s,"format":{"type":"string","enum":["csv","landxml"]}}),&["path"])},
+      {"name":"load_points","description":"Load survey points from CSV (id,easting,northing,elevation,desc) or LandXML CgPoints. Rejected rows are reported. 'epsg' records the horizontal CRS of the coordinates (written to LandXML CoordinateSystem and the design package manifest); the points are not reprojected.","inputSchema":obj(json!({"path":s,"format":{"type":"string","enum":["csv","landxml"]},"epsg":num}),&["path"])},
       {"name":"import_landxml","description":"Import a LandXML 1.x file: TIN surface (as existing ground), alignment (line/arc/clothoid) and profile. Reports differences against values stored in the file (areas, elevations, lengths, element end points).","inputSchema":obj(json!({"path":s,"surface":s,"alignment":s,"use_surface":b,"use_alignment":b}),&["path"])},
-      {"name":"export_landxml","description":"Write LandXML 1.2 with points, existing-ground and corridor surfaces, alignment and profile.","inputSchema":obj(json!({"file":s}),&[])},
+      {"name":"export_landxml","description":"Write LandXML 1.2 (validated against the official XSD in CI): Units (Metric, or Imperial ft / US survey ft following set_units unless 'units' is given), Project, Application, CoordinateSystem (EPSG when known), CgPoints, TIN surfaces (existing ground; finished grade with corridor breaklines and the daylight outer boundary), parcels (holes as nested parcels), the alignment (Line / Curve / clothoid Spiral with stations, radii, delta, tangents, spiral constants), profiles (sampled EG ProfSurf and design ProfAlign with PVI / ParaCurve), cross sections (CrossSectSurf EG/FG and DesignCrossSectSurf), superelevation stations per curve, and pipe networks (structures, inverts, pipes with diameters and material). Not yet opened in Civil 3D or OpenRoads Designer; see docs/landxml.md.","inputSchema":obj(json!({"file":s,"units":{"type":"string","enum":["metric","imperial","imperial_survey_ft"]}}),&[])},
+      {"name":"export_design_package","description":"Write design package v1 into a project sub-folder (default 'design-package'): manifest.json (schema version, units, CRS, source run with audit head, SHA-256 of every file) and JSON files in canonical SI units for alignments, profiles, superelevation, assemblies (ordered subassembly-like parameter sets), corridors (regions with station ranges, assembly, frequency, targets), surfaces (references into the package LandXML), pipe networks, parcels and the ROW line, quantities (earthwork, mass haul, BoQ) and the sheet registers, plus design.xml (LandXML 1.2 in the session units unless 'landxml_units'). Schemas: schema/design-package/v1; the package is validated after writing. A data exchange format only: no Civil 3D or OpenRoads plug-in reads it yet (docs/design-package.md).","inputSchema":obj(json!({"dir":s,"landxml_units":{"type":"string","enum":["metric","imperial","imperial_survey_ft"]}}),&[])},
+      {"name":"validate_design_package","description":"Validate a design package folder: manifest and every JSON file against the v1 JSON Schemas (embedded subset validator: type, const, enum, required, properties, additionalProperties, items, minItems, maxItems, minimum, $ref), file sizes and SHA-256 against the manifest, LandXML linear unit against the manifest. 'dir' relative to the project or absolute.","inputSchema":obj(json!({"dir":s}),&[])},
       {"name":"generate_construction_set","description":"Write the construction-scale sheet set (construction-set.pdf, cs-NN.dxf/svg, construction-register.csv): survey control and curve/vertical data tables, plan-and-profile sheets split at match lines at a standard scale (1:500 metric, 1\" = 50' US), existing-conditions base (contours, engineer-entered property lines and right-of-way), gridded cross sections at a standard interval (20 m / 50 ft) with ROW and construction limits, and a quantity summary by pay item with earthwork per plan sheet. Missing engineer inputs are flagged on the sheets and in the checks. The main set (generate_drawings) is unchanged.","inputSchema":obj(json!({"row_left_m":num,"row_right_m":num,"property_lines":arr(json!({"type":"object","properties":{"id":s,"pts":arr(arr(num.clone()))}})),"control":arr(json!({"type":"object","properties":{"id":s,"e":num,"n":num,"z":num,"desc":s}})),"xs_interval_m":num,"plan_scale":num}),&[])},
       {"name":"export_blender_scene","description":"Write a Blender-ready visualisation scene: scene.glb (glTF 2.0: existing ground, existing ground trimmed exactly to the corridor daylight lines, road pavement, pavement structure layers as closed solids following crossfall / superelevation, earthwork slopes, retaining walls, pipes, structures, route alternatives as coloured ribbons), scene.json (georeference origin E0/N0/Z0 + EPSG, camera path along the design centreline, alternative metrics) and blender_scene.py, a headless script (blender -b -P blender_scene.py -- <dir>) that builds materials, lighting and camera, renders an overview, one still per alternative, driver-eye stills and a flythrough MP4, and exports USD (scene.usdc) and scene.blend. Concept / preliminary visualisation only.","inputSchema":obj(json!({}),&[])},
       {"name":"export_cad_model","description":"Write a 3D CAD model for Civil 3D / MicroStation handoff (DXF R12, metres, world coordinates): existing and finished-grade TIN faces, 3D centreline, corridor feature lines by point code, wall tops, pipes at invert, structures at rim. Layers follow the active drafting profile (NCS for US, ISO 13567 elsewhere) or 'layer_map' {internal: agency layer} (keys SURF-EG, SURF-FG, ALIGNMENT, FEATURE, WALL, PIPE, STRUCTURE). Use with export_landxml for alignments, profiles, cross sections and pipe networks. Optional DWG: 'dwg_version' (ACAD2013 = AC1027, ACAD2018 = AC1032) converts the model (and with 'dwg_include_sheets' every sheet-NN / cs-NN DXF in the project) into dwg/ through ODA File Converter when it is installed (ODA_FILE_CONVERTER or ODAFileConverter on PATH); errors if it is not.","inputSchema":obj(json!({"file":s,"layer_map":{"type":"object"},"dwg_version":{"type":"string","enum":["ACAD2004","ACAD2007","ACAD2010","ACAD2013","ACAD2018"]},"dwg_include_sheets":{"type":"boolean"}}),&[])},
@@ -146,6 +148,40 @@ const DESIGN_TOOLS: &[&str] = &[
 ];
 
 impl Session {
+    /// LandXML text of the current design and the units it was written in
+    /// ('metric' | 'imperial' | 'imperial_survey_ft', default: the session units).
+    pub(crate) fn landxml_text(&self, units: Option<&str>) -> (String, landxml::LxUnits) {
+        let mut surfaces = Vec::new();
+        if let Some((t, _)) = &self.tin {
+            surfaces.push(("EG", t));
+        }
+        if let Some(t) = &self.corridor_fg {
+            surfaces.push((landxml::FG_SURFACE, t));
+        }
+        let lu = match units {
+            Some("metric") => landxml::LxUnits::Metric,
+            Some("imperial") => landxml::LxUnits::Imperial { survey_foot: false },
+            Some("imperial_survey_ft") => landxml::LxUnits::Imperial { survey_foot: true },
+            _ => landxml::LxUnits::from_session(crate::units::cur()),
+        };
+        let xml = landxml::write(&landxml::Export {
+            points: &self.points,
+            surfaces,
+            alignment: self.alignment.as_ref(),
+            profiles: self.profile.iter().collect(),
+            networks: self.networks.iter().collect(),
+            corridor: self.corridor.as_ref(),
+            epsg: self.crs_epsg,
+            parcels: self.parcels.as_ref(),
+            superelevation: self.superelevation.as_ref(),
+            project: self
+                .basis
+                .as_ref()
+                .map(|b| (b.project.clone(), format!("engineer of record: {}; standards profile {}", b.engineer_of_record, b.standard.label()))),
+            units: lu,
+        });
+        (xml, lu)
+    }
     pub(crate) fn dir(&self) -> crate::Result<PathBuf> {
         self.dir.clone().ok_or_else(|| "call open_project first".to_string())
     }
@@ -484,9 +520,13 @@ impl Session {
                 let p = a["path"].as_str().ok_or("path required")?;
                 let text = std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?;
                 let (pts, rej) = if a["format"] == "landxml" { (points::parse_landxml_cgpoints(&text)?, vec![]) } else { points::parse_csv(&text)? };
-                let out = json!({"points": pts.len(), "rejected": rej, "file_sha256": sha256_hex(text.as_bytes())});
+                let epsg = a["epsg"].as_u64().map(|x| x as u32);
+                let out = json!({"points": pts.len(), "rejected": rej, "file_sha256": sha256_hex(text.as_bytes()), "epsg": epsg});
                 let prov = self.log("agent", name, a, &out, &[])?;
                 self.points = pts;
+                if epsg.is_some() {
+                    self.crs_epsg = epsg;
+                }
                 Ok(json!({"result": out, "provenance": prov}))
             }
             "import_landxml" => {
@@ -539,26 +579,60 @@ impl Session {
             }
             "export_landxml" => {
                 let file = a["file"].as_str().unwrap_or("design.xml").to_string();
-                let mut surfaces = Vec::new();
-                if let Some((t, _)) = &self.tin {
-                    surfaces.push(("EG", t));
-                }
-                if let Some(t) = &self.corridor_fg {
-                    surfaces.push(("Corridor FG", t));
-                }
-                let xml = landxml::write(&landxml::Export {
-                    points: &self.points,
-                    surfaces,
-                    alignment: self.alignment.as_ref(),
-                    profiles: self.profile.iter().collect(),
-                    networks: self.networks.iter().collect(),
-                    corridor: self.corridor.as_ref(),
-                    epsg: self.crs_epsg,
-                    parcels: self.parcels.as_ref(),
-                });
+                let (xml, _) = self.landxml_text(a["units"].as_str());
                 let h = self.write(&file, xml.as_bytes())?;
                 let out = json!({"file": file, "sha256": h, "bytes": xml.len()});
                 let prov = self.log("agent", name, a, &out, &["LandXML 1.2 schema".into()])?;
+                Ok(json!({"result": out, "provenance": prov}))
+            }
+            "export_design_package" => {
+                let d = a["dir"].as_str().unwrap_or(crate::package::DIR).trim_matches('/').to_string();
+                if d.is_empty() || d.contains("..") {
+                    return Err("dir must be a sub-folder of the project".into());
+                }
+                let (xml, lu) = self.landxml_text(a["landxml_units"].as_str());
+                let lin = match lu {
+                    landxml::LxUnits::Metric => "meter",
+                    landxml::LxUnits::Imperial { survey_foot: false } => "foot",
+                    landxml::LxUnits::Imperial { survey_foot: true } => "USSurveyFoot",
+                };
+                let parts = crate::package::build(self, lin)?;
+                std::fs::create_dir_all(self.dir()?.join(&d)).map_err(|e| e.to_string())?;
+                let mut files = Vec::new();
+                for (role, f, v) in &parts {
+                    let b = serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?;
+                    let h = self.write(&format!("{d}/{f}"), &b)?;
+                    files.push(json!({"path": f, "role": role, "schema": format!("{role}.schema.json"), "media_type": "application/json", "bytes": b.len(), "sha256": h}));
+                }
+                let h = self.write(&format!("{d}/{}", crate::package::LANDXML), xml.as_bytes())?;
+                files.push(json!({"path": crate::package::LANDXML, "role": "landxml", "schema": "LandXML-1.2.xsd", "media_type": "application/xml", "bytes": xml.len(), "sha256": h}));
+                let u = crate::units::cur();
+                let b = self.need_basis()?.clone();
+                let lg = self.log.as_ref().ok_or("call open_project first")?;
+                let manifest = json!({"schema": "civil-mcp/design-package", "schema_version": crate::package::VERSION, "created": crate::frame::today(), "status": "PRELIMINARY",
+                    "generator": {"name": "civil-mcp", "version": env!("CARGO_PKG_VERSION"), "url": "https://github.com/reacherwu/civil-mcp"},
+                    "project": {"name": b.project, "engineer_of_record": b.engineer_of_record, "standard": b.standard.label(), "design_speed_kmh": b.design_speed_kmh},
+                    "units": {"canonical": "SI", "display_system": if u.us() { "US" } else { "SI" },
+                        "display_foot": if u.us() { if (u.ft() - 0.3048).abs() > 1e-12 { json!("us_survey") } else { json!("international") } } else { Value::Null },
+                        "landxml_linear_unit": lin},
+                    "crs": {"epsg": self.crs_epsg, "horizontal_unit": "m", "vertical_datum": Value::Null,
+                        "note": if self.crs_epsg.is_some() { "EPSG code as given to load_points / import_terrain; vertical datum not recorded" } else { "CRS unknown (local coordinates)" }},
+                    "source_run": {"project_dir": self.dir()?.display().to_string(), "audit_log": "audit.jsonl", "audit_seq": lg.seq, "audit_head_sha256": lg.head, "files_in_run": self.files.len()},
+                    "files": files});
+                let mb = serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?;
+                let mh = self.write(&format!("{d}/manifest.json"), &mb)?;
+                let val = crate::package::validate_dir(&self.dir()?.join(&d))?;
+                let out = json!({"dir": d, "manifest_sha256": mh, "schema_version": crate::package::VERSION, "landxml_linear_unit": lin,
+                    "files": manifest["files"].as_array().map(|f| f.iter().map(|x| x["path"].clone()).collect::<Vec<_>>()), "validation": val});
+                let prov = self.log("agent", name, a, &out, &["civil-mcp design package v1 (schema/design-package/v1)".into(), "LandXML 1.2 schema".into()])?;
+                Ok(json!({"result": out, "provenance": prov}))
+            }
+            "validate_design_package" => {
+                let d = a["dir"].as_str().unwrap_or(crate::package::DIR);
+                let p = std::path::Path::new(d);
+                let p = if p.is_absolute() { p.to_path_buf() } else { self.dir()?.join(p) };
+                let out = crate::package::validate_dir(&p)?;
+                let prov = self.log("agent", name, a, &out, &["civil-mcp design package v1 (schema/design-package/v1)".into()])?;
                 Ok(json!({"result": out, "provenance": prov}))
             }
             "generate_construction_set" => {

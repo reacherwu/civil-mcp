@@ -1,0 +1,105 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/quantities.schema.json",
+ "title": "Earthwork and bill of quantities",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/quantities"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "earthwork": {
+   "type": "object",
+   "properties": {
+    "corridor_cut_m3": {
+     "type": "number",
+     "minimum": 0
+    },
+    "corridor_fill_m3": {
+     "type": "number",
+     "minimum": 0
+    },
+    "layers_m3": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string"
+       },
+       "volume_m3": {
+        "type": "number",
+        "minimum": 0
+       }
+      },
+      "required": [
+       "name",
+       "volume_m3"
+      ],
+      "additionalProperties": false
+     },
+     "minItems": 0
+    },
+    "mass_haul": {
+     "type": [
+      "object",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "corridor_cut_m3",
+    "corridor_fill_m3",
+    "layers_m3",
+    "mass_haul"
+   ],
+   "additionalProperties": false
+  },
+  "boq": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "code": {
+      "type": "string"
+     },
+     "item": {
+      "type": "string"
+     },
+     "unit": {
+      "type": "string"
+     },
+     "qty": {
+      "type": "number"
+     },
+     "basis": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "item",
+     "unit",
+     "qty",
+     "basis"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 0
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "earthwork",
+  "boq"
+ ],
+ "additionalProperties": false
+}

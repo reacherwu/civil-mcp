@@ -1,0 +1,111 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/superelevation.schema.json",
+ "title": "Superelevation by curve",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/superelevation"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "alignment": {
+   "type": "string"
+  },
+  "normal_crown": {
+   "type": "number",
+   "minimum": 0
+  },
+  "pivot": {
+   "type": "string"
+  },
+  "rotation_width": {
+   "type": "number",
+   "minimum": 0
+  },
+  "curves": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "curve": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "radius": {
+      "type": "number",
+      "minimum": 0
+     },
+     "turn": {
+      "type": "string",
+      "enum": [
+       "left",
+       "right"
+      ]
+     },
+     "e_design": {
+      "type": "number",
+      "minimum": 0
+     },
+     "runout_start": {
+      "type": "number"
+     },
+     "level_crown": {
+      "type": "number"
+     },
+     "full_super_start": {
+      "type": "number"
+     },
+     "full_super_end": {
+      "type": "number"
+     },
+     "level_crown_out": {
+      "type": "number"
+     },
+     "runout_end": {
+      "type": "number"
+     },
+     "relative_gradient": {
+      "type": "number",
+      "minimum": 0
+     },
+     "method": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "curve",
+     "radius",
+     "turn",
+     "e_design",
+     "runout_start",
+     "level_crown",
+     "full_super_start",
+     "full_super_end",
+     "level_crown_out",
+     "runout_end",
+     "relative_gradient",
+     "method"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 0
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "alignment",
+  "normal_crown",
+  "pivot",
+  "rotation_width",
+  "curves"
+ ],
+ "additionalProperties": false
+}

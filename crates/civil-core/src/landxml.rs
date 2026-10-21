@@ -334,14 +334,109 @@ pub fn read(text: &str) -> crate::Result<LandXmlData> {
             profiles,
         });
     }
+    // lengths in the file's linear unit -> metres
+    let units = root.descendants().find(|n| n.tag_name().name() == "Metric" || n.tag_name().name() == "Imperial");
+    let lf = match units.and_then(|u| u.attribute("linearUnit")) {
+        Some("foot") => 0.3048,
+        Some("USSurveyFoot") => 1200.0 / 3937.0,
+        Some("inch") => 0.0254,
+        Some("mile") => 1609.344,
+        Some("millimeter") => 0.001,
+        Some("centimeter") => 0.01,
+        Some("kilometer") => 1000.0,
+        _ => 1.0,
+    };
+    if lf != 1.0 {
+        scale(&mut out, lf, if units.and_then(|u| u.attribute("flowUnit")) == Some("cubicFeetSecond") { 0.3048f64.powi(3) } else { 1.0 });
+    }
     Ok(out)
+}
+
+/// Converts every length of parsed data by `lf` (file unit -> m) and flows by `qf`.
+fn scale(d: &mut LandXmlData, lf: f64, qf: f64) {
+    for p in &mut d.points {
+        p.n *= lf;
+        p.e *= lf;
+        p.z *= lf;
+    }
+    for s in &mut d.surfaces {
+        for p in &mut s.points {
+            for v in p.iter_mut() {
+                *v *= lf;
+            }
+        }
+        s.reported_area2d = s.reported_area2d.map(|a| a * lf * lf);
+        s.reported_area3d = s.reported_area3d.map(|a| a * lf * lf);
+        s.reported_elev_min = s.reported_elev_min.map(|a| a * lf);
+        s.reported_elev_max = s.reported_elev_max.map(|a| a * lf);
+    }
+    for a in &mut d.alignments {
+        a.sta_start *= lf;
+        a.reported_length = a.reported_length.map(|v| v * lf);
+        a.max_end_deviation *= lf;
+        for e in &mut a.elements {
+            e.start = [e.start[0] * lf, e.start[1] * lf];
+            e.len *= lf;
+            e.k0 /= lf;
+            e.k1 /= lf;
+        }
+        for p in &mut a.profiles {
+            for v in &mut p.vpis {
+                v[0] *= lf;
+                v[1] *= lf;
+            }
+            for c in &mut p.curve_lengths {
+                *c *= lf;
+            }
+        }
+    }
+    for n in &mut d.pipe_networks {
+        for s in &mut n.structs {
+            s.x *= lf;
+            s.y *= lf;
+            s.rim = s.rim.map(|v| v * lf);
+            s.sump = s.sump.map(|v| v * lf);
+            for i in &mut s.inverts {
+                i.0 *= lf;
+            }
+        }
+        for p in &mut n.pipes {
+            p.reported_length = p.reported_length.map(|v| v * lf);
+            p.hgl_up = p.hgl_up.map(|v| v * lf);
+            p.hgl_down = p.hgl_down.map(|v| v * lf);
+            p.flow_in = p.flow_in.map(|v| v * qf);
+            p.arc_center = p.arc_center.map(|c| [c[0] * lf, c[1] * lf]);
+        }
+    }
 }
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
-fn p2(p: [f64; 2]) -> String {
-    format!("{:.6} {:.6}", p[1], p[0])
+/// Unit system of a LandXML file. Imperial writes every length in feet (international or US
+/// survey), areas in square feet, pipe diameters in inches and flows in ft³/s.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LxUnits {
+    Metric,
+    Imperial { survey_foot: bool },
+}
+
+impl LxUnits {
+    /// output length units per metre
+    pub fn per_m(self) -> f64 {
+        match self {
+            LxUnits::Metric => 1.0,
+            LxUnits::Imperial { survey_foot: false } => 1.0 / 0.3048,
+            LxUnits::Imperial { survey_foot: true } => 3937.0 / 1200.0,
+        }
+    }
+    pub fn from_session(u: crate::units::Units) -> LxUnits {
+        if u.us() {
+            LxUnits::Imperial { survey_foot: (u.ft() - 0.3048).abs() > 1e-12 }
+        } else {
+            LxUnits::Metric
+        }
+    }
 }
 
 pub struct Export<'a> {
@@ -350,40 +445,103 @@ pub struct Export<'a> {
     pub alignment: Option<&'a Alignment>,
     pub profiles: Vec<&'a Profile>,
     pub networks: Vec<&'a crate::pipes::Network>,
-    /// corridor cross sections (EG and FG per station), written as CrossSects in the alignment
+    /// corridor cross sections (EG and FG per station), written as CrossSects in the alignment;
+    /// also gives the breaklines and outer boundary of the finished-grade surface
     pub corridor: Option<&'a crate::corridor::Corridor>,
     /// horizontal CRS of the coordinates, when known (from import_terrain)
     pub epsg: Option<u32>,
     /// imported parcels (user data), written as Parcels
     pub parcels: Option<&'a crate::parcels::ParcelSet>,
+    pub superelevation: Option<&'a crate::superelev::Superelevation>,
+    /// project name and description
+    pub project: Option<(String, String)>,
+    pub units: LxUnits,
 }
 
+impl Default for Export<'_> {
+    fn default() -> Self {
+        Export {
+            points: &[],
+            surfaces: vec![],
+            alignment: None,
+            profiles: vec![],
+            networks: vec![],
+            corridor: None,
+            epsg: None,
+            parcels: None,
+            superelevation: None,
+            project: None,
+            units: LxUnits::Metric,
+        }
+    }
+}
+
+/// Name of the finished-grade surface whose breaklines / boundary come from the corridor.
+pub const FG_SURFACE: &str = "Corridor FG";
+
 pub fn write(x: &Export) -> String {
+    let f = x.units.per_m();
+    let l = |v: f64| v * f;
+    // LandXML point order is northing easting
+    let p2 = |p: [f64; 2]| format!("{:.6} {:.6}", p[1] * f, p[0] * f);
+    // metres keep 4 decimals; feet get 6 so the round trip to metres stays below 1e-6 m
+    let d3 = if f == 1.0 { 4 } else { 6 };
+    let p3 = |p: [f64; 3]| format!("{:.d$} {:.d$} {:.d$}", p[1] * f, p[0] * f, p[2] * f, d = d3);
     let mut o = String::new();
     let _ = writeln!(o, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-    let _ = writeln!(o, "<LandXML xmlns=\"http://www.landxml.org/schema/LandXML-1.2\" version=\"1.2\" date=\"2026-01-01\" time=\"00:00:00\">");
-    let _ = writeln!(o, "  <Units><Metric areaUnit=\"squareMeter\" linearUnit=\"meter\" volumeUnit=\"cubicMeter\" temperatureUnit=\"celsius\" pressureUnit=\"milliBars\" angularUnit=\"decimal degrees\" directionUnit=\"decimal degrees\"/></Units>");
-    let _ = writeln!(o, "  <Application name=\"civil-mcp\" manufacturer=\"civil-mcp\" version=\"{}\"/>", env!("CARGO_PKG_VERSION"));
-    if let Some(e) = x.epsg {
-        let _ = writeln!(o, "  <CoordinateSystem name=\"EPSG:{e}\" epsgCode=\"{e}\" desc=\"horizontal CRS of the source terrain; coordinates in metres\"/>");
+    let _ = writeln!(
+        o,
+        "<LandXML xmlns=\"http://www.landxml.org/schema/LandXML-1.2\" version=\"1.2\" date=\"{}\" time=\"00:00:00\" language=\"English\" readOnly=\"false\">",
+        crate::frame::today()
+    );
+    match x.units {
+        LxUnits::Metric => {
+            let _ = writeln!(o, "  <Units><Metric areaUnit=\"squareMeter\" linearUnit=\"meter\" volumeUnit=\"cubicMeter\" temperatureUnit=\"celsius\" pressureUnit=\"milliBars\" diameterUnit=\"millimeter\" flowUnit=\"cubicMeterSecond\" angularUnit=\"decimal degrees\" directionUnit=\"decimal degrees\" elevationUnit=\"meter\"/></Units>");
+        }
+        LxUnits::Imperial { survey_foot } => {
+            let _ = writeln!(o, "  <Units><Imperial areaUnit=\"squareFoot\" linearUnit=\"{}\" volumeUnit=\"cubicYard\" temperatureUnit=\"fahrenheit\" pressureUnit=\"inHG\" diameterUnit=\"inch\" flowUnit=\"cubicFeetSecond\" angularUnit=\"decimal degrees\" directionUnit=\"decimal degrees\" elevationUnit=\"feet\"/></Units>", if survey_foot { "USSurveyFoot" } else { "foot" });
+        }
     }
+    if let Some(e) = x.epsg {
+        let _ = writeln!(o, "  <CoordinateSystem name=\"EPSG:{e}\" epsgCode=\"{e}\" desc=\"horizontal CRS of the source terrain\"/>");
+    }
+    if let Some((n, d)) = &x.project {
+        let _ = writeln!(o, "  <Project name=\"{}\" desc=\"{}\"/>", esc(n), esc(d));
+    }
+    let _ = writeln!(o, "  <Application name=\"civil-mcp\" desc=\"PRELIMINARY design export; not reviewed or approved by a licensed engineer\" manufacturer=\"civil-mcp\" version=\"{}\" manufacturerURL=\"https://github.com/reacherwu/civil-mcp\"/>", env!("CARGO_PKG_VERSION"));
     if !x.points.is_empty() {
         let _ = writeln!(o, "  <CgPoints>");
         for p in x.points {
-            let _ = writeln!(o, "    <CgPoint name=\"{}\" desc=\"{}\">{:.4} {:.4} {:.4}</CgPoint>", esc(&p.id), esc(&p.desc), p.n, p.e, p.z);
+            let _ = writeln!(o, "    <CgPoint name=\"{}\" desc=\"{}\">{:.4} {:.4} {:.4}</CgPoint>", esc(&p.id), esc(&p.desc), l(p.n), l(p.e), l(p.z));
         }
         let _ = writeln!(o, "  </CgPoints>");
     }
     if !x.surfaces.is_empty() {
         let _ = writeln!(o, "  <Surfaces>");
         for (name, t) in &x.surfaces {
-            let _ = writeln!(o, "    <Surface name=\"{}\">\n      <Definition surfType=\"TIN\">\n        <Pnts>", esc(name));
+            let _ = writeln!(o, "    <Surface name=\"{}\">", esc(name));
+            if *name == FG_SURFACE {
+                if let Some(c) = x.corridor.filter(|c| c.sections.len() >= 2) {
+                    let (bl, bnd) = fg_lines(c);
+                    let _ = writeln!(o, "      <SourceData>\n        <Boundaries>\n          <Boundary name=\"daylight\" bndType=\"outer\" edgeTrim=\"true\" desc=\"corridor daylight (catch) lines\"><PntList2D>{}</PntList2D></Boundary>\n        </Boundaries>\n        <Breaklines>", bnd.iter().map(|q| p2(*q)).collect::<Vec<_>>().join(" "));
+                    for (n, v) in &bl {
+                        let _ = writeln!(
+                            o,
+                            "          <Breakline name=\"{n}\" brkType=\"standard\"><PntList3D>{}</PntList3D></Breakline>",
+                            v.iter().map(|q| p3(*q)).collect::<Vec<_>>().join(" ")
+                        );
+                    }
+                    let _ = writeln!(o, "        </Breaklines>\n      </SourceData>");
+                }
+            }
+            let (zmin, zmax) = t.pts.iter().fold((f64::MAX, f64::MIN), |a, p| (a.0.min(p[2]), a.1.max(p[2])));
+            let _ = writeln!(o, "      <Definition surfType=\"TIN\" elevMin=\"{:.4}\" elevMax=\"{:.4}\">\n        <Pnts>", l(zmin), l(zmax));
             for (i, p) in t.pts.iter().enumerate() {
-                let _ = writeln!(o, "          <P id=\"{}\">{:.4} {:.4} {:.4}</P>", i + 1, p[1], p[0], p[2]);
+                let _ = writeln!(o, "          <P id=\"{}\">{}</P>", i + 1, p3(*p));
             }
             let _ = writeln!(o, "        </Pnts>\n        <Faces>");
-            for f in &t.tris {
-                let _ = writeln!(o, "          <F>{} {} {}</F>", f[0] + 1, f[1] + 1, f[2] + 1);
+            for fc in &t.tris {
+                let _ = writeln!(o, "          <F>{} {} {}</F>", fc[0] + 1, fc[1] + 1, fc[2] + 1);
             }
             let _ = writeln!(o, "        </Faces>\n      </Definition>\n    </Surface>");
         }
@@ -395,23 +553,41 @@ pub fn write(x: &Export) -> String {
             "  <Parcels name=\"imported parcels\" desc=\"user data from {}; ROW screening only, not a boundary survey\">",
             esc(ps.source.rsplit('/').next().unwrap_or(""))
         );
+        let ring = |o: &mut String, r: &[[f64; 2]], ind: &str| {
+            let _ = writeln!(o, "{ind}<CoordGeom>");
+            for k in 0..r.len() {
+                let _ = writeln!(o, "{ind}  <Line><Start>{}</Start><End>{}</End></Line>", p2(r[k]), p2(r[(k + 1) % r.len()]));
+            }
+            let _ = writeln!(o, "{ind}</CoordGeom>");
+        };
         for p in &ps.parcels {
-            let holes = p.rings.iter().filter(|r| crate::parcels::signed_area(r) < 0.0).count();
             let mut desc = p.zoning.clone().map(|z| format!("zoning {z}")).unwrap_or_default();
             if p.no_go {
                 desc = format!("{desc}{}no-go: {}", if desc.is_empty() { "" } else { "; " }, p.no_go_reason.clone().unwrap_or_default());
             }
-            if holes > 0 {
-                desc = format!("{desc}{}{holes} interior ring(s) not written", if desc.is_empty() { "" } else { "; " });
-            }
-            let _ = writeln!(o, "    <Parcel name=\"{}\" area=\"{:.4}\" desc=\"{}\">", esc(&p.id), p.area_m2, esc(&desc));
+            let _ = writeln!(o, "    <Parcel name=\"{}\" area=\"{:.4}\" desc=\"{}\">", esc(&p.id), p.area_m2 * f * f, esc(&desc));
             for r in p.rings.iter().filter(|r| crate::parcels::signed_area(r) > 0.0) {
-                let _ = writeln!(o, "      <CoordGeom>");
-                for k in 0..r.len() {
-                    let (a, b) = (r[k], r[(k + 1) % r.len()]);
-                    let _ = writeln!(o, "        <Line><Start>{:.4} {:.4}</Start><End>{:.4} {:.4}</End></Line>", a[1], a[0], b[1], b[0]);
+                ring(&mut o, r, "      ");
+            }
+            // interior rings (holes) as nested parcels marked as excluded areas
+            let holes: Vec<_> = p.rings.iter().filter(|r| crate::parcels::signed_area(r) < 0.0).collect();
+            if !holes.is_empty() {
+                let _ = writeln!(o, "      <Parcels name=\"{} holes\">", esc(&p.id));
+                for (k, r) in holes.iter().enumerate() {
+                    let mut r = r.to_vec();
+                    r.reverse();
+                    let _ = writeln!(
+                        o,
+                        "        <Parcel name=\"{}-hole-{}\" area=\"{:.4}\" desc=\"interior ring (excluded area) of parcel {}\">",
+                        esc(&p.id),
+                        k + 1,
+                        crate::parcels::signed_area(&r) * f * f,
+                        esc(&p.id)
+                    );
+                    ring(&mut o, &r, "          ");
+                    let _ = writeln!(o, "        </Parcel>");
                 }
-                let _ = writeln!(o, "      </CoordGeom>");
+                let _ = writeln!(o, "      </Parcels>");
             }
             let _ = writeln!(o, "    </Parcel>");
         }
@@ -420,89 +596,225 @@ pub fn write(x: &Export) -> String {
     if let Some(al) = x.alignment {
         let _ = writeln!(
             o,
-            "  <Alignments>\n    <Alignment name=\"{}\" length=\"{:.6}\" staStart=\"{:.6}\">\n      <CoordGeom>",
+            "  <Alignments name=\"civil-mcp\">\n    <Alignment name=\"{}\" length=\"{:.6}\" staStart=\"{:.6}\">\n      <CoordGeom>",
             esc(&al.name),
-            al.length,
-            al.start_station
+            l(al.length),
+            l(al.start_station)
         );
+        let mut sta = al.start_station;
+        let deg = |a: f64| a.to_degrees();
         for e in &al.elements {
             let st = e.start;
             let en = e.point(e.len);
+            let chord = ((en[0] - st[0]).powi(2) + (en[1] - st[1]).powi(2)).sqrt();
             match e.kind {
                 Kind::Line => {
-                    let _ = writeln!(o, "        <Line length=\"{:.6}\"><Start>{}</Start><End>{}</End></Line>", e.len, p2(st), p2(en));
+                    let _ = writeln!(
+                        o,
+                        "        <Line staStart=\"{:.6}\" length=\"{:.6}\"><Start>{}</Start><End>{}</End></Line>",
+                        l(sta),
+                        l(e.len),
+                        p2(st),
+                        p2(en)
+                    );
                 }
                 Kind::Arc => {
                     let r = 1.0 / e.k0.abs();
                     let n = e.az0 + e.k0.signum() * std::f64::consts::FRAC_PI_2;
                     let c = [st[0] + r * n.cos(), st[1] + r * n.sin()];
                     let rot = if e.k0 > 0.0 { "ccw" } else { "cw" };
-                    let _ = writeln!(o, "        <Curve rot=\"{rot}\" crvType=\"arc\" radius=\"{r:.6}\" length=\"{:.6}\"><Start>{}</Start><Center>{}</Center><End>{}</End></Curve>", e.len, p2(st), p2(c), p2(en));
+                    let d = e.len / r;
+                    let t = r * (d / 2.0).tan();
+                    let pi = [st[0] + t * e.az0.cos(), st[1] + t * e.az0.sin()];
+                    let _ = writeln!(
+                        o,
+                        "        <Curve rot=\"{rot}\" crvType=\"arc\" staStart=\"{:.6}\" radius=\"{:.6}\" length=\"{:.6}\" delta=\"{:.9}\" chord=\"{:.6}\" tangent=\"{:.6}\" external=\"{:.6}\" midOrd=\"{:.6}\"><Start>{}</Start><Center>{}</Center><End>{}</End><PI>{}</PI></Curve>",
+                        l(sta),
+                        l(r),
+                        l(e.len),
+                        deg(d),
+                        l(chord),
+                        l(t),
+                        l(r * (1.0 / (d / 2.0).cos() - 1.0)),
+                        l(r * (1.0 - (d / 2.0).cos())),
+                        p2(st),
+                        p2(c),
+                        p2(en),
+                        p2(pi)
+                    );
                 }
                 Kind::Spiral => {
                     let k = if e.k0 != 0.0 { e.k0 } else { e.k1 };
                     let rot = if k > 0.0 { "ccw" } else { "cw" };
-                    let r = |k: f64| if k == 0.0 { "INF".to_string() } else { format!("{:.6}", 1.0 / k.abs()) };
+                    let r = |k: f64| if k == 0.0 { "INF".to_string() } else { format!("{:.6}", l(1.0 / k.abs())) };
                     // PI = intersection of start and end tangents
                     let (a0, a1) = (e.az0, e.heading(e.len));
-                    let d = (a1 - a0).sin();
-                    let t = ((en[0] - st[0]) * a1.sin() - (en[1] - st[1]) * a1.cos()) / d;
-                    let pi = [st[0] + t * a0.cos(), st[1] + t * a0.sin()];
-                    let _ = writeln!(o, "        <Spiral length=\"{:.6}\" radiusStart=\"{}\" radiusEnd=\"{}\" rot=\"{rot}\" spiType=\"clothoid\"><Start>{}</Start><PI>{}</PI><End>{}</End></Spiral>", e.len, r(e.k0), r(e.k1), p2(st), p2(pi), p2(en));
+                    let dd = (a1 - a0).sin();
+                    let tt = ((en[0] - st[0]) * a1.sin() - (en[1] - st[1]) * a1.cos()) / dd;
+                    let pi = [st[0] + tt * a0.cos(), st[1] + tt * a0.sin()];
+                    let dist = |a: [f64; 2], b: [f64; 2]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+                    // full spirals (one end straight): theta, A, long / short tangents, X / Y from the tangent end
+                    let mut extra = String::new();
+                    if (e.k0 == 0.0) != (e.k1 == 0.0) {
+                        let entering = e.k0 == 0.0;
+                        let rr = 1.0 / k.abs();
+                        let (t0, h0, cv) = if entering { (st, a0, en) } else { (en, a1 + std::f64::consts::PI, st) };
+                        let (dx, dy) = (cv[0] - t0[0], cv[1] - t0[1]);
+                        let xx = dx * h0.cos() + dy * h0.sin();
+                        let yy = (-dx * h0.sin() + dy * h0.cos()).abs();
+                        extra = format!(
+                            " theta=\"{:.9}\" constant=\"{:.6}\" totalX=\"{:.6}\" totalY=\"{:.6}\" tanLong=\"{:.6}\" tanShort=\"{:.6}\"",
+                            deg(e.len / (2.0 * rr)),
+                            l((rr * e.len).sqrt()),
+                            l(xx),
+                            l(yy),
+                            l(dist(t0, pi)),
+                            l(dist(pi, cv))
+                        );
+                    }
+                    let _ = writeln!(
+                        o,
+                        "        <Spiral staStart=\"{:.6}\" length=\"{:.6}\" radiusStart=\"{}\" radiusEnd=\"{}\" rot=\"{rot}\" spiType=\"clothoid\" chord=\"{:.6}\"{extra}><Start>{}</Start><PI>{}</PI><End>{}</End></Spiral>",
+                        l(sta),
+                        l(e.len),
+                        r(e.k0),
+                        r(e.k1),
+                        l(chord),
+                        p2(st),
+                        p2(pi),
+                        p2(en)
+                    );
                 }
             }
+            sta += e.len;
         }
         let _ = writeln!(o, "      </CoordGeom>");
-        for p in &x.profiles {
-            let _ = writeln!(o, "      <Profile name=\"{}\">\n        <ProfAlign name=\"{}\">", esc(&p.input.name), esc(&p.input.name));
-            let v = &p.input.vpis;
-            for (i, q) in v.iter().enumerate() {
-                let l = if i > 0 && i + 1 < v.len() { p.input.curve_lengths[i - 1] } else { 0.0 };
-                if l > 0.0 {
-                    let _ = writeln!(o, "          <ParaCurve length=\"{l:.6}\">{:.6} {:.6}</ParaCurve>", q[0], q[1]);
-                } else {
-                    let _ = writeln!(o, "          <PVI>{:.6} {:.6}</PVI>", q[0], q[1]);
-                }
+        // sampled existing-ground profile (ProfSurf) and the design profiles (ProfAlign)
+        let eg = x.surfaces.iter().find(|s| s.0 == "EG").map(|s| s.1);
+        if !x.profiles.is_empty() || eg.is_some() {
+            let _ = writeln!(o, "      <Profile name=\"{}\" staStart=\"{:.6}\">", esc(&al.name), l(al.start_station));
+            if let Some(t) = eg {
+                let n = (al.length / 10.0).ceil().max(1.0) as usize;
+                let pts: Vec<String> = (0..=n)
+                    .filter_map(|i| {
+                        let s = al.start_station + al.length * i as f64 / n as f64;
+                        let (px, py, _) = al.point_at(s)?;
+                        Some(format!("{:.4} {:.4}", l(s), l(t.elevation_at(px, py)?)))
+                    })
+                    .collect();
+                let _ = writeln!(
+                    o,
+                    "        <ProfSurf name=\"EG\" desc=\"existing ground sampled every {:.2} along the alignment\"><PntList2D>{}</PntList2D></ProfSurf>",
+                    l(al.length / n as f64),
+                    pts.join(" ")
+                );
             }
-            let _ = writeln!(o, "        </ProfAlign>\n      </Profile>");
+            for p in &x.profiles {
+                let _ = writeln!(o, "        <ProfAlign name=\"{}\">", esc(&p.input.name));
+                let v = &p.input.vpis;
+                for (i, q) in v.iter().enumerate() {
+                    let cl = if i > 0 && i + 1 < v.len() { p.input.curve_lengths[i - 1] } else { 0.0 };
+                    if cl > 0.0 {
+                        let _ = writeln!(o, "          <ParaCurve length=\"{:.6}\">{:.6} {:.6}</ParaCurve>", l(cl), l(q[0]), l(q[1]));
+                    } else {
+                        let _ = writeln!(o, "          <PVI>{:.6} {:.6}</PVI>", l(q[0]), l(q[1]));
+                    }
+                }
+                let _ = writeln!(o, "        </ProfAlign>");
+            }
+            let _ = writeln!(o, "      </Profile>");
         }
         if let Some(c) = x.corridor.filter(|c| !c.sections.is_empty()) {
             // offsets: left negative, right positive (LandXML / Civil 3D convention)
             let _ = writeln!(o, "      <CrossSects name=\"{} sections\" calcMethod=\"AverageEndArea\">", esc(&al.name));
-            let pl = |v: &[[f64; 2]]| v.iter().map(|q| format!("{:.4} {:.4}", q[0], q[1])).collect::<Vec<_>>().join(" ");
+            let pl = |v: &[[f64; 2]]| v.iter().map(|q| format!("{:.4} {:.4}", l(q[0]), l(q[1]))).collect::<Vec<_>>().join(" ");
             for sct in &c.sections {
                 let mut eg: Vec<[f64; 2]> = sct.ground.iter().map(|q| [-q[0], q[1]]).collect();
                 eg.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
                 let mut fg: Vec<[f64; 2]> = sct.left.fg.iter().rev().map(|q| [-q[0], q[1]]).collect();
                 fg.extend(sct.right.fg.iter().skip(1).copied());
+                let dpts: String = fg.iter().map(|q| format!("<CrossSectPnt>{:.4} {:.4}</CrossSectPnt>", l(q[0]), l(q[1]))).collect();
                 let _ = writeln!(
                     o,
-                    "        <CrossSect sta=\"{:.4}\" name=\"{:.3}\" areaCut=\"{:.4}\" areaFill=\"{:.4}\">\n          <CrossSectSurf name=\"EG\"><PntList2D>{}</PntList2D></CrossSectSurf>\n          <CrossSectSurf name=\"FG\"><PntList2D>{}</PntList2D></CrossSectSurf>\n        </CrossSect>",
-                    sct.station, sct.station, sct.cut_area, sct.fill_area, pl(&eg), pl(&fg)
+                    "        <CrossSect sta=\"{:.4}\" name=\"{:.3}\" areaCut=\"{:.4}\" areaFill=\"{:.4}\">\n          <CrossSectSurf name=\"EG\"><PntList2D>{}</PntList2D></CrossSectSurf>\n          <CrossSectSurf name=\"FG\"><PntList2D>{}</PntList2D></CrossSectSurf>\n          <DesignCrossSectSurf name=\"FG\" side=\"both\" closedArea=\"false\">{}</DesignCrossSectSurf>\n        </CrossSect>",
+                    l(sct.station),
+                    l(sct.station),
+                    sct.cut_area * f * f,
+                    sct.fill_area * f * f,
+                    pl(&eg),
+                    pl(&fg),
+                    dpts
                 );
             }
             let _ = writeln!(o, "      </CrossSects>");
         }
+        if let Some(se) = x.superelevation {
+            for c in se.curves.iter().filter(|c| c.e > 0.0 && c.b_in > c.a_in && c.a_out > c.b_out) {
+                // outer edge rises linearly from -nc at A to +e at B: level crown at nc/(e+nc) of A-B
+                let fr = se.nc / (c.e + se.nc);
+                let lvl_in = c.a_in + (c.b_in - c.a_in) * fr;
+                let lvl_out = c.a_out - (c.a_out - c.b_out) * fr;
+                let _ = writeln!(
+                    o,
+                    "      <Superelevation staStart=\"{:.6}\" staEnd=\"{:.6}\">\n        <BeginRunoutSta>{:.6}</BeginRunoutSta>\n        <BeginRunoffSta>{:.6}</BeginRunoffSta>\n        <FullSuperSta>{:.6}</FullSuperSta>\n        <FullSuperelev>{:.4}</FullSuperelev>\n        <RunoffSta>{:.6}</RunoffSta>\n        <StartofRunoutSta>{:.6}</StartofRunoutSta>\n        <EndofRunoutSta>{:.6}</EndofRunoutSta>\n        <AdverseSE>non-adverse</AdverseSE>\n      </Superelevation>",
+                    l(c.a_in),
+                    l(c.a_out),
+                    l(c.a_in),
+                    l(lvl_in),
+                    l(c.b_in),
+                    c.e * 100.0,
+                    l(c.b_out),
+                    l(lvl_out),
+                    l(c.a_out)
+                );
+            }
+        }
         let _ = writeln!(o, "    </Alignment>\n  </Alignments>");
     }
     if !x.networks.is_empty() {
+        let dia = match x.units {
+            LxUnits::Metric => 1000.0,
+            LxUnits::Imperial { .. } => 1.0 / 0.0254,
+        };
+        let q = match x.units {
+            LxUnits::Metric => 1.0,
+            LxUnits::Imperial { .. } => 1.0 / 0.3048f64.powi(3),
+        };
         let _ = writeln!(o, "  <PipeNetworks>");
         for n in &x.networks {
             let ty = if n.pipes.iter().any(|p| p.q_avg > 0.0) { "sanitary" } else { "storm" };
             let _ = writeln!(o, "    <PipeNetwork name=\"{}\" pipeNetType=\"{ty}\">\n      <Structs>", esc(&n.name));
             for (id, sx, sy, rim, sump) in &n.structures {
-                let _ = writeln!(o, "        <Struct name=\"{}\" elevRim=\"{rim:.4}\" elevSump=\"{sump:.4}\">\n          <Center>{sy:.4} {sx:.4}</Center>\n          <CircStruct diameter=\"1.0\" desc=\"placeholder size: structure dimensions are not designed by civil-mcp\"/>", esc(id));
+                let _ = writeln!(o, "        <Struct name=\"{}\" elevRim=\"{:.4}\" elevSump=\"{:.4}\">\n          <Center>{}</Center>\n          <CircStruct diameter=\"{:.1}\" desc=\"placeholder size: structure dimensions are not designed by civil-mcp\"/>", esc(id), l(*rim), l(*sump), p2([*sx, *sy]), 1.0 * dia);
                 for p in n.pipes.iter().filter(|p| &p.to == id) {
-                    let _ = writeln!(o, "          <Invert elev=\"{:.4}\" flowDir=\"in\" refPipe=\"{}\"/>", p.invert_dn, esc(&p.id));
+                    let _ = writeln!(o, "          <Invert elev=\"{:.4}\" flowDir=\"in\" refPipe=\"{}\"/>", l(p.invert_dn), esc(&p.id));
                 }
                 for p in n.pipes.iter().filter(|p| &p.from == id) {
-                    let _ = writeln!(o, "          <Invert elev=\"{:.4}\" flowDir=\"out\" refPipe=\"{}\"/>", p.invert_up, esc(&p.id));
+                    let _ = writeln!(o, "          <Invert elev=\"{:.4}\" flowDir=\"out\" refPipe=\"{}\"/>", l(p.invert_up), esc(&p.id));
                 }
                 let _ = writeln!(o, "        </Struct>");
             }
             let _ = writeln!(o, "      </Structs>\n      <Pipes>");
             for p in &n.pipes {
-                let _ = writeln!(o, "        <Pipe name=\"{}\" refStart=\"{}\" refEnd=\"{}\" length=\"{:.4}\" slope=\"{:.6}\">\n          <CircPipe diameter=\"{:.4}\"/>\n          <PipeFlow flowIn=\"{:.6}\" hglUp=\"{:.4}\" hglDown=\"{:.4}\"/>\n        </Pipe>", esc(&p.id), esc(&p.from), esc(&p.to), p.length, p.slope, p.diameter_m, p.q_design, p.hgl_up, p.hgl_dn);
+                let mat = if p.material.is_empty() { "not specified".to_string() } else { p.material.clone() };
+                let _ = writeln!(
+                    o,
+                    "        <Pipe name=\"{}\" refStart=\"{}\" refEnd=\"{}\" length=\"{:.4}\" slope=\"{:.6}\" desc=\"material: {}\">\n          <CircPipe diameter=\"{:.2}\" desc=\"{}\"/>\n          <PipeFlow flowIn=\"{:.6}\" hglUp=\"{:.4}\" hglDown=\"{:.4}\"/>\n          <Feature name=\"civil-mcp\"><Property label=\"material\" value=\"{}\"/><Property label=\"invertUp\" value=\"{:.4}\"/><Property label=\"invertDown\" value=\"{:.4}\"/></Feature>\n        </Pipe>",
+                    esc(&p.id),
+                    esc(&p.from),
+                    esc(&p.to),
+                    l(p.length),
+                    p.slope,
+                    esc(&mat),
+                    p.diameter_m * dia,
+                    esc(&mat),
+                    p.q_design * q,
+                    l(p.hgl_up),
+                    l(p.hgl_dn),
+                    esc(&mat),
+                    l(p.invert_up),
+                    l(p.invert_dn)
+                );
             }
             let _ = writeln!(o, "      </Pipes>\n    </PipeNetwork>");
         }
@@ -510,6 +822,38 @@ pub fn write(x: &Export) -> String {
     }
     let _ = writeln!(o, "</LandXML>");
     o
+}
+
+/// Finished-grade breaklines (centreline, edges of paved width, daylight lines) and the outer
+/// boundary (daylight polygon, closed) from the corridor sections, world x/y/z in metres.
+pub fn fg_lines(c: &crate::corridor::Corridor) -> (Vec<(String, Vec<[f64; 3]>)>, Vec<[f64; 2]>) {
+    let at = |fg: &[[f64; 2]], off: f64| -> f64 {
+        for w in fg.windows(2) {
+            if off >= w[0][0] - 1e-9 && off <= w[1][0] + 1e-9 && w[1][0] > w[0][0] {
+                return w[0][1] + (w[1][1] - w[0][1]) * (off - w[0][0]) / (w[1][0] - w[0][0]);
+            }
+        }
+        fg.last().map_or(0.0, |q| q[1])
+    };
+    let pt = |s: &crate::corridor::Section, left: bool, off: f64, z: f64| {
+        let q = crate::cad3d::sec_xy(s.x, s.y, s.heading, off, left);
+        [q[0], q[1], z]
+    };
+    let mut cl = vec![];
+    let (mut epl, mut epr, mut dll, mut dlr) = (vec![], vec![], vec![], vec![]);
+    for s in &c.sections {
+        cl.push([s.x, s.y, s.cl_elev]);
+        epl.push(pt(s, true, s.left.paved_width, at(&s.left.fg, s.left.paved_width)));
+        epr.push(pt(s, false, s.right.paved_width, at(&s.right.fg, s.right.paved_width)));
+        let (ql, qr) = (s.left.fg.last().copied().unwrap_or([0.0, s.cl_elev]), s.right.fg.last().copied().unwrap_or([0.0, s.cl_elev]));
+        dll.push(pt(s, true, ql[0], ql[1]));
+        dlr.push(pt(s, false, qr[0], qr[1]));
+    }
+    let mut bnd = crate::parcels::row_polygon(c, 0.0);
+    if let Some(first) = bnd.first().copied() {
+        bnd.push(first);
+    }
+    (vec![("CL".into(), cl), ("EP-L".into(), epl), ("EP-R".into(), epr), ("DAYLIGHT-L".into(), dll), ("DAYLIGHT-R".into(), dlr)], bnd)
 }
 
 /// Build an Alignment from imported data.

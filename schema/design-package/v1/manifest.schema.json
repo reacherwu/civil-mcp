@@ -1,0 +1,237 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/manifest.schema.json",
+ "title": "civil-mcp design package manifest",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "created": {
+   "type": "string",
+   "description": "YYYY-MM-DD (box-local date of the run)"
+  },
+  "status": {
+   "type": "string",
+   "enum": [
+    "PRELIMINARY"
+   ],
+   "description": "not reviewed or approved by a licensed engineer"
+  },
+  "generator": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "version": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "name",
+    "version",
+    "url"
+   ],
+   "additionalProperties": false
+  },
+  "project": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "engineer_of_record": {
+     "type": "string"
+    },
+    "standard": {
+     "type": "string"
+    },
+    "design_speed_kmh": {
+     "type": "number",
+     "minimum": 0
+    }
+   },
+   "required": [
+    "name",
+    "engineer_of_record",
+    "standard",
+    "design_speed_kmh"
+   ],
+   "additionalProperties": false
+  },
+  "units": {
+   "type": "object",
+   "properties": {
+    "canonical": {
+     "const": "SI"
+    },
+    "display_system": {
+     "type": "string",
+     "enum": [
+      "SI",
+      "US"
+     ]
+    },
+    "display_foot": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "enum": [
+      "international",
+      "us_survey",
+      null
+     ]
+    },
+    "landxml_linear_unit": {
+     "type": "string",
+     "enum": [
+      "meter",
+      "foot",
+      "USSurveyFoot"
+     ]
+    }
+   },
+   "required": [
+    "canonical",
+    "display_system",
+    "display_foot",
+    "landxml_linear_unit"
+   ],
+   "additionalProperties": false
+  },
+  "crs": {
+   "type": "object",
+   "properties": {
+    "epsg": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "horizontal_unit": {
+     "const": "m"
+    },
+    "vertical_datum": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "note": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "epsg",
+    "horizontal_unit",
+    "vertical_datum",
+    "note"
+   ],
+   "additionalProperties": false
+  },
+  "source_run": {
+   "type": "object",
+   "properties": {
+    "project_dir": {
+     "type": "string"
+    },
+    "audit_log": {
+     "type": "string"
+    },
+    "audit_seq": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "audit_head_sha256": {
+     "type": "string"
+    },
+    "files_in_run": {
+     "type": "integer",
+     "minimum": 0
+    }
+   },
+   "required": [
+    "project_dir",
+    "audit_log",
+    "audit_seq",
+    "audit_head_sha256",
+    "files_in_run"
+   ],
+   "additionalProperties": false
+  },
+  "files": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string"
+     },
+     "role": {
+      "type": "string",
+      "enum": [
+       "alignments",
+       "profiles",
+       "superelevation",
+       "assemblies",
+       "corridors",
+       "surfaces",
+       "pipes",
+       "parcels",
+       "quantities",
+       "sheets",
+       "landxml"
+      ]
+     },
+     "schema": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "media_type": {
+      "type": "string"
+     },
+     "bytes": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "sha256": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "path",
+     "role",
+     "schema",
+     "media_type",
+     "bytes",
+     "sha256"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 1
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "created",
+  "status",
+  "generator",
+  "project",
+  "units",
+  "crs",
+  "source_run",
+  "files"
+ ],
+ "additionalProperties": false
+}

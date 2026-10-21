@@ -1,0 +1,116 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/reacherwu/civil-mcp/schema/design-package/v1/profiles.schema.json",
+ "title": "Vertical profiles",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "civil-mcp/design-package/profiles"
+  },
+  "schema_version": {
+   "const": "1.0.0"
+  },
+  "units": {
+   "const": "SI",
+   "description": "lengths m, elevations m, areas m², volumes m³, flows m³/s, slopes m/m, angles degrees"
+  },
+  "profiles": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "alignment": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "design",
+       "existing_ground"
+      ]
+     },
+     "pvis": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "station": {
+         "type": "number"
+        },
+        "elevation": {
+         "type": "number"
+        },
+        "curve_length": {
+         "type": "number",
+         "minimum": 0
+        },
+        "curve_type": {
+         "type": "string",
+         "enum": [
+          "none",
+          "symmetric_parabola"
+         ]
+        }
+       },
+       "required": [
+        "station",
+        "elevation",
+        "curve_length",
+        "curve_type"
+       ],
+       "additionalProperties": false
+      },
+      "minItems": 0
+     },
+     "samples": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "station": {
+         "type": "number"
+        },
+        "elevation": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "station",
+        "elevation"
+       ],
+       "additionalProperties": false
+      },
+      "minItems": 0
+     },
+     "grades_pct": {
+      "type": "array",
+      "items": {
+       "type": "number"
+      },
+      "minItems": 0
+     }
+    },
+    "required": [
+     "name",
+     "alignment",
+     "kind",
+     "pvis",
+     "samples",
+     "grades_pct"
+    ],
+    "additionalProperties": false
+   },
+   "minItems": 1
+  }
+ },
+ "required": [
+  "schema",
+  "schema_version",
+  "units",
+  "profiles"
+ ],
+ "additionalProperties": false
+}
