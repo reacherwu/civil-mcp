@@ -39,6 +39,7 @@ pub mod signals;
 pub mod slope;
 pub mod subsurface;
 pub mod superelev;
+pub mod terrain;
 pub mod traffic;
 pub mod units;
 

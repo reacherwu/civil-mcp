@@ -12,3 +12,5 @@ delaunator.workspace = true
 roxmltree = "0.20"
 ttf-parser = "0.25"
 miniz_oxide = "0.8"
+tiff = "0.9"
+laz = "0.9"

@@ -75,6 +75,7 @@ pub fn tool_list() -> Value {
       {"name":"load_points","description":"Load survey points from CSV (id,easting,northing,elevation,desc) or LandXML CgPoints. Rejected rows are reported.","inputSchema":obj(json!({"path":s,"format":{"type":"string","enum":["csv","landxml"]}}),&["path"])},
       {"name":"import_landxml","description":"Import a LandXML 1.x file: TIN surface (as existing ground), alignment (line/arc/clothoid) and profile. Reports differences against values stored in the file (areas, elevations, lengths, element end points).","inputSchema":obj(json!({"path":s,"surface":s,"alignment":s,"use_surface":b,"use_alignment":b}),&["path"])},
       {"name":"export_landxml","description":"Write LandXML 1.2 with points, existing-ground and corridor surfaces, alignment and profile.","inputSchema":obj(json!({"file":s}),&[])},
+      {"name":"import_terrain","description":"Import terrain from a GeoTIFF / Cloud-Optimised GeoTIFF DEM, an ESRI ASCII grid (.asc), or a LAS/LAZ point cloud (ASPRS classes, default [2] ground), and build the existing-ground TIN. CRS: EPSG from GeoTIFF keys or LAS VLRs (or 'epsg'); geographic and Web Mercator data are projected to UTM; projected data (UTM, MGA, state plane, national grids) are kept planar with foot units (US survey / international) converted to metres. 'crop' [xmin,ymin,xmax,ymax] in output metres, 'step' subsamples, 'z_units' m|ft|us_ft.","inputSchema":obj(json!({"path":s,"step":num,"crop":arr(num.clone()),"epsg":num,"target_epsg":num,"xy_units":{"type":"string","enum":["m","ft","us_ft"]},"z_units":{"type":"string","enum":["m","ft","us_ft"]},"classes":arr(num.clone()),"max_points":num,"max_edge_m":num,"build_surface":b}),&["path"])},
       {"name":"build_surface","description":"Build a Delaunay TIN from loaded points. Optional max_edge_m drops long hull triangles.","inputSchema":obj(json!({"max_edge_m":num}),&[])},
       {"name":"create_alignment","description":"Horizontal alignment from PIs, circular radii and optional symmetric clothoid lengths (tangent–spiral–arc–spiral–tangent). Fails if curves overlap.","inputSchema":obj(json!({"name":s,"pis":xy,"radii":arr(num.clone()),"spirals":arr(num.clone()),"start_station":num}),&["name","pis","radii"])},
       {"name":"sample_ground_profile","description":"Sample existing ground along the alignment.","inputSchema":obj(json!({"interval_m":num}),&[])},
@@ -115,6 +116,7 @@ fn f(v: &Value, k: &str) -> Option<f64> {
 }
 
 const DESIGN_TOOLS: &[&str] = &[
+    "import_terrain",
     "set_design_basis",
     "design_pavement",
     "select_route",
@@ -544,6 +546,52 @@ impl Session {
                 let h = self.write(&file, xml.as_bytes())?;
                 let out = json!({"file": file, "sha256": h, "bytes": xml.len()});
                 let prov = self.log("agent", name, a, &out, &["LandXML 1.2 schema".into()])?;
+                Ok(json!({"result": out, "provenance": prov}))
+            }
+            "import_terrain" => {
+                let p = a["path"].as_str().ok_or("path required")?;
+                let crop = a.get("crop").and_then(|v| v.as_array()).map(|v| {
+                    let g = |i: usize| v.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0);
+                    [g(0), g(1), g(2), g(3)]
+                });
+                let o = crate::terrain::Options {
+                    step: a["step"].as_u64().unwrap_or(1) as usize,
+                    crop,
+                    epsg: a["epsg"].as_u64().map(|x| x as u32),
+                    target_epsg: a["target_epsg"].as_u64().map(|x| x as u32),
+                    xy_units: a["xy_units"].as_str().map(String::from),
+                    z_units: a["z_units"].as_str().map(String::from),
+                    classes: a
+                        .get("classes")
+                        .and_then(|v| v.as_array())
+                        .map(|v| v.iter().filter_map(|x| x.as_u64()).map(|x| x as u8).collect())
+                        .unwrap_or(vec![2]),
+                    max_points: a["max_points"].as_u64().unwrap_or(400_000) as usize,
+                };
+                let bytes = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
+                let imp = crate::terrain::read_any(p, &o)?;
+                self.points = imp
+                    .points
+                    .iter()
+                    .enumerate()
+                    .map(|(i, q)| points::SurveyPoint { id: format!("T{}", i + 1), e: q[0], n: q[1], z: q[2], desc: imp.format.clone() })
+                    .collect();
+                let mut out = serde_json::to_value(&imp).unwrap();
+                out["file_sha256"] = json!(sha256_hex(&bytes));
+                if a["build_surface"].as_bool().unwrap_or(true) {
+                    let pts: Vec<[f64; 3]> = imp.points.clone();
+                    let (t, st) = Tin::build(&pts, f(a, "max_edge_m"))?;
+                    out["surface"] = serde_json::to_value(&st).unwrap();
+                    self.tin = Some((t, st));
+                    self.invalidate_corridor();
+                }
+                let prov = self.log(
+                    "agent",
+                    name,
+                    a,
+                    &out,
+                    &["terrain import (GeoTIFF / ASCII grid / LAS / LAZ)".into(), out["crs"]["note"].as_str().unwrap_or("").to_string()],
+                )?;
                 Ok(json!({"result": out, "provenance": prov}))
             }
             "build_surface" => {
