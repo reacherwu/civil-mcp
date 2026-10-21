@@ -12,7 +12,7 @@
 
 ![The agent designing a road on USGS terrain. Every frame is drawn from files the demo wrote.](docs/media/civil-mcp-agent-design.gif)
 
-| **55** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set (PDF + DXF) | **242 / 242** independent re-checks within tolerance |
+| **61** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set (PDF + DXF) | **242 / 242** independent re-checks within tolerance |
 |:---:|:---:|:---:|:---:|
 
 <sub>All numbers come from the committed demo: US AASHTO profile, 50 km/h rural collector, 5,607 USGS 3DEP survey points near Palo Alto CA, measured 2026-10-20. Layered elastic pavement analysis matches the published KENPAVE example to ≤ 0.09 %.</sub>
