@@ -19,6 +19,9 @@ fn us_customary_full_set_and_round_trip() {
     let dsf: Vec<_> = ds["result"]["checks"].as_array().unwrap().iter().filter(|c| c["pass"] == false && c["severity"] == "mandatory").collect();
     assert!(dsf.is_empty(), "{dsf:?}");
 
+    // construction set at 1" = 50' with 50 ft cross-section interval
+    let cr = rd("construction-register.csv");
+    assert!(cr.contains("1\"\" = 50'"), "{cr}");
     // 38 sheets, register with US scales
     let reg = rd("sheet-register.csv");
     assert!(reg.starts_with("page,sheet_id,title,revision,status,size,dxf,svg,scale,units\n"));

@@ -77,6 +77,7 @@ pub fn tool_list() -> Value {
       {"name":"load_points","description":"Load survey points from CSV (id,easting,northing,elevation,desc) or LandXML CgPoints. Rejected rows are reported.","inputSchema":obj(json!({"path":s,"format":{"type":"string","enum":["csv","landxml"]}}),&["path"])},
       {"name":"import_landxml","description":"Import a LandXML 1.x file: TIN surface (as existing ground), alignment (line/arc/clothoid) and profile. Reports differences against values stored in the file (areas, elevations, lengths, element end points).","inputSchema":obj(json!({"path":s,"surface":s,"alignment":s,"use_surface":b,"use_alignment":b}),&["path"])},
       {"name":"export_landxml","description":"Write LandXML 1.2 with points, existing-ground and corridor surfaces, alignment and profile.","inputSchema":obj(json!({"file":s}),&[])},
+      {"name":"generate_construction_set","description":"Write the construction-scale sheet set (construction-set.pdf, cs-NN.dxf/svg, construction-register.csv): survey control and curve/vertical data tables, plan-and-profile sheets split at match lines at a standard scale (1:500 metric, 1\" = 50' US), existing-conditions base (contours, engineer-entered property lines and right-of-way), gridded cross sections at a standard interval (20 m / 50 ft) with ROW and construction limits, and a quantity summary by pay item with earthwork per plan sheet. Missing engineer inputs are flagged on the sheets and in the checks. The main set (generate_drawings) is unchanged.","inputSchema":obj(json!({"row_left_m":num,"row_right_m":num,"property_lines":arr(json!({"type":"object","properties":{"id":s,"pts":arr(arr(num.clone()))}})),"control":arr(json!({"type":"object","properties":{"id":s,"e":num,"n":num,"z":num,"desc":s}})),"xs_interval_m":num,"plan_scale":num}),&[])},
       {"name":"export_cad_model","description":"Write a 3D CAD model for Civil 3D / MicroStation handoff (DXF R12, metres, world coordinates): existing and finished-grade TIN faces, 3D centreline, corridor feature lines by point code, wall tops, pipes at invert, structures at rim. Layers follow the active drafting profile (NCS for US, ISO 13567 elsewhere) or 'layer_map' {internal: agency layer} (keys SURF-EG, SURF-FG, ALIGNMENT, FEATURE, WALL, PIPE, STRUCTURE). Use with export_landxml for alignments, profiles, cross sections and pipe networks.","inputSchema":obj(json!({"file":s,"layer_map":{"type":"object"}}),&[])},
       {"name":"import_terrain","description":"Import terrain from a GeoTIFF / Cloud-Optimised GeoTIFF DEM, an ESRI ASCII grid (.asc), or a LAS/LAZ point cloud (ASPRS classes, default [2] ground), and build the existing-ground TIN. CRS: EPSG from GeoTIFF keys or LAS VLRs (or 'epsg'); geographic and Web Mercator data are projected to UTM; projected data (UTM, MGA, state plane, national grids) are kept planar with foot units (US survey / international) converted to metres. 'crop' [xmin,ymin,xmax,ymax] in output metres, 'step' subsamples, 'z_units' m|ft|us_ft.","inputSchema":obj(json!({"path":s,"step":num,"crop":arr(num.clone()),"epsg":num,"target_epsg":num,"xy_units":{"type":"string","enum":["m","ft","us_ft"]},"z_units":{"type":"string","enum":["m","ft","us_ft"]},"classes":arr(num.clone()),"max_points":num,"max_edge_m":num,"build_surface":b}),&["path"])},
       {"name":"build_surface","description":"Build a Delaunay TIN from loaded points. Optional max_edge_m drops long hull triangles.","inputSchema":obj(json!({"max_edge_m":num}),&[])},
@@ -551,6 +552,83 @@ impl Session {
                 let h = self.write(&file, xml.as_bytes())?;
                 let out = json!({"file": file, "sha256": h, "bytes": xml.len()});
                 let prov = self.log("agent", name, a, &out, &["LandXML 1.2 schema".into()])?;
+                Ok(json!({"result": out, "provenance": prov}))
+            }
+            "generate_construction_set" => {
+                let b = self.need_basis()?.clone();
+                let (t, _) = self.tin.as_ref().ok_or("build_surface first")?;
+                let al = self.alignment.as_ref().ok_or("create_alignment first")?;
+                let pr = self.profile.as_ref().ok_or("create_profile first")?;
+                let cor = self.corridor.as_ref().ok_or("build_corridor first")?;
+                let inp: crate::cset::Inputs = serde_json::from_value(a.clone()).map_err(|e| e.to_string())?;
+                let (boq, _) = crate::deliver::boq(self);
+                let c = crate::cset::Ctx { tin: t, al, pr, cor, boq, inp: &inp };
+                let p = crate::cset::plan(&c);
+                let (al_a, al_b) = (al.start_station().max(pr.start()), al.end_station().min(pr.end()));
+                let mut titles: Vec<String> = vec!["Survey control and alignment data".into()];
+                for w in &p.windows {
+                    titles.push(format!("Plan and profile STA {} to {}", crate::sheet::sta_label(w.s0), crate::sheet::sta_label(w.s1)));
+                }
+                let nxs = p.xs_stations.len().div_ceil(8);
+                for i in 0..nxs {
+                    titles.push(format!("Cross sections at standard interval ({} of {nxs})", i + 1));
+                }
+                titles.push("Summary of quantities".into());
+                let spec: crate::frame::FrameSpec = self.frame.clone().unwrap_or_default();
+                let rf = crate::frame::resolve(&spec, b.standard)?;
+                let ids: Vec<String> = crate::frame::sheet_ids(&rf, &titles).into_iter().map(|i| format!("CS-{i}")).collect();
+                let pp_ids: Vec<String> = ids[1..1 + p.windows.len()].to_vec();
+                let mut sheets = vec![crate::cset::control_sheet(&c)];
+                for k in 0..p.windows.len() {
+                    sheets.push(crate::cset::plan_profile(&c, &p, k, &pp_ids));
+                }
+                sheets.extend(crate::cset::cross_sections(&c, &p));
+                sheets.push(crate::cset::quantity_summary(&c, &p, &pp_ids));
+                drop(c);
+                let pages = sheets.len();
+                for (i, d) in sheets.iter_mut().enumerate() {
+                    if let Some(m) = d.meta.as_mut() {
+                        m.page = i + 1;
+                        m.pages = pages;
+                    }
+                }
+                let head = self.log.as_ref().map(|l| l.head.clone()).unwrap_or_default();
+                let all = self.all_checks();
+                let info = SheetInfo {
+                    project: b.project.clone(),
+                    engineer: b.engineer_of_record.clone(),
+                    standard: serde_json::to_value(b.standard).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
+                    design_speed: b.design_speed_kmh,
+                    audit_head: head,
+                    checks_failed: all.iter().filter(|c| !c.pass && c.severity == "mandatory").count(),
+                    checks_total: all.len(),
+                    approved_seq: self.approved_seq,
+                };
+                let sheets: Vec<drawing::Drawing> = sheets.iter().enumerate().map(|(i, d)| crate::frame::compose(d, &rf, &info, &ids[i])).collect();
+                let pdf = drawing::to_pdf(&sheets.iter().map(|d| (d, rf.w, rf.h)).collect::<Vec<_>>());
+                let mut files = json!({});
+                files["construction-set.pdf"] = json!(self.write("construction-set.pdf", &pdf)?);
+                let mut reg = String::from("page,sheet_id,title,scale\n");
+                for (i, d) in sheets.iter().enumerate() {
+                    let n = format!("cs-{:02}.dxf", i + 1);
+                    files[&n] = json!(self.write(&n, d.to_dxf().as_bytes())?);
+                    let sv = format!("cs-{:02}.svg", i + 1);
+                    files[&sv] = json!(self.write(&sv, d.to_svg(rf.w, rf.h).as_bytes())?);
+                    let sc = d.meta.as_ref().map(|m| m.scale.clone()).unwrap_or_default();
+                    reg.push_str(&format!("{},{},\"{}\",\"{}\"\n", i + 1, ids[i], titles[i], sc.replace('"', "\"\"")));
+                }
+                files["construction-register.csv"] = json!(self.write("construction-register.csv", reg.as_bytes())?);
+                // set checks: continuous match lines, full coverage, standard scale
+                let mut checks = vec![];
+                let std_ok = if crate::units::cur().us() { crate::cset::US_PLAN.contains(&p.plan_scale) } else { crate::cset::SI_PLAN.contains(&p.plan_scale) };
+                checks.push(json!({"id": "CS-SCALE", "pass": std_ok, "detail": format!("plan scale {}", crate::units::scale(p.plan_scale))}));
+                let cont = p.windows.windows(2).all(|w| (w[0].s1 - w[1].s0).abs() < 1e-9);
+                checks.push(json!({"id": "CS-MATCH", "pass": cont, "detail": "each match line ends one sheet and starts the next"}));
+                let cover = p.windows.first().is_some_and(|w| (w.s0 - al_a).abs() < 1e-6) && p.windows.last().is_some_and(|w| (w.s1 - al_b).abs() < 1e-6);
+                checks.push(json!({"id": "CS-COVER", "pass": cover, "detail": "plan-profile sheets cover the alignment"}));
+                checks.push(json!({"id": "CS-INPUTS", "pass": p.missing_inputs.is_empty(), "detail": if p.missing_inputs.is_empty() { "all engineer inputs present".to_string() } else { format!("missing: {}", p.missing_inputs.join("; ")) }}));
+                let out = json!({"sheets": pages, "plan": p, "sheet_ids": ids, "checks": checks, "files": files});
+                let prov = self.log("agent", name, a, &out, &["construction plan conventions: match lines, standard engineering scales".into()])?;
                 Ok(json!({"result": out, "provenance": prov}))
             }
             "export_cad_model" => {

@@ -558,6 +558,10 @@ pub fn run_units(out: &str, us: bool) -> Session {
     );
     let v = r.call("generate_deliverables", json!({"stage":"preliminary"}));
     println!("deliverables: {}", v["result"]["files"].as_object().unwrap().keys().cloned().collect::<Vec<_>>().join(", "));
+    // construction-scale set; the 30 m right-of-way is the wall rule's ROW above, property lines and
+    // survey control are not available for the demo and are flagged as missing engineer inputs
+    let v = r.call("generate_construction_set", json!({"row_left_m":30.0,"row_right_m":30.0}));
+    println!("construction set: {} sheets, checks {}", v["result"]["sheets"], v["result"]["checks"]);
     let v = r.call("generate_review_report", json!({}));
     println!("review report: {}", v["result"]["audit"]);
     println!("outputs in {out}/");

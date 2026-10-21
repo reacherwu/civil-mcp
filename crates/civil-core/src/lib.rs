@@ -12,6 +12,7 @@ pub mod align;
 pub mod audit;
 pub mod cad3d;
 pub mod corridor;
+pub mod cset;
 pub mod culvert;
 pub mod deliver;
 pub mod drawing;
