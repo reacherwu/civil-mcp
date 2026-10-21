@@ -50,6 +50,12 @@ def look(loc, tgt):
 
 objs = {o.name: o for o in sc.objects if o.type == "MESH"}
 alts = [n for n in objs if n.startswith("Alternative ")]
+# with a corridor: show the ground trimmed to the daylight lines and the pavement layer solids
+# (the top layer's upper face is the finished surface, so the surface-only mesh is hidden)
+if meta.get("ground_trimmed_mesh") in objs:
+    objs["Existing ground"].hide_render = True
+if any(n.startswith("Pavement layer ") for n in objs) and "Road pavement" in objs:
+    objs["Road pavement"].hide_render = True
 bb = meta["bbox_local"]  # [xmin, ymin, zmin, xmax, ymax, zmax]
 c = Vector(((bb[0] + bb[3]) / 2, (bb[1] + bb[4]) / 2, (bb[2] + bb[5]) / 2)); span = max(bb[3] - bb[0], bb[4] - bb[1])
 written = []

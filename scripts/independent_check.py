@@ -607,6 +607,36 @@ g0_ = np.frombuffer(bb_[v0_["byteOffset"]:v0_["byteOffset"] + v0_["byteLength"]]
 world_ = np.c_[g0_[:, 0] + org_["e"], -g0_[:, 2] + org_["n"], g0_[:, 1] + org_["z"]]
 report("glTF ground mesh back to world = LandXML EG points, max abs diff (m)", float(np.abs(world_ - egp_[:, [1, 0, 2]]).max()) if len(world_) == len(egp_) else 1e9, 0, 0.01, "m", rel=False)  # f32 local coordinates
 
+# pavement layer solids: vertical extent at each section = assembly thickness; trimmed ground on the EG surface
+def mesh_pts_(name):
+    for m_ in gj_["meshes"]:
+        if m_["name"] == name:
+            v_ = gj_["bufferViews"][gj_["accessors"][m_["primitives"][0]["attributes"]["POSITION"]]["bufferView"]]
+            g_ = np.frombuffer(bb_[v_["byteOffset"]:v_["byteOffset"] + v_["byteLength"]], "<f4").reshape(-1, 3).astype(float)
+            return np.c_[g_[:, 0] + org_["e"], -g_[:, 2] + org_["n"], g_[:, 1] + org_["z"]]
+    return None
+for L_ in SJ_.get("pavement_layers", []):
+    P_ = mesh_pts_(L_["mesh"])
+    if P_ is None:
+        report(f"glTF pavement layer mesh present: {L_['mesh']}", 0.0, 1.0, 0, "", rel=False); continue
+    k_ = np.round(P_[:, :2], 2); _, inv_ = np.unique(k_, axis=0, return_inverse=True); inv_ = inv_.ravel()
+    ext_ = [P_[inv_ == u_, 2].max() - P_[inv_ == u_, 2].min() for u_ in np.unique(inv_)]
+    report(f"glTF pavement layer '{L_['name']}' vertical thickness, max abs diff (m)", float(np.abs(np.array(ext_) - L_["thickness_m"]).max()), 0, 2e-3, "m", rel=False)
+if SJ_.get("ground_trimmed_mesh"):
+    from scipy.interpolate import LinearNDInterpolator as LI_
+    from scipy.spatial import cKDTree as KD_
+    T_ = mesh_pts_(SJ_["ground_trimmed_mesh"]); f_ = LI_(egp_[:, [1, 0]], egp_[:, 2]); zt_ = f_(T_[:, 0], T_[:, 1])
+    dd_, ii_ = KD_(egp_[:, [1, 0]]).query(T_[:, :2]); orig_ = dd_ < 1e-3
+    report("glTF trimmed ground: kept survey vertices = LandXML EG points, max abs dz (m)", float(np.abs(T_[orig_, 2] - egp_[ii_[orig_], 2]).max()), 0, 0.01, "m", rel=False)
+    ok_ = ~orig_ & ~np.isnan(zt_)
+    # against the planes of the untrimmed ground mesh (same TIN triangles, independent interpolation)
+    import matplotlib.tri as MT_
+    ix0_ = gj_["accessors"][m0_["indices"]]; vi_ = gj_["bufferViews"][ix0_["bufferView"]]
+    tri0_ = np.frombuffer(bb_[vi_["byteOffset"]:vi_["byteOffset"] + vi_["byteLength"]], "<u4").reshape(-1, 3)
+    zi_ = np.asarray(MT_.LinearTriInterpolator(MT_.Triangulation(world_[:, 0], world_[:, 1], tri0_), world_[:, 2])(T_[~orig_, 0], T_[~orig_, 1]).filled(np.nan))
+    okk_ = ~np.isnan(zi_)
+    report("glTF trimmed ground: clip / seam vertices vs untrimmed TIN planes, max abs dz (m)", float(np.abs(T_[~orig_, 2][okk_] - zi_[okk_]).max()), 0, 1e-3, "m", rel=False)
+
 json.dump([dict(zip(["check", "civil_mcp", "independent", "diff", "unit", "ok"], r_)) for r_ in rows], open(f"{out}/independent-checks.json", "w"), ensure_ascii=False, indent=1)
 
 # ---------- 18. superelevation runoff: e, required development and spiral lengths re-derived (AASHTO) ----------

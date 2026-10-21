@@ -12,7 +12,7 @@
 
 ![The agent designing a road on USGS terrain. Every frame is drawn from files the demo wrote.](docs/media/civil-mcp-agent-design.gif)
 
-| **65** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set + **14**-sheet construction set | **269 / 269** independent re-checks within tolerance | **11** real-terrain runs on **9** surfaces |
+| **65** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set + **14**-sheet construction set | **274 / 274** independent re-checks within tolerance | **11** real-terrain runs on **9** surfaces |
 |:---:|:---:|:---:|:---:|:---:|
 
 <sub>Numbers come from a fresh run of the committed demo (US AASHTO profile, 50 km/h rural collector, 5,607 USGS 3DEP survey points near Palo Alto CA) and of `scripts/terrain_batch.py`, both on 2026-10-20 (PDT). Layered elastic pavement analysis matches the published KENPAVE example to ≤ 0.09 %.</sub>
@@ -36,7 +36,7 @@
 | Units | SI by default; switch to US customary (international or survey foot) and back at any time |
 | Terrain | GeoTIFF / COG, ESRI ASCII grid, LAS / LAZ, with CRS handling; 11 real-terrain runs documented |
 | Outputs | PDF, per-sheet DXF and SVG, LandXML 1.2 with cross sections, 3D DXF model, glTF / Blender scene, CSV / Markdown / HTML reports |
-| Verification | 269 independent Python re-checks, CI on every push, Rust unit and pipeline tests |
+| Verification | 274 independent Python re-checks, CI on every push, Rust unit and pipeline tests |
 | Not yet | built-in DWG writer (DWG needs ODA File Converter), a Civil 3D / 12d / BricsCAD open test, end-to-end tests in MCP clients, remote (HTTP) transport |
 
 ## Works with (MCP clients)
@@ -548,11 +548,15 @@ Set checks: standard scale (pass), continuous match lines (pass), full coverage 
 
 ## Blender visualisation (concept / preliminary)
 
-`export_blender_scene` writes `scene.glb` (glTF 2.0: terrain, pavement, earthwork slopes, walls, pipes, structures and the route alternatives as coloured ribbons), `scene.json` (georeference origin E0/N0/Z0 + EPSG, a 229-point camera path along the centreline, metrics per alternative) and `blender_scene.py`, the render script.
+`export_blender_scene` writes `scene.glb` (glTF 2.0: terrain, a copy of the terrain trimmed exactly to the daylight lines so ground meets the slope catch points without showing through, pavement, the pavement structure as one closed solid per assembly layer following crossfall and superelevation, earthwork slopes, walls, pipes, structures and the route alternatives as coloured ribbons), `scene.json` (georeference origin E0/N0/Z0 + EPSG, a 229-point camera path along the centreline, metrics per alternative) and `blender_scene.py`, the render script.
 
 ```bash
 blender -b -P blender_scene.py -- /path/to/project --frames 96 --res 1280x720 --samples 16
 ```
+
+**Walkthrough video** (39.5 s, 720p, rendered from the demo run with [`scripts/render_walkthrough_animation.py`](scripts/render_walkthrough_animation.py)): terrain, route alternatives, alignment, profile, earthwork, a pavement cutaway with the three layers, drainage, and a drive-through from 0+000 to 1+135.65.
+
+[![walkthrough: pavement cutaway at 0+100](docs/media/walkthrough-cutaway.jpg)](docs/media/civil-mcp-walkthrough-720p.mp4)
 
 Stills from that headless run on the demo (Blender 4.2.3, Cycles on CPU):
 
@@ -694,7 +698,7 @@ Full record: **[docs/VALIDATION.md](docs/VALIDATION.md)**. Every row runs in [CI
 
 | Check | What is compared | Result |
 |---|---|---|
-| Independent re-checks, base ([`independent_check.py`](scripts/independent_check.py)) | areas, volumes, mass haul, superelevation and runoff, clothoids, Manning/HGL, walls, route costs, pavement, HEC-15, BoQ, LandXML XSD and cross sections, DXF audit, 3D CAD model, glTF scene | **118 / 118** OK |
+| Independent re-checks, base ([`independent_check.py`](scripts/independent_check.py)) | areas, volumes, mass haul, superelevation and runoff, clothoids, Manning/HGL, walls, route costs, pavement, HEC-15, BoQ, LandXML XSD and cross sections, DXF audit, 3D CAD model, glTF scene (incl. pavement layer thicknesses, trimmed ground on the survey surface) | **123 / 123** OK |
 | Independent re-checks, v5 ([`independent_check_v5.py`](scripts/independent_check_v5.py)) | hydrology, culverts (HDS-5), slope stability, subsurface drainage, walls, land, locality | **70 / 70** OK |
 | Independent re-checks, v6 ([`independent_check_v6.py`](scripts/independent_check_v6.py)) | layered elastic vs PyMastic and KENPAVE, MSE, wall shear/crack/footing, signals, capacity, rigid, landscape, locality | **81 / 81** OK |
 | Layered elastic vs published KENPAVE 3-layer example | deflection, σz, εr, εz | ≤ **0.088 %** |
