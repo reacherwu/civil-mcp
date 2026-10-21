@@ -14,6 +14,13 @@ SRC = {
     'au_blue_mtns': ('Copernicus GLO-30 COG S34 E150, crop 4 km around 33.71 S 150.31 E', 'plateau / escarpment, AU'),
 }
 seen = {}
+# superelevation failure counts from the run before transitions were sized to the runoff (v9)
+before = {}
+try:
+    for l in open('docs/terrain-tests-before-runoff.jsonl'):
+        d = json.loads(l); before[d['site']] = {a['name']: a.get('n_se_fails') for a in d.get('alts', [])} if 'alts' in d else 'INFEASIBLE'
+except FileNotFoundError:
+    pass
 for l in open(sys.argv[1] if len(sys.argv) > 1 else 'docs/terrain-tests.jsonl'):
     d = json.loads(l); seen[d['site']] = d
 md = ["# Real-terrain route tests", "",
@@ -21,8 +28,11 @@ md = ["# Real-terrain route tests", "",
       "End points are mechanical (bbox fractions), so several sites ask for more climb than the box allows. Those are the cases the infeasibility stop is meant to catch.", "",
       "| site | source | terrain | CRS in → out | ground pts | z range (m) | result |", "|---|---|---|---|---|---|---|"]
 det = ["", "## Alternatives on the sites that produced a recommendation", "",
-       "| site | alt | length m | max grade % | min R m | cut m³ | fill m³ | max fill / cut / wall m | limit failures | hairpin exceptions | superelevation failures | overlap with earlier % |",
-       "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+       "| site | alt | length m | max grade % | min R m | cut m³ | fill m³ | max fill / cut / wall m | limit failures | hairpin exceptions | superelevation failures (before → after) | runoff re-check shortfalls | overlap with earlier % |",
+       "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+def bse(site, name):
+    b = before.get(site)
+    return 'site infeasible' if b == 'INFEASIBLE' else ('-' if b is None or b.get(name) is None else b[name])
 for k, (s, t) in SRC.items():
     d = seen[k]
     crs = f"EPSG:{d['epsg']} ({d['crs']}) → " + (f"EPSG:{d['target']}" if d['target'] != d['epsg'] else "same, metres")
@@ -35,13 +45,15 @@ for k, (s, t) in SRC.items():
         res = f"recommended {d['rec']}"
         for a in d['alts']:
             if 'error' in a:
-                det.append(f"| {k} | {a['name']} | build error: {a['error'][:90]} | | | | | | | | | |"); continue
-            det.append(f"| {k} | {a['name']} | {a['length_m']} | {a['max_design_grade_pct']} | {a['min_radius_m']} | {a['cut_m3']:.0f} | {a['fill_m3']:.0f} | {a['max_fill_height_m']} / {a['max_cut_height_m']} / {a['max_wall_height_m']} | {'; '.join(x.split(' (')[0] for x in a['fails']) or '-'} | {len(a['design_exceptions'])} | {a['n_se_fails']} | {a['overlap']} |")
+                det.append(f"| {k} | {a['name']} | build error: {a['error'][:90]} | | | | | | | | | | |"); continue
+            det.append(f"| {k} | {a['name']} | {a['length_m']} | {a['max_design_grade_pct']} | {a['min_radius_m']} | {a['cut_m3']:.0f} | {a['fill_m3']:.0f} | {a['max_fill_height_m']} / {a['max_cut_height_m']} / {a['max_wall_height_m']} | {'; '.join(x.split(' (')[0] for x in a['fails']) or '-'} | {len(a['design_exceptions'])} | {bse(k, a['name'])} → {a['n_se_fails']} | {a.get('runoff_recheck', '-')} | {a['overlap']} |")
     md.append(f"| {k} | {s} | {t} | {crs} | {d['pts']} | {d['z'][0]}–{d['z'][1]} | {res.replace('|', '/')} |")
 md += det + ["", "## What this shows", "",
  "- Import works on GeoTIFF (UTM and state-plane US ft), Copernicus COG in geographic coordinates (projected to UTM; the projection matches PROJ to < 1 mm on the unit-test points), and LAZ with a compound WKT (horizontal intl ft, vertical US survey ft).",
  "- On the steep boxes (Boulder, West Virginia, Lake District) the run stops with INFEASIBLE and states why. Before this change the Boulder input returned a recommended route with 150–260 m fills.",
- "- The switchback search (D) produced hairpin alignments within the grade and height limits at Palo Alto and the Blue Mountains, using R = 30 m hairpins that depend on the engineer-entered design exception. On flat or rolling ground it falls back to near-direct routes; at Autzen it duplicated A (overlap 100 %, flagged).",
- "- Every alternative still fails superelevation runoff checks (SE-IN-LS / SE-OVERLAP) with a 30 m spiral at these radii. The runs were not tuned to remove them, so a route chosen here is a concept-stage (30 %) corridor.",
+ "- The switchback search (D) produced a hairpin alignment within the grade and height limits at the Blue Mountains (recommended there), using R = 35 m hairpins that depend on the engineer-entered design exception. At Palo Alto the re-fitted D exceeds the 10 m wall limit by 0.8 m. On flat or rolling ground it falls back to near-direct routes; at Autzen it duplicated A (overlap 100 %, flagged).",
+ "- Superelevation runoff: transitions are now sized during alignment fitting to at least the required development L = w·(e+nc)/Δmax (AASHTO relative gradient; the DMRB and Austroads profiles supply their own limits through the same parameter), and the radius is changed (down to the floor, or flatter for small deflections) when the tangents are too short. No alternative fails SE-IN-LS or SE-OVERLAP after the change. The 'runoff re-check' column is an independent Python recomputation of L for each fitted curve (count of spirals shorter than L).",
+ "- Fixing the runoff moved some alignments, and the earthwork changed with them. At Palo Alto, D now exceeds the wall limit and B's cut/wall exceedances grew. At the Blue Mountains, A now exceeds the wall limit and B now also exceeds the fill limit. All of these alternatives had runoff failures before, so none was a clean design before or after. With the runoff failures gone, the recommendation rule (fewest mandatory failures, then cost) picks a different alternative at the state-plane Palo Alto, Kansas, Iowa and Blue Mountains runs.",
+ "- Hairpins whose deflection leaves no room for spirals are fitted as simple curves (Ls 0). Their development runs on the tangents and is covered only by the SE-OVERLAP check; the tangent runout itself is not checked against the alignment start/end.",
  "- Boulder at 10 m and 20 m cells: no path inside the 4 km box holds the ground grade within 20 % between the chosen points. This does not prove a road is impossible on the real terrain outside the box."]
 open('docs/terrain-tests.md', 'w').write("\n".join(md) + "\n")

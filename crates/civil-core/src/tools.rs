@@ -1363,11 +1363,15 @@ impl Session {
                     found.push(path.clone());
                     let (plen, pg) = crate::route::path_stats(t, &path);
                     let mut pis = crate::route::clean_pis(crate::route::simplify(&path, tol), 4.0, 40.0);
-                    let mut radii = crate::route::fit_radii(&pis, r_pref, ls, 0.45);
-                    // drop PIs whose fitted radius is below the minimum and refit
                     // switchback alternatives keep their hairpins when the engineer has entered a
                     // hairpin minimum radius (design exception); others drop sub-minimum PIs
                     let r_floor = if spec.hard_grade { hairpin_r.unwrap_or(rs.r_min) } else { rs.r_min };
+                    // spirals sized to the superelevation development length of each radius
+                    let req = |r: f64| crate::superelev::required_development(&b, r).unwrap_or(0.0);
+                    // the original fit (preferred spiral clamped to the deflection) is kept whenever all of
+                    // its spirals already meet the required development; otherwise curves are refit
+                    let pis0 = pis.clone();
+                    let mut radii = crate::route::fit_radii(&pis, r_pref, ls, 0.45);
                     for _ in 0..60 {
                         match radii.iter().position(|r| *r < r_floor) {
                             Some(k) if pis.len() > 3 => {
@@ -1378,16 +1382,56 @@ impl Session {
                             _ => break,
                         }
                     }
-                    // spiral no longer than 90 % of what the deflection allows (2·Ls/(2R) < Δ)
-                    let spirals: Vec<f64> = radii
+                    let mut spirals: Vec<f64> = radii
                         .iter()
                         .enumerate()
-                        .map(|(k, r)| {
-                            let d = crate::route::deflection(pis[k], pis[k + 1], pis[k + 2]);
-                            (ls.min(0.9 * r * d) / 5.0).floor() * 5.0
-                        })
+                        .map(|(k, r)| (ls.min(0.9 * r * crate::route::deflection(pis[k], pis[k + 1], pis[k + 2])) / 5.0).floor() * 5.0)
                         .collect();
-                    let ai = crate::align::AlignmentInput { name: spec.name.clone(), pis: pis.clone(), radii: radii.clone(), spirals, start_station: 0.0 };
+                    let short = radii.iter().zip(&spirals).any(|(r, l)| *r < r_floor || (*l > 0.0 && *l + 1e-9 < req(*r)));
+                    if short {
+                        pis = pis0;
+                        (radii, spirals) = crate::route::fit_curves(&pis, r_pref, ls, 0.45, r_floor, &req);
+                    }
+                    // drop PIs where no radius ≥ the floor fits with its transitions, and refit
+                    for _ in 0..60 {
+                        match radii.iter().position(|r| *r < r_floor) {
+                            Some(k) if short && pis.len() > 3 => {
+                                pis.remove(k + 1);
+                                pis = crate::route::clean_pis(pis, 4.0, 40.0);
+                                (radii, spirals) = crate::route::fit_curves(&pis, r_pref, ls, 0.45, r_floor, &req);
+                            }
+                            _ => break,
+                        }
+                    }
+                    // a single remaining PI that cannot take its transitions: largest radius that fits
+                    // with a shortened spiral; the SE-IN-LS check then fails and says why
+                    let mut transition_notes = vec![];
+                    if radii.iter().any(|r| *r < r_floor) {
+                        let fr = crate::route::fit_radii(&pis, r_pref, ls, 0.45);
+                        for k in 0..radii.len() {
+                            if radii[k] < r_floor {
+                                let d = crate::route::deflection(pis[k], pis[k + 1], pis[k + 2]);
+                                radii[k] = fr[k];
+                                spirals[k] = (ls.min(0.9 * fr[k] * d) / 5.0).floor() * 5.0;
+                                transition_notes.push(format!(
+                                    "curve {}: no radius from {:.0} m to {:.0} m fits its transitions in the available tangents; kept R {:.0} m with Ls {:.0} m, below the {:.1} m required development (design exception, engineer to resolve)",
+                                    k + 1,
+                                    r_floor,
+                                    4.0 * r_pref,
+                                    fr[k],
+                                    spirals[k],
+                                    req(fr[k])
+                                ));
+                            }
+                        }
+                    }
+                    let ai = crate::align::AlignmentInput {
+                        name: spec.name.clone(),
+                        pis: pis.clone(),
+                        radii: radii.clone(),
+                        spirals: spirals.clone(),
+                        start_station: 0.0,
+                    };
                     let ev = crate::workflow::evaluate(
                         &b,
                         t,
@@ -1417,7 +1461,7 @@ impl Session {
                         e
                     });
                     self.route_inputs.push((spec.name.clone(), ai));
-                    rows.push(json!({"name": spec.name, "weights": spec, "path": path, "pis": pis, "search_cost": cost, "nodes_expanded": nexp, "path_length_m": plen, "max_ground_grade_pct": pg, "overlap_with_earlier_pct": overlap_pct, "duplicate_of_earlier": overlap_pct > 90.0,
+                    rows.push(json!({"name": spec.name, "weights": spec, "path": path, "pis": pis, "search_cost": cost, "nodes_expanded": nexp, "path_length_m": plen, "max_ground_grade_pct": pg, "overlap_with_earlier_pct": overlap_pct, "duplicate_of_earlier": overlap_pct > 90.0, "transition_notes": transition_notes, "fitted_radii": radii, "spirals": spirals,
                         "evaluation": ev.as_ref().map(|e| serde_json::to_value(e).unwrap()).unwrap_or_else(|e| json!({"error": e}))}));
                 }
                 // infeasibility: every alternative fails a mandatory check or could not be built

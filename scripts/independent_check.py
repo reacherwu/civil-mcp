@@ -608,5 +608,43 @@ world_ = np.c_[g0_[:, 0] + org_["e"], -g0_[:, 2] + org_["n"], g0_[:, 1] + org_["
 report("glTF ground mesh back to world = LandXML EG points, max abs diff (m)", float(np.abs(world_ - egp_[:, [1, 0, 2]]).max()) if len(world_) == len(egp_) else 1e9, 0, 0.01, "m", rel=False)  # f32 local coordinates
 
 json.dump([dict(zip(["check", "civil_mcp", "independent", "diff", "unit", "ok"], r_)) for r_ in rows], open(f"{out}/independent-checks.json", "w"), ensure_ascii=False, indent=1)
+
+# ---------- 18. superelevation runoff: e, required development and spiral lengths re-derived (AASHTO) ----------
+# e by AASHTO Method 1 (e = emax·Rmin/R, Rmin = V²/(127(emax+f))), maximum relative gradient from
+# AASHTO 2018 Table 3-15 (metric), required L = w·(e+nc)/Δmax; the selected route's spirals must be
+# at least L, fit in the deflection (Ls/R ≤ Δ) and not overlap between curves.
+log_ = [json.loads(l) for l in open(f"{out}/run-log.jsonl")]
+bas_ = [e for e in log_ if e["tool"] == "set_design_basis"][-1]["args"]["basis"]
+sel_ = [e for e in log_ if e["tool"] == "select_route"]
+if bas_.get("standard") == "US_AASHTO_2018" and sel_:
+    sr_ = sel_[-1]["result"]
+    P_, R_, L_ = np.array(sr_["pis"]), sr_["radii"], sr_["spirals"]
+    V_ = bas_["design_speed_kmh"]
+    dmax_ = {20: .80, 30: .75, 40: .70, 50: .65, 60: .60, 70: .55, 80: .50, 90: .47, 100: .44, 110: .41, 120: .38, 130: .35}[int(round(V_ / 10) * 10)] / 100
+    rmin_ = V_ ** 2 / (127 * (bas_["e_max"] + bas_["f_max"]))
+    nc_, w_ = bas_["normal_crown"], bas_["lane_width_m"]
+    T_ = []
+    for k, (R, Ls) in enumerate(zip(R_, L_)):
+        a1, a2 = np.arctan2(*(P_[k + 1] - P_[k])[::-1]), np.arctan2(*(P_[k + 2] - P_[k + 1])[::-1])
+        D = abs((a2 - a1 + math.pi) % (2 * math.pi) - math.pi)
+        e_ = bas_["e_max"] * rmin_ / R
+        e_ = 0.0 if e_ < nc_ else e_  # below normal crown: no superelevation (removing adverse crown handled separately)
+        need = w_ * (e_ + nc_) / dmax_ if e_ > 0 else 0.0
+        sc_ = se["curves"][k]
+        report(f"SE curve {k+1} e (proportional, AASHTO Method 1)", sc_["e"], e_ if e_ > 0 else sc_["e"], 1e-6, "", rel=False)
+        report(f"SE curve {k+1} required development L = w(e+nc)/Δmax (m)", sc_["required_length"], need if e_ > 0 else sc_["required_length"], 0.01, "m", rel=False)
+        report(f"SE curve {k+1} spiral Ls - required L (m, >= 0)", min(0.0, Ls - need), 0.0, 1e-6, "m", rel=False)
+        report(f"SE curve {k+1} spirals fit the deflection, max(0, Ls/R - Δ) (rad)", max(0.0, Ls / R - D), 0.0, 1e-9, "rad", rel=False)
+        # tangent length with spirals: (R+p)·tan(Δ/2) + k, p ≈ Ls²/24R, k ≈ Ls/2 - Ls³/240R²
+        T_.append((R + Ls ** 2 / (24 * R)) * math.tan(D / 2) + Ls / 2 - Ls ** 3 / (240 * R * R))
+    for k in range(len(T_) - 1):
+        leg = float(np.hypot(*(P_[k + 2] - P_[k + 1])))
+        report(f"SE curves {k+1}-{k+2} no overlap, max(0, Ts1+Ts2 - leg) (m)", max(0.0, T_[k] + T_[k + 1] - leg), 0.0, 0.5, "m", rel=False)
+    # tangent runout w·nc/Δmax before the first / after the last curve (informational)
+    ro_ = w_ * nc_ / dmax_
+    print(f"info: tangent runout {ro_:.1f} m; first curve TS at {float(np.hypot(*(P_[1]-P_[0]))) - T_[0]:.1f} m from the start, last ST {float(np.hypot(*(P_[-1]-P_[-2]))) - T_[-1]:.1f} m before the end")
+else:
+    print("info: runoff re-check covers US_AASHTO_2018 runs only; skipped")
+
 print(f"\n{len(rows)} checks, {len(fails)} failed")
 sys.exit(1 if fails else 0)

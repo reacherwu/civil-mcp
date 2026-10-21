@@ -12,7 +12,7 @@
 
 ![The agent designing a road on USGS terrain. Every frame is drawn from files the demo wrote.](docs/media/civil-mcp-agent-design.gif)
 
-| **65** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set (PDF + DXF) | **242 / 242** independent re-checks within tolerance |
+| **65** MCP tools | **288** design checks, **0** mandatory failures | **38**-sheet drawing set (PDF + DXF) | **269 / 269** independent re-checks within tolerance |
 |:---:|:---:|:---:|:---:|
 
 <sub>All numbers come from the committed demo: US AASHTO profile, 50 km/h rural collector, 5,607 USGS 3DEP survey points near Palo Alto CA, measured 2026-10-20. Layered elastic pavement analysis matches the published KENPAVE example to ≤ 0.09 %.</sub>
@@ -674,7 +674,7 @@ It also exports `scene.usdc` and `scene.blend`. Tested headless with Blender 4.2
 - **Signals and capacity are concept-level only.** HCS, Synchro, SIDRA or LINSIG govern detailed design. UK/AU/NZ warrants need local thresholds.
 - **Untested against real Civil 3D or AutoCAD runs.** Corridor volumes and hydraulics have not been compared with Civil 3D runs; no such public files were found. The DWGs have not been opened in AutoCAD.
 - **Route search is approximate.** It runs on a 10 m grid and its cost proxy is relative.
-- **One demo site.** All results come from one terrain sample.
+- **One full demo site.** The complete design, drawings and independent re-checks come from one terrain sample (Palo Alto). Route generation was also run on 11 real-terrain cases over 9 surfaces, listed in [docs/terrain-tests.md](docs/terrain-tests.md); those runs stop at route alternatives.
 - **Identity is declared, not proven.** MCP cannot authenticate the human approver; deployments need authentication in front of approval.
 - **Sheet frames are SI only.** R12 DXF carries no lineweights (they are in PDF and SVG). Templates read lines, rectangles and text; SVG group transforms are ignored. Content is scaled from an A1 layout, so small sheets give text below 2.5 mm (advisory). The default issue date is UTC.
 - **Clients are untested end to end.** See [Works with](#works-with-mcp-clients).

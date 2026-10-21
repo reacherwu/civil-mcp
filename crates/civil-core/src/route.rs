@@ -304,6 +304,47 @@ pub fn fit_radii(pis: &[[f64; 2]], r_pref: f64, ls: f64, share: f64) -> Vec<f64>
         .collect()
 }
 
+/// Radius and spiral per PI with transitions sized for superelevation: each spiral is at least
+/// the required development length `req(R)` rounded up to 5 m (the preferred `ls_pref` is used when
+/// the deflection allows it), the
+/// curve's tangent length R·tan(Δ/2) + Ls/2 must fit in `share` of the shorter adjacent leg (90 %
+/// at the ends), and both spirals must fit in the deflection (2·Ls/(2R) ≤ 0.9·Δ). Radii are tried
+/// from `r_pref` downwards in 5 m steps; a PI where no radius ≥ `r_floor` fits gets radius 0 so
+/// the caller can drop it or record a design exception.
+pub fn fit_curves(pis: &[[f64; 2]], r_pref: f64, ls_pref: f64, share: f64, r_floor: f64, req: &dyn Fn(f64) -> f64) -> (Vec<f64>, Vec<f64>) {
+    let leg = |a: [f64; 2], b: [f64; 2]| ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+    let mut radii = vec![];
+    let mut spirals = vec![];
+    for k in 1..pis.len() - 1 {
+        let d = defl(pis[k - 1], pis[k], pis[k + 1]);
+        let l1 = leg(pis[k - 1], pis[k]) * if k == 1 { 0.9 } else { share };
+        let l2 = leg(pis[k], pis[k + 1]) * if k + 1 == pis.len() - 1 { 0.9 } else { share };
+        let avail = l1.min(l2);
+        // radii from r_pref down to the floor, then (small deflections, where the spiral cannot fit in
+        // Δ) flatter radii up to 4·r_pref, which also lower e and the development length
+        let top = (r_pref / 5.0).floor() * 5.0;
+        let down = (0..).map(|i| top - 5.0 * i as f64).take_while(|r| *r >= r_floor - 1e-9 && *r > 0.0);
+        let up = (1..).map(|i| top + 5.0 * i as f64).take_while(|r| *r <= 4.0 * r_pref + 1e-9);
+        let mut found = (0.0, 0.0);
+        for r in down.chain(up) {
+            // preferred spiral, shortened to what the deflection allows, never below the
+            // required development length
+            // (a deflection too small for any 5 m spiral gives a simple curve, whose development
+            // runs 2/3 on the tangent and is checked by SE-OVERLAP)
+            let need = (req(r) / 5.0).ceil() * 5.0;
+            let fit = (ls_pref.min(0.9 * r * d) / 5.0).floor() * 5.0;
+            let ls = if fit <= 0.0 { 0.0 } else { fit.max(need) };
+            if r * (d / 2.0).tan() + ls.max(ls_pref) / 2.0 <= avail && ls <= 0.9 * r * d + 1e-9 {
+                found = (r, ls);
+                break;
+            }
+        }
+        radii.push(found.0);
+        spirals.push(found.1);
+    }
+    (radii, spirals)
+}
+
 pub fn path_stats(g: &Tin, path: &[[f64; 2]]) -> (f64, f64) {
     let mut len = 0.0;
     let mut gmax: f64 = 0.0;
@@ -322,6 +363,21 @@ pub fn path_stats(g: &Tin, path: &[[f64; 2]]) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transitions_sized_to_required_development() {
+        // 90° PI with 200 m legs; development requirement 60 m for any radius
+        let pis = [[0.0, 0.0], [200.0, 0.0], [200.0, 200.0]];
+        let (r, ls) = fit_curves(&pis, 300.0, 30.0, 0.45, 50.0, &|_| 60.0);
+        assert_eq!(ls, vec![60.0]);
+        assert!(r[0] * (std::f64::consts::FRAC_PI_4).tan() + 30.0 <= 180.0 + 1e-9 && r[0] >= 50.0);
+        // requirement that cannot fit: radius 0 (caller drops or flags the PI)
+        let (r, _) = fit_curves(&pis, 300.0, 30.0, 0.45, 50.0, &|_| 400.0);
+        assert_eq!(r, vec![0.0]);
+        // small deflection (~10°): 0.9·R·Δ < 40 m at R 120, so a flatter radius is chosen
+        let pis = [[0.0, 0.0], [400.0, 0.0], [800.0, 70.0]];
+        let (r, ls) = fit_curves(&pis, 120.0, 30.0, 0.45, 50.0, &|_| 40.0);
+        assert!(r[0] > 120.0 && ls[0] >= 40.0 && ls[0] <= 0.9 * r[0] * defl(pis[0], pis[1], pis[2]) + 1e-9, "{r:?} {ls:?}");
+    }
     #[test]
     fn flat_grid_gives_straight_path() {
         let g = Grid { x0: 0.0, y0: 0.0, cell: 10.0, nx: 30, ny: 30, z: vec![Some(0.0); 900] };
